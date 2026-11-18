@@ -18,6 +18,8 @@ import {
   resetAuthFailures,
 } from "../auth-rate-limit";
 import { verifyPassword } from "../verify-password";
+import { getSso } from "../sso";
+import { checkAppPassword } from "../sso/app-password";
 import { Store } from "./store";
 import { closeSocket } from "./close-socket";
 
@@ -66,6 +68,11 @@ type ResolvedSessionUser = NonNullable<Awaited<ReturnType<typeof resolveSessionU
  * Each entry point owns only its own credential framing (PLAIN base64
  * decoding, LOGIN quote stripping) and its success response.
  *
+ * With single sign-on on, the password is first checked as the provider's
+ * app password, and a stored local password is tried only while
+ * `AUTH_LOCAL_LOGIN` keeps it valid. A provider that cannot answer gets
+ * `NO [UNAVAILABLE]`, which is not counted as a failed attempt.
+ *
  * Returns the resolved session user on success. On failure, writes the
  * tagged NO reply (and closes the socket when the rate limiter says so)
  * and returns null. Throws only on unexpected errors, which
@@ -89,6 +96,24 @@ const authenticateCredentials = async (
     write(`${tag} NO [AUTHENTICATIONFAILED] Too many failed attempts\r\n`);
     closeSocket(socket);
     return null;
+  }
+
+  const sso = getSso();
+  if (sso) {
+    const appPassword = await checkAppPassword(sso, username, password, "imap", ip);
+    if (appPassword.status === "unavailable") {
+      write(`${tag} NO [UNAVAILABLE] Authentication is temporarily unavailable\r\n`);
+      return null;
+    }
+    if (appPassword.status === "accepted") {
+      resetAuthFailures(ip, account);
+      return {
+        user: appPassword.user,
+        isReadOnly: false,
+        passwordVersion: appPassword.passwordVersion,
+      };
+    }
+    if (!sso.config.localLogin) return failAuth(tag, ip, socket, write, account);
   }
 
   const user = await getUser({ username, password });

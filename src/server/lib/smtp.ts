@@ -21,6 +21,8 @@ import {
   resetAuthFailures
 } from "./auth-rate-limit";
 import { verifyPassword } from "./verify-password";
+import { getSso } from "./sso";
+import { checkAppPassword } from "./sso/app-password";
 import { plainTextToHtml } from "./mails/text-to-html";
 import { addressToUsername, getUserDomain, isLocalAddress } from "./util";
 import { sendAlarm } from "./alarm";
@@ -177,6 +179,27 @@ export const onAuth: SmtpServerOptions["onAuth"] = async (auth, session, cb) => 
     return cb(new Error("Too many failed authentication attempts"));
   }
 
+  const sso = getSso();
+  if (sso) {
+    let appPassword;
+    try {
+      appPassword = await checkAppPassword(sso, username, password, "smtp", ip);
+    } catch (err) {
+      logger.error("SMTP: authentication lookup failed", { remoteAddress: ip }, err);
+      return cb(new LookupFailedError());
+    }
+    if (appPassword.status === "unavailable") return cb(new AuthUnavailableError());
+    if (appPassword.status === "accepted") {
+      resetAuthFailures(ip, account);
+      (session as VersionStampedSmtpSession).passwordVersion = appPassword.passwordVersion;
+      return cb(null, { user: username });
+    }
+    if (!sso.config.localLogin) {
+      await recordAuthFailure(ip, account);
+      return cb(null, { user: undefined });
+    }
+  }
+
   let user;
   let pwMatches = false;
   try {
@@ -297,6 +320,19 @@ class LookupFailedError extends Error {
 
   constructor() {
     super("4.3.0 Error: temporary lookup failure");
+  }
+}
+
+/**
+ * The identity provider could not say whether an app password is valid.
+ * RFC 4954 §6 gives 454 to a temporary failure on the server's side, so the
+ * client retries the same credential later rather than reporting it wrong.
+ */
+class AuthUnavailableError extends Error {
+  responseCode = 454;
+
+  constructor() {
+    super("4.7.0 Temporary authentication failure");
   }
 }
 
@@ -1008,7 +1044,9 @@ export const initializeSmtp = async () => {
       const server = createSmtpServer({
         ...options,
         secure: false,
-        allowInsecureAuth: true
+        // With single sign-on an app password is a full credential for the
+        // protocol, so this port too takes none before STARTTLS.
+        allowInsecureAuth: getSso() === null
       });
       registerListeners(server, port, () => {
         logger.info(`SMTP server listening on port ${port}`);
