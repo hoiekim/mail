@@ -73,6 +73,7 @@ function makeUserData(overrides: Record<string, unknown> = {}): Record<string, u
     updated: "2024-01-01T00:00:00+00:00",
     is_deleted: false,
     imap_uid_validity: null,
+    auth_sub: null,
     ...overrides,
   };
 }
@@ -86,6 +87,9 @@ function makeSessionData(overrides: Record<string, unknown> = {}): Record<string
     session_is_read_only: null,
     session_authenticated_as: null,
     session_password_version: 1,
+    auth_sid: null,
+    auth_refresh_token: null,
+    auth_recheck_at: null,
     cookie_original_max_age: 86400000,
     cookie_max_age: 86400000,
     cookie_signed: true,
