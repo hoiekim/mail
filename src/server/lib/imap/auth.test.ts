@@ -970,7 +970,7 @@ describe("with single sign-on", () => {
   });
 
   it("answers UNAVAILABLE without counting a failure while the provider cannot answer", async () => {
-    useSso(true);
+    useSso(false);
     mockCheckAppPassword.mockImplementation(async () => ({ status: "unavailable" }));
     const { socket, args } = makeHarness();
 
@@ -1023,10 +1023,37 @@ describe("with single sign-on", () => {
       ...args
     );
 
-    expect(mockCheckAppPassword).toHaveBeenCalledTimes(1);
+    // A local password that matches is never sent to the provider.
+    expect(mockCheckAppPassword).not.toHaveBeenCalled();
     expect(result!.store.getUser()).toBe(signedUser as never);
     expect(socket.writes).toEqual([
       `S5 OK [CAPABILITY ${CAPABILITIES}] AUTHENTICATE completed\r\n`,
+    ]);
+  });
+
+  it("checks an app password after the local one while AUTH_LOCAL_LOGIN keeps them", async () => {
+    const sso = useSso(true);
+    accept();
+    mockGetUser.mockImplementation(async () => ({
+      password: await hashOf("correct-horse"),
+      getSigned: () => signedUser,
+    }));
+    const { socket, args } = makeHarness();
+
+    const result = await handleAuthenticate(
+      "S6",
+      "PLAIN",
+      plainResponse("alice", APP_PASSWORD),
+      ...args
+    );
+
+    expect(mockGetUser).toHaveBeenCalled();
+    expect(mockCheckAppPassword.mock.calls).toEqual([
+      [sso, "alice", APP_PASSWORD, "imap", REMOTE_IP],
+    ]);
+    expect(result!.store.getUser()).toBe(aliceSigned);
+    expect(socket.writes).toEqual([
+      `S6 OK [CAPABILITY ${CAPABILITIES}] AUTHENTICATE completed\r\n`,
     ]);
   });
 

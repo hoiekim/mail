@@ -3358,7 +3358,7 @@ describe("onAuth with single sign-on", () => {
   });
 
   it("answers 454 without counting a failure while the provider cannot answer", async () => {
-    useSso(true);
+    useSso(false);
     mockCheckAppPassword.mockImplementation(async () => ({ status: "unavailable" }));
 
     const result = await authenticate({} as SmtpSession, "alice", APP_PASSWORD);
@@ -3400,7 +3400,33 @@ describe("onAuth with single sign-on", () => {
 
     const result = await authenticate({} as SmtpSession, "alice", "correct-horse");
 
-    expect(mockCheckAppPassword).toHaveBeenCalledTimes(1);
+    // A local password that matches is never sent to the provider.
+    expect(mockCheckAppPassword).not.toHaveBeenCalled();
     expect(result.user).toBe("alice");
+  });
+
+  it("checks an app password after the local one while AUTH_LOCAL_LOGIN keeps them", async () => {
+    const sso = useSso(true);
+    const hashedPw = await Bun.password.hash("correct-horse", { algorithm: "bcrypt", cost: 4 });
+    mockGetUser.mockResolvedValue({
+      password: hashedPw,
+      passwordVersion: 2,
+      getSigned: () => ({ username: "alice" }),
+    });
+    mockCheckAppPassword.mockImplementation(async () => ({
+      status: "accepted",
+      user: { id: "u1", username: "alice" } as never,
+      passwordVersion: 4,
+    }));
+    const session = { remoteAddress: "203.0.113.7" } as SmtpSession;
+
+    const result = await authenticate(session, "alice", APP_PASSWORD);
+
+    expect(mockGetUser).toHaveBeenCalled();
+    expect(mockCheckAppPassword.mock.calls).toEqual([
+      [sso, "alice", APP_PASSWORD, "smtp", "203.0.113.7"],
+    ]);
+    expect(result).toEqual({ err: undefined, user: "alice" });
+    expect((session as SmtpSession & { passwordVersion?: number }).passwordVersion).toBe(4);
   });
 });

@@ -241,7 +241,9 @@ that the username names that account, and that its scopes cover the protocol.
   the outage.
 - Local passwords keep working on IMAP and SMTP only while `AUTH_LOCAL_LOGIN=true`,
   so a migration can give people time to create app passwords before the
-  setting is removed.
+  setting is removed. Mail tries the local password first then, so a matching
+  one is never sent to the provider and doesn't use up the provider's limits on
+  failed checks.
 
 ### How existing accounts are linked
 
