@@ -17,6 +17,8 @@ import {
   IMAP_UID_VALIDITY,
   USERS,
   AUTH_SUB,
+  IS_DELETED,
+  DB_NOW,
 } from "../models";
 
 export type IndexUserInput = Omit<User, "user_id" | "password"> & {
@@ -204,47 +206,65 @@ export const findUnlinkedUsersByEmail = async (
 };
 
 /**
- * Links an account that is not linked yet. Direct SQL for the `IS NULL`
- * guard, which is what keeps two sign-ins from linking one account to two
- * subjects; the column's UNIQUE constraint keeps one subject off two accounts.
+ * The link's guard is `auth_sub IS NULL`, which keeps two sign-ins from
+ * linking one account to two subjects; the column's UNIQUE constraint keeps
+ * one subject off two accounts. A soft-deleted account is never linked.
  */
-export const buildLinkUserAuthSub = (userId: string, sub: string): PreparedQuery => ({
-  sql: `UPDATE ${USERS} SET ${AUTH_SUB} = $2, updated = CURRENT_TIMESTAMP WHERE ${USER_ID} = $1 AND ${AUTH_SUB} IS NULL AND ${SOFT_DELETE_CONDITION} RETURNING *`,
-  values: [userId, sub],
-});
+const linkArgs = (userId: string, sub: string): Parameters<typeof usersTable.updateWhere> => [
+  { [USER_ID]: userId, [AUTH_SUB]: { op: "IS NULL" }, [IS_DELETED]: { op: "IS NOT TRUE" } },
+  { [AUTH_SUB]: sub, updated: DB_NOW },
+  ["*"],
+];
+
+/** The statement `linkUserAuthSub` runs, from the same arguments. */
+export const buildLinkUserAuthSub = (userId: string, sub: string): PreparedQuery =>
+  usersTable.prepareUpdateWhere(...linkArgs(userId, sub))!;
 
 const isUniqueViolation = (error: unknown): boolean =>
   (error as { code?: unknown } | null)?.code === "23505";
 
 /**
+ * Links an account that is not linked yet.
+ *
  * @returns the linked account, or null when another sign-in linked the
  * account, or this subject, first.
  */
 export const linkUserAuthSub = async (userId: string, sub: string): Promise<UserModel | null> => {
-  const { sql, values } = buildLinkUserAuthSub(userId, sub);
   try {
-    const result = await pool.query(sql, values);
-    return result.rows[0] ? new UserModel(result.rows[0]) : null;
+    const [row] = await usersTable.updateWhere(...linkArgs(userId, sub));
+    return row ? new UserModel(row) : null;
   } catch (error) {
     if (isUniqueViolation(error)) return null;
     throw error;
   }
 };
 
-/**
- * Direct SQL for `ON CONFLICT DO NOTHING`, which covers both unique columns:
- * a taken username and a subject another sign-in has just linked both leave
- * the table untouched and return no row.
- */
-export const buildInsertSsoUser = (account: {
+interface SsoUserRow {
   username: string;
   email: string;
   sub: string;
   passwordHash: string;
-}): PreparedQuery => ({
-  sql: `INSERT INTO ${USERS} (${USERNAME}, ${PASSWORD}, ${EMAIL}, ${AUTH_SUB}) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING *`,
-  values: [account.username, account.passwordHash, account.email, account.sub],
-});
+}
+
+/**
+ * `ON CONFLICT DO NOTHING` covers both unique columns: a taken username and a
+ * subject another sign-in has just linked both leave the table untouched and
+ * return no row.
+ */
+const insertArgs = (account: SsoUserRow): Parameters<typeof usersTable.insert> => [
+  {
+    [USERNAME]: account.username,
+    [PASSWORD]: account.passwordHash,
+    [EMAIL]: account.email,
+    [AUTH_SUB]: account.sub,
+  },
+  ["*"],
+  { onConflictDoNothing: true },
+];
+
+/** The statement `insertSsoUser` runs, from the same arguments. */
+export const buildInsertSsoUser = (account: SsoUserRow): PreparedQuery =>
+  usersTable.prepareInsert(...insertArgs(account));
 
 /**
  * Creates the account a first single sign-on makes. Its password is a hash of
@@ -260,9 +280,8 @@ export const insertSsoUser = async (account: {
   sub: string;
 }): Promise<UserModel | null> => {
   const passwordHash = await hashPassword(randomBytes(32).toString("hex"));
-  const { sql, values } = buildInsertSsoUser({ ...account, passwordHash });
-  const result = await pool.query(sql, values);
-  return result.rows[0] ? new UserModel(result.rows[0]) : null;
+  const row = await usersTable.insert(...insertArgs({ ...account, passwordHash }));
+  return row ? new UserModel(row) : null;
 };
 
 export const updateUserEmail = async (userId: string, email: string): Promise<void> => {

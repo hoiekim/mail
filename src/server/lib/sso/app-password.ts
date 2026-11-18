@@ -13,12 +13,13 @@ export type AppPasswordCheck =
   | { status: "unavailable" };
 
 /**
- * How long the provider client serves a cached answer without asking again.
- * An account changed more recently than this may have had the credential
+ * How long the provider client may serve a cached answer: a minute while the
+ * provider answers, and up to ten minutes while it can't be reached. An
+ * account changed more recently than this may have had the credential
  * revoked by an event another copy of the server received, so its answer is
- * asked for afresh.
+ * asked for afresh rather than served from a cache that predates the change.
  */
-const CACHED_ANSWER_MS = 60_000;
+const CACHED_ANSWER_MS = 600_000;
 
 const ipOption = (address: string): { ip?: string } => {
   const ip = address.replace(/^::ffff:/i, "");

@@ -31,16 +31,19 @@ const active = (scope = "imap smtp", sub = "usr_alice") =>
   jsonResponse(200, { active: true, sub, username: "alice", role: "user", scope, jti: "apw_1" });
 
 let sso: Sso;
+/** Both this module's and the provider client's clock. */
+let clock = T0;
 
 beforeEach(() => {
   issuer.reset();
   findAccount.mockReset();
   findAccount.mockResolvedValue(ACCOUNT);
-  sso = initializeSso(fakeIssuerEnv(issuer), { fetch: issuer.fetch, now: () => T0 })!;
+  clock = T0;
+  sso = initializeSso(fakeIssuerEnv(issuer), { fetch: issuer.fetch, now: () => clock })!;
 });
 
 const check = (username = "alice", scope: "imap" | "smtp" = "imap", ip = IP) =>
-  checkAppPassword(sso, username, APP_PASSWORD, scope, ip, T0);
+  checkAppPassword(sso, username, APP_PASSWORD, scope, ip, clock);
 
 describe("checkAppPassword", () => {
   it("accepts an active app password for the linked account, stamping its generation", async () => {
@@ -94,7 +97,7 @@ describe("checkAppPassword", () => {
     expect(findAccount).not.toHaveBeenCalled();
   });
 
-  it("asks again, past the cache, for an account changed within the last minute", async () => {
+  it("asks again, past the cache, for an account changed moments ago", async () => {
     issuer.introspect = () => active();
     expect((await check()).status).toBe("accepted");
     expect(issuer.seen("/oauth/introspect")).toHaveLength(1);
@@ -105,6 +108,20 @@ describe("checkAppPassword", () => {
     findAccount.mockResolvedValue({ ...ACCOUNT, updated: new Date(T0 - 1_000).toISOString() } as UserModel);
     expect((await check()).status).toBe("rejected");
     expect(issuer.seen("/oauth/introspect")).toHaveLength(2);
+  });
+
+  it("asks again for an account changed while a stale answer could still be served", async () => {
+    issuer.introspect = () => active();
+    expect((await check()).status).toBe("accepted");
+
+    // Past the client's fresh minute, with the provider unreachable, the
+    // client would serve that answer stale for up to ten minutes. The account
+    // changed after it was cached (an event another copy received), so it is
+    // asked for afresh, and with nobody to answer, nothing is accepted.
+    clock = T0 + 150_000;
+    issuer.down = true;
+    findAccount.mockResolvedValue({ ...ACCOUNT, updated: new Date(T0 + 30_000).toISOString() } as UserModel);
+    expect((await check()).status).toBe("unavailable");
   });
 
   it("serves the cached answer for an account that has not changed", async () => {

@@ -827,12 +827,17 @@ describe("Table wires both mutation builders through the guard", () => {
     const source = await Bun.file(
       new URL("./base.ts", import.meta.url).pathname
     ).text();
+    const prepareUpdateWhere = source.slice(source.indexOf("  prepareUpdateWhere("));
     const updateWhere = source.slice(source.indexOf("async updateWhere("));
     const deleteWhere = source.slice(source.indexOf("async deleteWhere("));
 
     // Asserted as booleans so a failure prints a one-line diff, not the file.
+    // updateWhere runs the statement prepareUpdateWhere builds, guard and all.
     expect(
-      updateWhere.includes('resolveMutationFilters("updateWhere", filters)')
+      prepareUpdateWhere.includes('resolveMutationFilters("updateWhere", filters)')
+    ).toBe(true);
+    expect(
+      updateWhere.includes("this.prepareUpdateWhere(filters, data, returning)")
     ).toBe(true);
     expect(
       deleteWhere.includes('resolveMutationFilters("deleteWhere", filters)')
