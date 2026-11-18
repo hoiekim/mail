@@ -10,9 +10,11 @@ import {
 interface Row extends LocalAccount {
   /** False for a sign-up still waiting for its link: it has no password. */
   signedUp: boolean;
+  deleted: boolean;
 }
 
-const view = ({ signedUp: _signedUp, ...account }: Row): LocalAccount => account;
+const view = ({ signedUp: _signedUp, deleted: _deleted, ...account }: Row): LocalAccount =>
+  account;
 const viewOf = (row: Row | undefined): LocalAccount | null => (row ? view(row) : null);
 
 /**
@@ -32,6 +34,7 @@ class MemoryDirectory implements AccountDirectory {
       authSub: null,
       passwordVersion: 1,
       signedUp: true,
+      deleted: false,
       ...row,
     };
     this.rows.push(full);
@@ -48,6 +51,7 @@ class MemoryDirectory implements AccountDirectory {
           row.email?.toLowerCase() === email.toLowerCase() &&
           row.authSub === null &&
           row.signedUp &&
+          !row.deleted &&
           !excluded.includes(row.username)
       )
       .slice(0, 2)
@@ -123,38 +127,54 @@ describe("resolveSsoAccount", () => {
     expect(dir.writes).toEqual([`link ${bob.userId} usr_alice`, `email ${bob.userId} alice@example.com`]);
   });
 
-  it("3. never links by an address the provider has not verified", async () => {
-    const dir = new MemoryDirectory();
-    dir.add({ username: "bob", email: "alice@example.com" });
-    const result = await resolveSsoAccount({ ...ALICE, emailVerified: false }, NO_LINKS, dir);
-    expect(result.ok && result.outcome).toBe("created");
-    expect(result.ok && result.account.username).toBe("alice");
-    expect(dir.rows.find((r) => r.username === "bob")?.authSub).toBeNull();
+  it("3. links by an address the provider has not verified, keeping the account's own", async () => {
+    for (const emailVerified of [false, undefined]) {
+      const dir = new MemoryDirectory();
+      const bob = dir.add({ username: "bob", email: "Alice@Example.com" });
+      const result = await resolveSsoAccount({ ...ALICE, emailVerified }, NO_LINKS, dir);
+      expect(result).toEqual({
+        ok: true,
+        account: {
+          userId: bob.userId,
+          username: "bob",
+          email: "Alice@Example.com",
+          authSub: "usr_alice",
+          passwordVersion: 1,
+        },
+        outcome: "linked",
+      });
+      expect(dir.writes).toEqual([`link ${bob.userId} usr_alice`]);
+    }
   });
 
-  it("3. does not guess between two accounts with the address", async () => {
-    const dir = new MemoryDirectory();
-    dir.add({ username: "bob", email: "alice@example.com" });
-    dir.add({ username: "carol", email: "alice@example.com" });
-    const result = await resolveSsoAccount(ALICE, NO_LINKS, dir);
-    expect(result.ok && result.outcome).toBe("created");
-    expect(dir.rows.filter((r) => r.authSub === "usr_alice").map((r) => r.username)).toEqual([
-      "alice",
-    ]);
+  it("3. does not guess between two accounts with the address, verified or not", async () => {
+    for (const emailVerified of [true, false]) {
+      const dir = new MemoryDirectory();
+      dir.add({ username: "bob", email: "alice@example.com" });
+      dir.add({ username: "carol", email: "ALICE@example.com" });
+      const result = await resolveSsoAccount({ ...ALICE, emailVerified }, NO_LINKS, dir);
+      expect(result.ok && result.outcome).toBe("created");
+      expect(dir.rows.filter((r) => r.authSub === "usr_alice").map((r) => r.username)).toEqual([
+        "alice",
+      ]);
+    }
   });
 
-  it("3. never links the reserved accounts or a sign-up still waiting for its link", async () => {
+  it("3. never links a reserved, unfinished or deleted account, verified or not", async () => {
     const candidates = [
       { username: "admin" },
       { username: "admin-ro" },
       { username: "user_1234abcd", signedUp: false },
+      { username: "dave", deleted: true },
     ];
-    for (const candidate of candidates) {
-      const dir = new MemoryDirectory();
-      dir.add({ ...candidate, email: "alice@example.com" });
-      const result = await resolveSsoAccount(ALICE, NO_LINKS, dir);
-      expect(result.ok && result.outcome).toBe("created");
-      expect(dir.rows.filter((r) => r.authSub).map((r) => r.username)).toEqual(["alice"]);
+    for (const emailVerified of [true, false]) {
+      for (const candidate of candidates) {
+        const dir = new MemoryDirectory();
+        dir.add({ ...candidate, email: "alice@example.com" });
+        const result = await resolveSsoAccount({ ...ALICE, emailVerified }, NO_LINKS, dir);
+        expect(result.ok && result.outcome).toBe("created");
+        expect(dir.rows.filter((r) => r.authSub).map((r) => r.username)).toEqual(["alice"]);
+      }
     }
   });
 
@@ -174,14 +194,26 @@ describe("resolveSsoAccount", () => {
     });
   });
 
-  it("4. gives an account without a verified address its own mailbox as its address", async () => {
-    const dir = new MemoryDirectory();
-    const result = await resolveSsoAccount(
-      { sub: "usr_bob", username: "bob", email: null },
-      NO_LINKS,
-      dir
-    );
-    expect(result.ok && result.account.email).toBe(`bob@${getUserDomain("bob")}`);
+  it("4. gives a new account the address the provider has not verified", async () => {
+    for (const emailVerified of [false, undefined]) {
+      const dir = new MemoryDirectory();
+      const result = await resolveSsoAccount({ ...ALICE, emailVerified }, NO_LINKS, dir);
+      expect(result.ok && result.account.email).toBe("alice@example.com");
+      expect(dir.rows.map((r) => [r.username, r.email])).toEqual([["alice", "alice@example.com"]]);
+      expect(dir.writes).toEqual(["create alice"]);
+    }
+  });
+
+  it("4. gives an account without a usable address its own mailbox as its address", async () => {
+    for (const email of [null, undefined, "", "not an address", `${"b".repeat(244)}@example.com`]) {
+      const dir = new MemoryDirectory();
+      const result = await resolveSsoAccount(
+        { sub: "usr_bob", username: "bob", email, emailVerified: false },
+        NO_LINKS,
+        dir
+      );
+      expect(result.ok && result.account.email).toBe(`bob@${getUserDomain("bob")}`);
+    }
   });
 
   it("4. refuses a username that cannot name a mailbox", async () => {

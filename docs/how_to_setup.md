@@ -253,19 +253,32 @@ The first single sign-on of a person picks their Mail account in this order:
 2. the account `AUTH_LINK_USERS` names for their provider username, if it is
    not linked yet. This is the only way the `admin` account is linked (for
    example `AUTH_LINK_USERS=admin=alice`);
-3. the one account, not linked yet, whose sign-up email is the address the
-   provider has verified for them. Whoever controls that mailbox could already
-   take the account over with Mail's own reset mail, so this grants nothing new.
-   `admin` and `admin-ro` are never linked this way;
+3. the one account, not linked yet, whose sign-up email is the email address
+   the provider gives for them, ignoring case, whether or not the provider
+   marks it verified. When two or more such accounts have that address, none
+   is picked. A sign-up that was never finished, a deleted account, `admin-ro`
+   (a local account only) and `admin` are never picked. Email never links
+   `admin` because mail to its address, `admin@<EMAIL_DOMAIN>`, can be read by
+   the read-only `admin-ro` login: whoever holds that login could confirm that
+   address at the provider and take `admin` over;
 4. otherwise a new account, named after their provider username. It is refused
    (`An account with your username already exists here`) when an account by
    that name exists but is not linked to them: link it with `AUTH_LINK_USERS`
    instead. A provider username that cannot be a mailbox name (one lower-case
    DNS label) is refused too.
 
-A new account takes the provider's verified email as its address, or, without
-one, its own mailbox address. Each sign-in copies a changed verified address
-onto the account, except for `admin` and `admin-ro`, whose address the boot sets.
+The email match in step 3 is as trustworthy as `AUTH_LINK_USERS`: Mail's
+sign-up proved the account's address, and the auth service sets an address a
+person chose only after they confirm it (an address it has not verified was
+entered by its administrator, when they created or imported the person). Don't
+use Mail's single sign-on with a provider that lets people claim addresses
+they haven't confirmed: anyone could then link themselves to the account that
+signed up with an address they claimed.
+
+A new account's address is the email address the provider gives for them,
+verified or not, or, without one, its own mailbox address. Each sign-in copies
+a changed address onto the account only when the provider marks it verified,
+and never onto `admin` or `admin-ro`, whose address the boot sets.
 
 ### What changes while it is on
 
@@ -296,5 +309,5 @@ Unset `AUTH_ISSUER` and restart. Password sign-in works again for every account
 that had a password, and sessions that came from single sign-on end. Accounts
 that single sign-on created have no password anyone knows: they set one with
 **Forgot your password?**, which mails a link to the account's address (for an
-account created without a verified email, that is its own mailbox, which its
-owner cannot read until they can sign in again).
+account created without an email address from the provider, that is its own
+mailbox, which its owner cannot read until they can sign in again).

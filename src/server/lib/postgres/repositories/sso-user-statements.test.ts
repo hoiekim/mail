@@ -1,7 +1,8 @@
 /**
  * The shape of the single sign-on account statements, pinned without a pool so
- * every run checks the guards that keep a link and a create race-safe. What
- * Postgres does with them is in `sso-users.test.ts`, an opt-in probe.
+ * every run checks the guards on the email match and those that keep a link
+ * and a create race-safe. What Postgres does with them is in
+ * `sso-users.test.ts`, an opt-in probe.
  *
  * Each statement is compared whole, so a guard dropped from the WHERE clause,
  * or a clause appended after it, fails here.
@@ -9,7 +10,11 @@
 import { describe, expect, it } from "bun:test";
 import { buildInsert } from "../database";
 import { buildFilterClauses, resolveMutationFilters } from "../models";
-import { buildInsertSsoUser, buildLinkUserAuthSub } from "./users";
+import {
+  buildFindUnlinkedUsersByEmail,
+  buildInsertSsoUser,
+  buildLinkUserAuthSub,
+} from "./users";
 
 describe("nullary filter conditions", () => {
   it("bind no value, and the placeholders after them keep their numbers", () => {
@@ -41,6 +46,15 @@ describe("buildInsert onConflictDoNothing", () => {
     expect(buildInsert("t", { a: 1 }, ["*"], { stampUpdated: false }).sql).toBe(
       "INSERT INTO t (a) VALUES ($1) RETURNING *"
     );
+  });
+});
+
+describe("buildFindUnlinkedUsersByEmail", () => {
+  it("matches the address ignoring case, on signed-up accounts that are not linked, deleted or excluded", () => {
+    expect(buildFindUnlinkedUsersByEmail("Alice@Example.com", ["admin", "admin-ro"])).toEqual({
+      sql: "SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND auth_sub IS NULL AND password IS NOT NULL AND username <> ALL($2::text[]) AND (is_deleted IS NULL OR is_deleted = FALSE) LIMIT 2",
+      values: ["Alice@Example.com", ["admin", "admin-ro"]],
+    });
   });
 });
 
