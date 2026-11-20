@@ -193,9 +193,12 @@ redirect URI.
 
 ### Registering Mail with the provider
 
-With the auth service, add Mail to its services file. Mail has no roles of its
-own: any role on the service lets the person use Mail, and removing it keeps
-them out. App passwords need the `imap` and `smtp` scopes:
+With the auth service, register Mail on its admin page (the **Services** tab),
+or in its services file if the deployment keeps one. Once the client's secret
+is made, the admin page lists the `AUTH_*` lines to paste into Mail's
+environment. Mail has no roles of its own: any role on the service lets the
+person use Mail, and removing it keeps them out. App passwords need the `imap`
+and `smtp` scopes. The definition, as the services file takes it:
 
 ```json
 {
