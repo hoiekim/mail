@@ -217,7 +217,7 @@ describe("POST /api/mails/send as multipart — file names and types", () => {
   });
 
   test("any directory part is cut from the file name", async () => {
-    for (const [given, kept] of [
+    const names: [string, string][] = [
       ["../../etc/passwd", "passwd"],
       ["/abs/path/report.pdf", "report.pdf"],
       ["C:\\\\Users\\\\me\\\\doc.txt", "doc.txt"],
@@ -225,8 +225,9 @@ describe("POST /api/mails/send as multipart — file names and types", () => {
       ["plain name with spaces.txt", "plain name with spaces.txt"],
       ["ünï cödé 😀.txt", "ünï cödé 😀.txt"],
       [".hidden", ".hidden"],
-    ]) {
-      const { stored, sent } = await storedFor(file(given!, "x"));
+    ];
+    for (const [given, kept] of names) {
+      const { stored, sent } = await storedFor(file(given, "x"));
       expect({ given, stored: stored.filename, sent: sent.filename }).toEqual({ given, stored: kept, sent: kept });
     }
   });
@@ -451,6 +452,27 @@ describe("POST /api/mails/send as multipart — malformed and misplaced bodies",
     });
     expect(noBoundaryInBody.status).toBe(400);
     expect(server.mailgun.requests).toEqual([]);
+  });
+
+  test("a part header line over 16 KiB, or more than 64 header lines in a part, is a 400", async () => {
+    const longLine = await sendForm([...fields(TEXT), file("n".repeat(17_000), "x")]);
+    expect(longLine.status).toBe(400);
+    expect(longLine.body).toEqual(BAD_REQUEST);
+    const justUnder = await sendForm([...fields(TEXT), file("n".repeat(15_000), "x")]);
+    expect(justUnder.body).toEqual(SUCCESS);
+
+    const boundary = "many-headers";
+    const part = (headerCount: number) =>
+      `--${boundary}\r\nContent-Disposition: form-data; name="sender"\r\n` +
+      Array.from({ length: headerCount - 1 }, (_, i) => `X-Extra-${i}: v\r\n`).join("") +
+      `\r\nbox\r\n--${boundary}--\r\n`;
+    const post = (body: string) =>
+      box.client.request("POST", "/api/mails/send", { body, headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` } });
+    const tooMany = await post(part(66));
+    expect(tooMany.status).toBe(400);
+    expect(tooMany.body).toEqual(BAD_REQUEST);
+    // 64 header lines are read: the request then fails only for its missing recipient.
+    expect((await post(part(64))).body).toEqual(failed("Recipient email address is required"));
   });
 
   test("multipart without a boundary parameter, or with an empty body, is treated as no body", async () => {

@@ -44,11 +44,11 @@ describe("DELETE /api/mails/:id", () => {
     const kept = await fresh.mail({ subject: "Re: Deleteme pineapple", in_reply_to: "<gone@x>" });
     expect((await fresh.client.delete(`/api/mails/${gone.mail_id}`)).body).toEqual(SUCCESS);
     const me = fresh.address();
-    expect(subjects((await fresh.client.get(`/api/mails/headers/${me}`)).body.body)).toEqual([kept.subject]);
+    expect(subjects((await fresh.client.get(`/api/mails/headers/${me}`)).body.body)).toEqual([kept.subject!]);
     expect((await fresh.client.get(`/api/mails/headers/${me}?saved=1`)).body.body).toEqual([]);
-    expect(subjects((await fresh.client.get("/api/mails/unified")).body.body)).toEqual([kept.subject]);
-    expect(subjects((await fresh.client.get("/api/mails/search/pineapple")).body.body)).toEqual([kept.subject]);
-    expect(subjects((await fresh.client.get(`/api/mails/thread/${kept.mail_id}`)).body.body)).toEqual([kept.subject]);
+    expect(subjects((await fresh.client.get("/api/mails/unified")).body.body)).toEqual([kept.subject!]);
+    expect(subjects((await fresh.client.get("/api/mails/search/pineapple")).body.body)).toEqual([kept.subject!]);
+    expect(subjects((await fresh.client.get(`/api/mails/thread/${kept.mail_id}`)).body.body)).toEqual([kept.subject!]);
     expect((await fresh.client.get(`/api/mails/body/${gone.mail_id}`)).body).toEqual(failed("No email is found."));
     expect((await fresh.client.get(`/api/mails/thread/${gone.mail_id}`)).body).toEqual(failed("No email is found."));
     expect((await fresh.client.get("/api/mails/accounts")).body.body.received).toEqual([

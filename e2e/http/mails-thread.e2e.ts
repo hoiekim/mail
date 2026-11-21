@@ -7,7 +7,6 @@ import {
   failed,
   headerOf,
   newMailbox,
-  type Mailbox,
   type SeedRow,
 } from "./mails-helpers";
 
@@ -283,6 +282,39 @@ describe("GET /api/mails/thread/:id — threading by headers", () => {
     expect(await subjectsOf(t1)).toEqual(["earlier reply", "same time A", "same time B", "later"]);
     expect(await subjectsOf(t2)).toEqual(["earlier reply", "same time B", "same time A", "later"]);
   });
+});
+
+describe("GET /api/mails/thread/:id — very large conversations", () => {
+  const bulk = (userId: string, me: string, count: number, columns: string, values: string) =>
+    server.db.query(
+      `INSERT INTO mails (user_id, message_id, subject, date, to_address, to_text, envelope_to, from_address, from_text, text${columns})
+       SELECT $1, '<bulk-' || g || '@x>', 'Re: Huge', timestamptz '2026-01-01T00:00:00Z' + g * interval '1 second',
+              $2::jsonb, $3, $2::jsonb, '[{"address":"pm@corp.example"}]'::jsonb, 'pm@corp.example', 'reply ' || g${values}
+       FROM generate_series(1, ${count}) g`,
+      [userId, [{ address: me }], me]
+    );
+
+  test("by headers: the opened mail and the 300 newest mails linked to it", async () => {
+    const box = await newMailbox(server);
+    const root = await box.mail({ subject: "Huge", message_id: "<huge-root@x>", date: "2025-12-31T00:00:00Z" });
+    await bulk(box.id, box.address(), 320, ", in_reply_to", ", '<huge-root@x>'");
+    const { body } = await box.client.get(`/api/mails/thread/${root.mail_id}`);
+    expect(body.body).toHaveLength(301);
+    expect(body.body[0].id).toBe(root.mail_id);
+    expect(body.body[1].snippet).toBe("reply 21");
+    expect(body.body[300].snippet).toBe("reply 320");
+  }, 60_000);
+
+  test("by subject: the opened mail and the 100 newest header-less mails of that subject", async () => {
+    const box = await newMailbox(server);
+    const root = await box.mail({ subject: "Huge", from: [{ address: "pm@corp.example" }], date: "2025-12-31T00:00:00Z" });
+    await bulk(box.id, box.address(), 120, "", "");
+    const { body } = await box.client.get(`/api/mails/thread/${root.mail_id}`);
+    expect(body.body).toHaveLength(101);
+    expect(body.body[0].id).toBe(root.mail_id);
+    expect(body.body[1].snippet).toBe("reply 21");
+    expect(body.body[100].snippet).toBe("reply 120");
+  }, 60_000);
 });
 
 describe("GET /api/mails/thread/:id — threading header-less mail by subject", () => {

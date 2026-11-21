@@ -135,8 +135,8 @@ export const headerOf = (row: InsertedMail, overrides: Record<string, unknown> =
 };
 
 /** The subjects of a list of header rows, the usual way to assert an order. */
-export const subjects = (headers: { subject: string }[]) => headers.map((header) => header.subject);
-export const ids = (headers: { id: string }[]) => headers.map((header) => header.id);
+export const subjects = (headers: Record<string, any>[]): string[] => headers.map((header) => header.subject);
+export const ids = (headers: Record<string, any>[]): string[] => headers.map((header) => header.id);
 
 /** A paging cursor as the server encodes one: base64url of `{"date","id"}`. */
 export const encodeCursor = (cursor: unknown) => Buffer.from(JSON.stringify(cursor)).toString("base64url");
@@ -204,11 +204,12 @@ export const fields = (values: Record<string, string>): FormPart[] =>
   Object.entries(values).map(([name, value]) => ({ name, value }));
 
 /** The newest mail a user holds, by insertion. */
-export const latestMail = async (server: TestServer, userId: string) => {
+export const latestMail = async (server: TestServer, userId: string): Promise<Record<string, any>> => {
   const [row] = await server.db.query(
     "SELECT * FROM mails WHERE user_id = $1 ORDER BY updated DESC, mail_id DESC LIMIT 1",
     [userId]
   );
+  if (!row) throw new Error(`User ${userId} holds no mail`);
   return row;
 };
 
