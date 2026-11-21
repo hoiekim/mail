@@ -1,26 +1,21 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { TestServer } from "../harness";
 import type { SmtpClient } from "../harness/smtp";
-import { bootAll, closeClients, mailByMessageId, mailsByMessageId, messageId, plain, session } from "./support";
+import { boot, closeClients, mailByMessageId, mailsByMessageId, messageId, plain, session } from "./support";
 
 // Only so many DATA transactions run at once: SMTP_DATA_CONCURRENCY, two by
 // default. One more waits in line for up to twenty seconds, then is refused.
+// `single` has room for one; the tests that count the default start their own.
 let single: TestServer;
-let byDefault: TestServer;
-let invalid: TestServer;
 
 beforeAll(async () => {
-  [single, byDefault, invalid] = (await bootAll(
-    { env: { SMTP_DATA_CONCURRENCY: "1" } },
-    {},
-    { env: { SMTP_DATA_CONCURRENCY: "none" } }
-  )) as [TestServer, TestServer, TestServer];
+  single = await boot({ env: { SMTP_DATA_CONCURRENCY: "1" } });
 }, 180_000);
 
 afterEach(closeClients);
 
 afterAll(async () => {
-  await Promise.all([single?.stop(), byDefault?.stop(), invalid?.stop()]);
+  await single?.stop();
 });
 
 const QUEUED = "250 OK: message queued";
@@ -114,25 +109,32 @@ describe("with room for one", () => {
 });
 
 describe("how many run at once", () => {
-  /** With two transactions held open, a third waits; with one, it does not. */
-  const expectRoomForTwo = async (server: TestServer) => {
-    const one = await hold(server, messageId("slot"));
-    const beside = await sendWhole(server, messageId("slot"));
-    expect((await beside.read()).raw).toBe(QUEUED);
+  /** On a server started with `env`: with two transactions held open a third waits; with one, it does not. */
+  const expectRoomForTwo = async (env: Record<string, string>) => {
+    const server = await boot({ env });
+    try {
+      const one = await hold(server, messageId("slot"));
+      const beside = await sendWhole(server, messageId("slot"));
+      expect((await beside.read()).raw).toBe(QUEUED);
 
-    const two = await hold(server, messageId("slot"));
-    const third = await sendWhole(server, messageId("slot"));
-    expect(await third.staysQuiet(500)).toBe(true);
-    expect(await finish(one)).toBe(QUEUED);
-    expect((await third.read()).raw).toBe(QUEUED);
-    expect(await finish(two)).toBe(QUEUED);
+      const two = await hold(server, messageId("slot"));
+      const third = await sendWhole(server, messageId("slot"));
+      expect(await third.staysQuiet(500)).toBe(true);
+      expect(await finish(one)).toBe(QUEUED);
+      expect((await third.read()).raw).toBe(QUEUED);
+      expect(await finish(two)).toBe(QUEUED);
+    } finally {
+      closeClients();
+      await server.stop();
+    }
   };
 
   test("two when SMTP_DATA_CONCURRENCY is not set", async () => {
-    await expectRoomForTwo(byDefault);
-  });
+    await expectRoomForTwo({});
+  }, 180_000);
 
   test("two when SMTP_DATA_CONCURRENCY is not a positive number", async () => {
-    await expectRoomForTwo(invalid);
-  });
+    await expectRoomForTwo({ SMTP_DATA_CONCURRENCY: "none" });
+    await expectRoomForTwo({ SMTP_DATA_CONCURRENCY: "0" });
+  }, 180_000);
 });

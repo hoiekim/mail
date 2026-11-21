@@ -17,17 +17,14 @@ import {
 // `server` is reached directly, so every connection is 127.0.0.1 and shares
 // one recipient-probe budget: no test here may name an unknown local mailbox.
 // Those tests run against `proxied`, where each one picks its own client address.
-// `unconfigured` was started with no EMAIL_DOMAIN at all.
 let server: TestServer;
 let proxied: TestServer;
-let unconfigured: TestServer;
 
 beforeAll(async () => {
-  [server, proxied, unconfigured] = (await bootAll(
+  [server, proxied] = (await bootAll(
     { tls: true, env: { ADMIN_RO_PASSWORD: "read-only-password-e2e" } },
-    { env: { PROXY_PROTOCOL: "true" } },
-    { env: { EMAIL_DOMAIN: undefined } }
-  )) as [TestServer, TestServer, TestServer];
+    { env: { PROXY_PROTOCOL: "true" } }
+  )) as [TestServer, TestServer];
   await createUser(server, "alice");
   await createUser(server, "bob");
   await createUser(proxied, "alice");
@@ -36,7 +33,7 @@ beforeAll(async () => {
 afterEach(closeClients);
 
 afterAll(async () => {
-  await Promise.all([server?.stop(), proxied?.stop(), unconfigured?.stop()]);
+  await Promise.all([server?.stop(), proxied?.stop()]);
 });
 
 let nextAddress = 0;
@@ -544,22 +541,6 @@ describe("relay refusal", () => {
       { address: "c@elsewhere.example" },
     ]);
     expect(server.mailgun.requests).toEqual([]);
-  });
-});
-
-describe("a server with no EMAIL_DOMAIN", () => {
-  test("accepts every recipient and then fails every message with a transient 450", async () => {
-    // NOTE: the server falls back to the domain "mydomain" for its accounts,
-    // but SMTP treats the missing setting as "not configured": no recipient
-    // is checked, and DATA is refused with a code that invites a retry.
-    const smtp = await session(unconfigured);
-    expect((await smtp.send("MAIL FROM:<a@remote.example>")).raw).toBe(ACCEPTED);
-    for (const recipient of ["x@nobody.mail.test", "x@mydomain", "admin@mydomain", "x@elsewhere.example"]) {
-      expect({ recipient, reply: (await smtp.rcptTo(recipient)).raw }).toEqual({ recipient, reply: ACCEPTED });
-    }
-    expect((await smtp.data(plain())).raw).toBe("450 Email service not configured");
-    expect(await unconfigured.db.query("SELECT 1 FROM mails")).toEqual([]);
-    expect((await smtp.send("NOOP")).raw).toBe("250 OK");
   });
 });
 

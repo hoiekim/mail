@@ -7,7 +7,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { startServer, type ServerOptions, type TestServer } from "../harness";
+import { sleep, startServer, type ServerOptions, type TestServer } from "../harness";
 import { SmtpClient, type SmtpConnectOptions, type SmtpReply } from "../harness/smtp";
 
 /** The name the server greets with: the machine's host name, which the tests share. */
@@ -19,19 +19,25 @@ export const MAX_MESSAGE_BYTES = 36_700_160;
 export type Listener = "smtp" | "smtps" | "submission";
 
 /**
- * `startServer`, tried again when a listener could not bind. The harness
- * picks ports by probing for free ones, and another process (or another
- * server starting at the same moment) can take one before the server binds
- * it; the server then never becomes healthy.
+ * `startServer`, tried again when the machine, not the server, got in the way:
+ *
+ * - a listener could not bind. The harness picks ports by probing for free
+ *   ones, and another process (or another server starting at the same moment)
+ *   can take one before the server binds it; the server then never becomes
+ *   healthy.
+ * - PostgreSQL had no connection to spare. Every server under test keeps ten
+ *   open, so suites running side by side can reach `max_connections`.
  */
 export const boot = async (options: ServerOptions = {}): Promise<TestServer> => {
   let failure: unknown;
-  for (const startupTimeoutMs of [20_000, 30_000, 60_000]) {
+  for (const startupTimeoutMs of [20_000, 30_000, 60_000, 60_000]) {
     try {
       return await startServer({ startupTimeoutMs, ...options });
     } catch (error) {
       failure = error;
-      if (!/EADDRINUSE|was not healthy/.test(String(error))) break;
+      const text = `${String(error)} ${(error as { code?: string; errno?: string })?.errno ?? ""}`;
+      if (/too many clients|53300/.test(text)) await sleep(3000);
+      else if (!/EADDRINUSE|was not healthy/.test(text)) break;
     }
   }
   throw failure;
