@@ -162,7 +162,7 @@ pub async fn receive_sso_event_with<E: EventEffects + ?Sized>(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use anyhow::anyhow;
     use std::sync::Mutex;

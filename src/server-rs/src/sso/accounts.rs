@@ -278,7 +278,7 @@ impl AccountDirectory for PostgresAccountDirectory {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::Mutex;
