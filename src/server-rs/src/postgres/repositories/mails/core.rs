@@ -16,8 +16,8 @@
 //! .await?;
 //! ```
 
-use std::cell::Cell;
 use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{bail, Result};
 use futures_util::future::join_all;
@@ -206,14 +206,14 @@ where
     F: Fn(String, String, String, i64) -> Fut,
     Fut: Future<Output = DbResult<i64>>,
 {
-    let settled = Cell::new(0usize);
+    // The order the writes settle in, so the failure that arrived first is
+    // the one reported.
+    let settled = AtomicUsize::new(0);
     let write = &write;
     let settled = &settled;
     let outcomes = join_all(writes.iter().map(|decided| async move {
         let outcome = write_one_mapping(write, user_id, &decided.mailbox, mail_id, decided.uid, decided.scope).await;
-        let at = settled.get();
-        settled.set(at + 1);
-        (at, decided.mailbox.as_str(), outcome)
+        (settled.fetch_add(1, Ordering::Relaxed), decided.mailbox.as_str(), outcome)
     }))
     .await;
 
@@ -1039,6 +1039,44 @@ mod tests {
         assert!(marked.is_err());
         let (marked, _) = with_script(vec![reserved(8), none(), fault(ADMIN_SHUTDOWN)], mark_mail_spam(USER, MAIL, true)).await;
         assert!(marked.is_err());
+    }
+
+    // The servers run these on spawned tasks.
+
+    #[test]
+    fn every_repository_call_can_cross_threads() {
+        use super::super::counters::*;
+        use crate::postgres::repositories::mailboxes::*;
+
+        fn sendable<T: Send>(_: T) {}
+        let input = SaveMailInput::default();
+        sendable(save_mail(&input));
+        sendable(get_mail_by_id(USER, MAIL));
+        sendable(get_mail_by_message_id(USER, "<m@x>"));
+        sendable(update_rfc822_size(USER, MAIL, 1));
+        sendable(mark_mail_read(USER, MAIL));
+        sendable(mark_mail_saved(USER, MAIL, true));
+        sendable(mark_mail_spam(USER, MAIL, true));
+        sendable(delete_mail(USER, MAIL));
+        sendable(record_mappings(USER, MAIL, &[], None));
+        sendable(sync_mapped_pivots_for_row(USER, MAIL, None, None, None));
+        sendable(get_domain_uid_next(USER, false));
+        sendable(get_account_uid_next(USER, "a@x", false));
+        sendable(get_mailbox_uid_next(USER, "Starred"));
+        sendable(get_uid_next(USER, &UidScope::Domain { sent: false }));
+        sendable(get_next_modseq(USER));
+        sendable(get_highest_modseq(USER, None, false));
+        sendable(sync_mailbox_pivot(USER, "Starred", MAIL, true));
+        sendable(write_mailbox_uid(USER, "Starred", MAIL, 1));
+        sendable(delete_mailbox_uid(USER, "Starred", MAIL));
+        let create = CreateMailboxInput::default();
+        sendable(create_mailbox(&create));
+        sendable(get_mailboxes_by_user(USER));
+        sendable(get_mailbox_by_name(USER, "Archive"));
+        sendable(get_mailbox_by_address(USER, "a@x"));
+        sendable(delete_mailbox_by_name(USER, "Archive"));
+        sendable(rename_mailbox(USER, "Archive", "Old"));
+        sendable(set_mailbox_subscribed(USER, "Archive", true));
     }
 
     // Envelope merging, which the merge branch does in JavaScript terms.

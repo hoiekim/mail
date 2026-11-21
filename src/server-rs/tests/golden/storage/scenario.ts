@@ -762,6 +762,21 @@ const here = import.meta.dir;
 const workDirectory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "mail-scenario-"));
 process.chdir(workDirectory);
 
+/** Leaves nothing behind, however the run ends. */
+const cleanUp = async () => {
+  await admin.unsafe(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
+  await admin.close();
+  fs.rmSync(workDirectory, { recursive: true, force: true });
+};
+const abandon = (error: unknown) => {
+  void cleanUp().finally(() => {
+    process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    process.exit(1);
+  });
+};
+process.on("uncaughtException", abandon);
+process.on("unhandledRejection", abandon);
+
 // The repositories read `POSTGRES_*` when they are first imported.
 const { pool } = await import("../../../../server/lib/postgres/client");
 const core = await import("../../../../server/lib/postgres/repositories/mails/core");
@@ -1175,9 +1190,7 @@ write("scenario.expected.json", {
 });
 
 await pool.end();
-await admin.unsafe(`DROP DATABASE "${database}" WITH (FORCE)`);
-await admin.close();
-fs.rmSync(workDirectory, { recursive: true, force: true });
+await cleanUp();
 
 const failures = recorded.filter((entry) => "threw" in (entry as object)).length;
 say(`${steps.length} steps (${failures} report a failure), ${mails.length} mails, ${mappings.length} mapping rows, ${counterRows.length} counters, ${boxes.length} mailboxes`);
