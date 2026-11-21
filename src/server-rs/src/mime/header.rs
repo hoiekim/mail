@@ -208,9 +208,10 @@ pub(crate) fn only_b_encoded_words(value: &str) -> bool {
     false
 }
 
-/// Rewrites each encoded word that is followed, after any whitespace, by
-/// another one. `rewrite` gets the two words and answers what replaces the
-/// first word and the whitespace, or `None` to keep them.
+/// Rewrites each encoded word that is followed, after at least `min_space`
+/// whitespace, by another one. `rewrite` gets the two words and writes what
+/// replaces the first word and the whitespace, or answers `false` to keep
+/// them as they are.
 fn replace_adjacent<F>(value: &str, encodings: &[u8], min_space: usize, mut rewrite: F) -> String
 where
     F: FnMut(&EncodedWord, &EncodedWord, &mut String) -> bool,

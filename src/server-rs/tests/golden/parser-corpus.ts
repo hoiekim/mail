@@ -346,7 +346,13 @@ const randomMessage = (rng: Rng): string => {
     const headers = [...extra];
     if (type || rng.chance(0.9)) headers.unshift(`Content-Type: ${type}`);
     if (encoding || rng.chance(0.2)) headers.push(`Content-Transfer-Encoding: ${encoding}`);
-    if (rng.chance(0.3)) headers.sort(() => rng.next() - 0.5);
+    if (rng.chance(0.3)) {
+      // Shuffled by hand: a sort with a random comparator is not the same from run to run.
+      for (let i = headers.length - 1; i > 0; i--) {
+        const j = rng.int(i + 1);
+        [headers[i], headers[j]] = [headers[j], headers[i]];
+      }
+    }
     return { headers, encoding };
   };
   const textLeaf = (): string => {

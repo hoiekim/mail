@@ -951,6 +951,24 @@ const plainTextFixture = () => {
         "The Rust port writes the number itself."
     });
   }
+  // Elements nested past what the TypeScript call stack holds.
+  const nested = "<b>".repeat(30_000) + "x";
+  let overflow = "";
+  try {
+    htmlToPlainText(nested);
+  } catch (error) {
+    overflow = `${(error as Error).name}: ${(error as Error).message}`;
+  }
+  if (!overflow) throw new Error("plain text: expected the TypeScript renderer to run out of call stack");
+  knownDifferences.push({
+    function: "htmlToPlainText",
+    input: nested,
+    typescript: JSON.stringify({ throws: overflow }),
+    rust: ["x", "x"],
+    why:
+      "The TypeScript renderer recurses over the element tree and throws once elements nest some thousands deep " +
+      "(how deep depends on the element and on the call stack it starts from). The Rust port keeps its own stack and renders any depth."
+  });
   writeFixture("plain-text", {
     htmlToPlainText: run("htmlToPlainText", html, (input) => [renderOrError(input, false), renderOrError(input, true)])
   });
