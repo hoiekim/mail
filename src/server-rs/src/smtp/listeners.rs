@@ -259,3 +259,273 @@ pub async fn initialize_smtp(listeners: SmtpListeners) -> Result<Vec<SmtpServer>
 pub async fn close_smtp_servers(servers: &[SmtpServer]) {
     futures_util::future::join_all(servers.iter().map(|server| server.close())).await;
 }
+
+#[cfg(test)]
+mod tests {
+    //! The cases of "registerListeners error handler" in `smtp.test.ts`.
+
+    use super::*;
+    use crate::smtp::server::HandshakeErrorMeta;
+
+    const PORT: u16 = 2525;
+
+    fn error(message: &str) -> SmtpServerError {
+        SmtpServerError::new(message)
+    }
+
+    /// An errno error as Bun words it: `ECONNRESET: connection reset by peer, read`.
+    fn errno(code: &str, description: &str, syscall: &str) -> SmtpServerError {
+        SmtpServerError {
+            code: Some(code.to_string()),
+            syscall: Some(syscall.to_string()),
+            ..error(&format!("{code}: {description}, {syscall}"))
+        }
+    }
+
+    fn meta(stage: &'static str, remote_address: Option<&str>) -> Option<HandshakeErrorMeta> {
+        Some(HandshakeErrorMeta { protocol: "smtp", stage, remote_address: remote_address.map(str::to_string) })
+    }
+
+    fn reset(message: &str, stage: Option<&'static str>) -> SmtpServerError {
+        SmtpServerError {
+            code: Some("ECONNRESET".to_string()),
+            meta: stage.and_then(|stage| meta(stage, None)),
+            ..error(message)
+        }
+    }
+
+    fn boring_ssl(reason: &str) -> SmtpServerError {
+        SmtpServerError {
+            library: Some("SSL routines".to_string()),
+            reason: Some(reason.to_string()),
+            code: Some(format!("ERR_SSL_{reason}")),
+            meta: meta("connect", None),
+            ..error(&format!("error:100000b8:SSL routines:OPENSSL_internal:{reason}"))
+        }
+    }
+
+    fn warns(secure: bool, error: &SmtpServerError) -> bool {
+        classify_server_error(PORT, secure, error) == ServerErrorReport::Warn
+    }
+
+    fn detail(secure: bool, error: &SmtpServerError) -> Option<String> {
+        match classify_server_error(PORT, secure, error) {
+            ServerErrorReport::Warn => None,
+            ServerErrorReport::Alarm { detail, .. } => Some(detail),
+        }
+    }
+
+    #[test]
+    fn suppresses_the_alarm_for_tls_handshake_function_names() {
+        for message in [
+            "tls_early_post_process_client_hello: unsupported protocol",
+            "extract_keyshares: bad key share",
+            "tls_choose_sigalg: no suitable signature algorithm",
+            "Socket closed before TLS handshake",
+            "read ECONNRESET",
+            "TLS handshake timeout",
+            "write ECONNRESET",
+            "write EPIPE",
+            "C0BC3644C57F0000:error:0A00006E:SSL routines:tls_parse_ctos_maxfragmentlen:bad extension:../deps/openssl/openssl/ssl/statem/extensions_srvr.c:184:\n",
+            "SSL routines:tls_collect_extensions:bad extension",
+            "tls_post_process_client_hello: no shared cipher",
+            "tls_validate_record_header: wrong version number",
+            "final_key_share: no suitable key share",
+            "tls_get_more_records: packet length too long",
+            "Failed to establish TLS session",
+            "read ETIMEDOUT",
+            "write EPROTO",
+        ] {
+            assert!(warns(false, &error(message)), "{message}");
+        }
+    }
+
+    #[test]
+    fn suppresses_the_alarm_for_peer_drop_errno_codes_in_buns_message_format() {
+        for dropped in [
+            errno("ETIMEDOUT", "connection timed out", "read"),
+            errno("ECONNRESET", "connection reset by peer", "read"),
+            errno("EPIPE", "broken pipe", "write"),
+            errno("ECONNRESET", "connection reset by peer", "write"),
+            errno("EPROTO", "protocol error", "write"),
+        ] {
+            assert!(warns(false, &dropped), "{}", dropped.message);
+        }
+    }
+
+    #[test]
+    fn still_alarms_on_errno_codes_outside_the_peer_drop_syscalls() {
+        assert!(!warns(false, &errno("EMFILE", "too many open files", "accept")));
+        assert!(!warns(false, &errno("EPROTO", "protocol error", "read")));
+    }
+
+    #[test]
+    fn suppresses_any_implicit_tls_handshake_error_whatever_its_wording() {
+        assert!(warns(true, &reset("socket hang up", Some("connect"))));
+        assert!(warns(true, &reset("some future runtime wording", Some("connect"))));
+    }
+
+    #[test]
+    fn still_pages_for_the_same_error_when_it_was_not_raised_by_the_implicit_tls_handshake() {
+        assert!(!warns(true, &reset("socket hang up", None)));
+        assert!(!warns(true, &reset("socket hang up", Some("data"))));
+        assert!(!warns(false, &reset("socket hang up", Some("connect"))));
+    }
+
+    #[test]
+    fn suppresses_tls_layer_errors_on_the_starttls_servers() {
+        assert!(warns(false, &boring_ssl("NO_SHARED_CIPHER")));
+        assert!(warns(false, &boring_ssl("UNSUPPORTED_PROTOCOL")));
+        let by_code_alone = SmtpServerError {
+            code: Some("ERR_SSL_WRONG_VERSION_NUMBER".to_string()),
+            ..error("OPENSSL_internal:WRONG_VERSION_NUMBER")
+        };
+        assert!(warns(false, &by_code_alone));
+    }
+
+    #[test]
+    fn still_pages_for_a_socket_error_tagged_by_the_starttls_upgrade_handler() {
+        let refused = SmtpServerError {
+            code: Some("ECONNREFUSED".to_string()),
+            meta: meta("connect", None),
+            ..error("connect ECONNREFUSED")
+        };
+        assert!(!warns(false, &refused));
+        let not_the_tls_library = SmtpServerError {
+            library: Some("SSL".to_string()),
+            code: Some("ERR_SSLX".to_string()),
+            ..error("SSL is not a library")
+        };
+        assert!(!warns(false, &not_the_tls_library));
+    }
+
+    #[test]
+    fn pages_when_the_peer_rejects_our_certificate() {
+        assert!(!warns(false, &boring_ssl("SSLV3_ALERT_BAD_CERTIFICATE")));
+        assert!(!warns(false, &boring_ssl("TLSV1_ALERT_UNKNOWN_CA")));
+        let open_ssl_1 = SmtpServerError {
+            library: Some("SSL routines".to_string()),
+            reason: Some("sslv3 alert bad certificate".to_string()),
+            code: Some("ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE".to_string()),
+            ..error("error:14094412:SSL routines:ssl3_read_bytes:sslv3 alert bad certificate")
+        };
+        assert!(!warns(false, &open_ssl_1));
+        let open_ssl_3 = SmtpServerError {
+            library: Some("SSL routines".to_string()),
+            reason: Some("ssl/tls alert bad certificate".to_string()),
+            code: Some("ERR_SSL_SSL/TLS_ALERT_BAD_CERTIFICATE".to_string()),
+            ..error("error:0A000412:SSL routines::ssl/tls alert bad certificate")
+        };
+        assert!(!warns(false, &open_ssl_3));
+        assert!(warns(false, &boring_ssl("NO_SHARED_CIPHER")));
+        // It pages on the implicit-TLS listener too, where any other handshake failure is noise.
+        assert!(!warns(true, &boring_ssl("SSLV3_ALERT_CERTIFICATE_EXPIRED")));
+    }
+
+    #[test]
+    fn names_the_peer_of_a_certificate_rejected_during_the_implicit_tls_handshake() {
+        let rejected = SmtpServerError {
+            meta: meta("connect", Some("203.0.113.7")),
+            ..boring_ssl("SSLV3_ALERT_BAD_CERTIFICATE")
+        };
+        let report = classify_server_error(PORT, true, &rejected);
+        let ServerErrorReport::Alarm { remote_address, detail } = report else {
+            panic!("a rejected certificate pages");
+        };
+        assert_eq!(remote_address.as_deref(), Some("203.0.113.7"));
+        assert!(detail.contains("**Remote:** 203.0.113.7\n"), "{detail}");
+    }
+
+    #[test]
+    fn names_the_peer_of_an_error_raised_inside_a_session() {
+        let failure = SmtpServerError {
+            remote_address: Some("203.0.113.8".to_string()),
+            ..error("unexpected internal failure")
+        };
+        assert_eq!(
+            classify_server_error(PORT, false, &failure),
+            ServerErrorReport::Alarm {
+                remote_address: Some("203.0.113.8".to_string()),
+                detail: "**Port:** 2525\n**Remote:** 203.0.113.8\n**Error:** Error: unexpected internal failure"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn leaves_the_line_out_when_the_error_has_no_peer() {
+        let detail = detail(false, &error("listen EADDRINUSE")).expect("a failed listen pages");
+        assert_eq!(detail, "**Port:** 2525\n**Error:** Error: listen EADDRINUSE");
+    }
+
+    #[test]
+    fn keeps_the_peer_out_of_suppressed_warnings() {
+        let noise = SmtpServerError {
+            meta: meta("connect", Some("203.0.113.9")),
+            remote_address: Some("203.0.113.9".to_string()),
+            ..boring_ssl("NO_SHARED_CIPHER")
+        };
+        assert_eq!(classify_server_error(PORT, true, &noise), ServerErrorReport::Warn);
+    }
+
+    #[test]
+    fn pages_on_non_suppressible_failures() {
+        assert!(detail(false, &error("unexpected internal failure")).is_some());
+    }
+
+    fn rustls_error(error: rustls::Error) -> SmtpServerError {
+        SmtpServerError::from_io("read", &std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    #[test]
+    fn sorts_what_rustls_reports_the_way_the_bun_server_sorts_openssl() {
+        use rustls::AlertDescription as Alert;
+
+        // A client that speaks no TLS, or none this server shares: noise.
+        let garbage = rustls_error(rustls::Error::InvalidMessage(rustls::InvalidMessage::InvalidContentType));
+        assert_eq!(garbage.library.as_deref(), Some("SSL routines"));
+        assert_eq!(garbage.code.as_deref(), Some("ERR_SSL_INVALID_MESSAGE"));
+        assert!(warns(false, &garbage));
+        assert!(warns(false, &rustls_error(rustls::Error::AlertReceived(Alert::HandshakeFailure))));
+        assert!(warns(false, &rustls_error(rustls::Error::AlertReceived(Alert::ProtocolVersion))));
+
+        // A client that refuses this server's certificate: a defect here.
+        for alert in [
+            Alert::BadCertificate,
+            Alert::UnsupportedCertificate,
+            Alert::CertificateRevoked,
+            Alert::CertificateExpired,
+            Alert::CertificateUnknown,
+            Alert::UnknownCA,
+        ] {
+            let rejected = rustls_error(rustls::Error::AlertReceived(alert));
+            assert!(is_peer_cert_rejection(&rejected), "{alert:?}");
+            assert!(!warns(false, &rejected), "{alert:?}");
+            assert!(!warns(true, &rejected), "{alert:?}");
+        }
+        assert!(!is_peer_cert_rejection(&rustls_error(rustls::Error::AlertReceived(Alert::HandshakeFailure))));
+    }
+
+    #[test]
+    fn describes_socket_failures_as_node_does() {
+        let reset = SmtpServerError::from_io("read", &std::io::Error::from_raw_os_error(libc::ECONNRESET));
+        assert_eq!(reset.message, "read ECONNRESET");
+        assert_eq!((reset.code.as_deref(), reset.syscall.as_deref()), (Some("ECONNRESET"), Some("read")));
+        assert!(warns(false, &reset));
+
+        let pipe = SmtpServerError::from_io("write", &std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        assert_eq!(pipe.message, "write EPIPE");
+        assert!(warns(false, &pipe));
+
+        let in_use = SmtpServerError::from_io("listen", &std::io::Error::from_raw_os_error(libc::EADDRINUSE));
+        assert_eq!(in_use.message, "listen EADDRINUSE");
+        assert!(!warns(false, &in_use));
+
+        let closed = SmtpServerError::handshake(None, Some("203.0.113.7".to_string()));
+        assert_eq!(closed.message, "Socket closed while initiating TLS");
+        assert_eq!(closed.code.as_deref(), Some("SocketError"));
+        assert_eq!(closed.meta, meta("connect", Some("203.0.113.7")));
+        assert!(warns(true, &closed));
+        assert!(warns(false, &closed));
+    }
+}

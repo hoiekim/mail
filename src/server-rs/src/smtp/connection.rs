@@ -1414,3 +1414,158 @@ async fn poll_io(
     })
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Feeds `input` in the given pieces; the message, and what followed the terminator.
+    fn unstuff(pieces: &[&[u8]]) -> (Vec<u8>, Option<Vec<u8>>) {
+        let mut unstuffer = DotUnstuffer::new();
+        let mut message = Vec::new();
+        for (index, piece) in pieces.iter().enumerate() {
+            let Unstuffed { data, rest } = unstuffer.feed(Bytes::copy_from_slice(piece));
+            data.iter().for_each(|chunk| message.extend_from_slice(chunk));
+            if let Some(rest) = rest {
+                let mut rest = rest.to_vec();
+                pieces[index + 1..].iter().for_each(|later| rest.extend_from_slice(later));
+                return (message, Some(rest));
+            }
+        }
+        (message, None)
+    }
+
+    /// The message and the rest, worked out over the whole input at once.
+    fn reference(input: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
+        let mut message = Vec::new();
+        let mut line_start = 0;
+        let mut after_crlf = true;
+        loop {
+            let line_end = input[line_start..].iter().position(|&byte| byte == LF).map(|at| line_start + at + 1);
+            let line = &input[line_start..line_end.unwrap_or(input.len())];
+            if after_crlf && line == b".\r\n" {
+                return (message, Some(input[line_start + 3..].to_vec()));
+            }
+            let Some(line_end) = line_end else {
+                // An unfinished line: a dot that may yet be stuffing or the terminator is held back.
+                let held = line == b"." || (after_crlf && line == b".\r");
+                let kept = if held { &[][..] } else { line.strip_prefix(b"..").map_or(line, |_| &line[1..]) };
+                message.extend_from_slice(kept);
+                return (message, None);
+            };
+            message.extend_from_slice(line.strip_prefix(b"..").map_or(line, |_| &line[1..]));
+            after_crlf = line.ends_with(b"\r\n");
+            line_start = line_end;
+        }
+    }
+
+    #[test]
+    fn unstuffs_dots_and_stops_at_the_terminator() {
+        let (message, rest) = unstuff(&[b"..leading dot\r\n.x\r\nlast\r\n.\r\nNOOP\r\n"]);
+        assert_eq!(message, b".leading dot\r\n.x\r\nlast\r\n");
+        assert_eq!(rest.as_deref(), Some(&b"NOOP\r\n"[..]));
+
+        assert_eq!(unstuff(&[b".\r\n"]), (Vec::new(), Some(Vec::new())));
+        assert_eq!(unstuff(&[b"...\r\n.. \r\n..\r\n.\r\n"]).0, b"..\r\n. \r\n.\r\n");
+        assert_eq!(unstuff(&[b"a.\r\n.b\r\n"]), (b"a.\r\n.b\r\n".to_vec(), None));
+    }
+
+    #[test]
+    fn finds_the_terminator_split_across_chunks() {
+        let (message, rest) = unstuff(&[b"Subject: x\r\n\r\nbody\r", b"\n", b".", b"\r", b"\n"]);
+        assert_eq!(message, b"Subject: x\r\n\r\nbody\r\n");
+        assert_eq!(rest, Some(Vec::new()));
+
+        let (message, rest) = unstuff(&[b"line\r\n", b".", b".stuffed\r\n.", b"x\r\n.", b"\r", b"y\r\n", b".\r", b"\nQUIT"]);
+        assert_eq!(message, b"line\r\n.stuffed\r\n.x\r\n.\ry\r\n");
+        assert_eq!(rest.as_deref(), Some(&b"QUIT"[..]));
+    }
+
+    #[test]
+    fn ends_only_at_crlf_dot_crlf() {
+        let content = b"A\n.\r\nMAIL FROM:<smuggled@x.org>\r\nB\r\n.\nRCPT TO:<smuggled@x.org>\r\nC\n.\nD\r.\rE\r\n";
+        let mut input = content.to_vec();
+        input.extend_from_slice(b".\r\n");
+        assert_eq!(unstuff(&[&input]), (content.to_vec(), Some(Vec::new())));
+        // A dot after a bare line feed is still unstuffed.
+        assert_eq!(unstuff(&[b"a\n..b\n.\r\nc\r..d\r\n.\r\n"]).0, b"a\n.b\n.\r\nc\r..d\r\n");
+    }
+
+    #[test]
+    fn gives_the_same_message_however_the_bytes_are_cut() {
+        // A small generator, so a failure names an input that fails again.
+        let mut state = 0x9e37_79b9u32;
+        let mut next = move |below: u32| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state % below
+        };
+        for _ in 0..3000 {
+            let length = next(40) as usize;
+            let input: Vec<u8> = (0..length).map(|_| b".\r\n.a\r\n"[next(7) as usize]).collect();
+            let expected = reference(&input);
+            assert_eq!(unstuff(&[&input]), expected, "{:?}", String::from_utf8_lossy(&input));
+
+            let mut pieces: Vec<&[u8]> = Vec::new();
+            let mut at = 0;
+            while at < input.len() {
+                let take = (1 + next(4) as usize).min(input.len() - at);
+                pieces.push(&input[at..at + take]);
+                at += take;
+            }
+            assert_eq!(unstuff(&pieces), expected, "{:?} cut as {pieces:?}", String::from_utf8_lossy(&input));
+        }
+    }
+
+    #[test]
+    fn decodes_base64_as_buffer_from_does() {
+        assert_eq!(decode_base64_lenient("AHVzZXIAcGFzcw=="), b"\0user\0pass");
+        assert_eq!(decode_base64_lenient("AHVzZXIAcGFzcw"), b"\0user\0pass");
+        assert_eq!(decode_base64_lenient("AHVz ZXIA\tcGFz*cw=="), b"\0user\0pass");
+        assert_eq!(decode_base64_lenient("YQ==YQ=="), b"a");
+        assert_eq!(decode_base64_lenient("-_-_"), [0xfb, 0xff, 0xbf]);
+        assert_eq!(decode_base64_lenient("*"), b"");
+        assert_eq!(decode_base64_lenient("A"), b"");
+        // Outside Latin-1 a character counts as the low byte of its UTF-16 units.
+        assert_eq!(decode_base64_lenient("\u{141}\u{141}\u{141}\u{141}"), [0, 0, 0]);
+        assert_eq!(decode_base64_lenient("\u{1f600}QUJD"), b"");
+        assert_eq!(decode_base64_text("w6k="), "é");
+        assert_eq!(decode_base64_text("//4="), "\u{fffd}\u{fffd}");
+    }
+
+    #[test]
+    fn reads_a_declared_size_as_javascript_reads_a_number() {
+        assert_eq!(js_number("1048577"), 1_048_577.0);
+        assert_eq!(js_number("1e9"), 1e9);
+        assert_eq!(js_number("0x200000"), 2_097_152.0);
+        assert_eq!(js_number("0XFFFFFFFFFFFFFFFFFFFF"), 1_208_925_819_614_629_174_706_175.0);
+        assert_eq!(js_number("12.5"), 12.5);
+        assert_eq!(js_number("Infinity"), f64::INFINITY);
+        assert!(js_number("abc").is_nan());
+        assert!(js_number("0x").is_nan());
+        assert!(js_number("12abc").is_nan());
+        assert!(js_number("\u{85}5").is_nan());
+    }
+
+    #[test]
+    fn recognizes_an_http_request_line_as_the_bun_server_does() {
+        for line in ["GET / HTTP/1.1", "post /submit http/1.0", "OPTIONS /a b c HTTP/2.0", "CONNECT /x:443 HTTP/1.1"] {
+            assert!(HTTP_REQUEST.is_match(line), "{line}");
+        }
+        for line in [
+            "GET /HTTP/1.1",
+            "GET / HTTP/1.1 ",
+            "GET / HTTP/11",
+            "PATCH / HTTP/1.1",
+            " GET / HTTP/1.1",
+            "GET / HTTP/1.1\r",
+            "GET /a\rb HTTP/1.1",
+            "GET /a\u{2028}b HTTP/1.1",
+            "PO\u{17f}T / HTTP/1.1",
+            "GET / HTTP/\u{661}.1",
+        ] {
+            assert!(!HTTP_REQUEST.is_match(line), "{line:?}");
+        }
+    }
+}

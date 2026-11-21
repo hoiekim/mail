@@ -23,7 +23,7 @@ pub struct TestCertificate {
     pub key: PathBuf,
 }
 
-fn generate_certificate() -> TestCertificate {
+pub fn generate_certificate() -> TestCertificate {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let status = Command::new("openssl")
         .args(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "key.pem", "-out", "cert.pem"])
