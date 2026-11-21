@@ -175,13 +175,16 @@ impl DotUnstuffer {
     }
 }
 
-/// `Buffer.from(text, "base64")`: either alphabet, anything else skipped,
-/// the first `=` ends the input, and a dangling sextet is dropped.
-pub(crate) fn decode_base64_lenient(text: &str) -> Vec<u8> {
+/// `Buffer.from(text, "base64")` as Bun decodes it: either alphabet, anything
+/// else skipped, the first `=` ends the input, and a dangling sextet is
+/// dropped. A character outside Latin-1 counts as the low byte of each of its
+/// UTF-16 code units, so `Ł` (U+0141) reads as `A`.
+pub fn decode_base64_lenient(text: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() / 4 * 3 + 2);
     let mut accumulator: u32 = 0;
     let mut bits = 0;
-    for byte in text.bytes() {
+    for unit in text.encode_utf16() {
+        let byte = unit as u8;
         let sextet = match byte {
             b'A'..=b'Z' => byte - b'A',
             b'a'..=b'z' => byte - b'a' + 26,

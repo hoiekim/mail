@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -356,25 +357,34 @@ impl SmtpServer {
         *self.shared.local_addr.lock().unwrap()
     }
 
-    /// Stops accepting connections and returns once every open one has
-    /// ended, or after `close_timeout` — whichever comes first. Connections
-    /// still open at the deadline are answered `421 Server shutting down` and
-    /// closed.
-    pub async fn close(&self) {
-        let shared = &self.shared;
+    /// Stops accepting connections, at once: from this call on every command
+    /// is answered `421 Server shutting down`. The future it returns is done
+    /// once every open connection has ended, or after `close_timeout` —
+    /// whichever comes first. Connections still open at the deadline are
+    /// answered the same 421 and closed.
+    pub fn close(&self) -> impl Future<Output = ()> + Send + 'static {
+        let shared = self.shared.clone();
         shared.closing.store(true, Ordering::SeqCst);
         shared.stop.cancel();
         if !shared.listening.load(Ordering::SeqCst) {
             shared.settled();
         }
+        let deadline = tokio::time::Instant::now() + shared.options.close_timeout;
+        async move { shared.drain(deadline).await }
+    }
+}
 
-        let deadline = tokio::time::sleep(shared.options.close_timeout);
+impl ServerShared {
+    /// Waits for the last socket to close, and at `deadline` refuses the
+    /// connections that are still open.
+    async fn drain(&self, deadline: tokio::time::Instant) {
+        let deadline = tokio::time::sleep_until(deadline);
         tokio::pin!(deadline);
         loop {
-            let quiet = shared.quiet.notified();
+            let quiet = self.quiet.notified();
             tokio::pin!(quiet);
             quiet.as_mut().enable();
-            if !shared.listening.load(Ordering::SeqCst) && shared.sockets.load(Ordering::SeqCst) == 0 {
+            if !self.listening.load(Ordering::SeqCst) && self.sockets.load(Ordering::SeqCst) == 0 {
                 return;
             }
             tokio::select! {
@@ -384,7 +394,7 @@ impl SmtpServer {
         }
 
         let connections: Vec<Arc<ConnectionHandle>> =
-            shared.connections.lock().unwrap().drain().map(|(_, handle)| handle).collect();
+            self.connections.lock().unwrap().drain().map(|(_, handle)| handle).collect();
         let refusals: Vec<oneshot::Receiver<()>> = connections
             .iter()
             .map(|connection| {
@@ -393,7 +403,7 @@ impl SmtpServer {
                 refused
             })
             .collect();
-        shared.handshakes.cancel();
+        self.handshakes.cancel();
         // The Bun server writes the refusals before its callback runs; a
         // caller that exits right after this returns must not cut them off.
         let _ = tokio::time::timeout(REFUSAL_FLUSH_TIMEOUT, futures_util::future::join_all(refusals)).await;
