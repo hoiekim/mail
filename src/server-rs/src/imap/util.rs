@@ -57,6 +57,18 @@ const WEEKDAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JsDate(Option<i64>);
 
+/// A date in UTC: month 1..=12, weekday 0 for Sunday.
+struct DateFields {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    ms: i64,
+    weekday: usize,
+}
+
 impl JsDate {
     /// `new Date(ms)`.
     pub fn from_ms(ms: i64) -> JsDate {
@@ -87,28 +99,27 @@ impl JsDate {
         self.0.is_some()
     }
 
-    /// `(year, month 1..=12, day, hour, minute, second, millisecond, weekday 0 = Sunday)`.
-    fn fields(&self) -> Option<(i64, i64, i64, i64, i64, i64, i64, usize)> {
+    /// The calendar fields of a valid date.
+    fn fields(&self) -> Option<DateFields> {
         let ms = self.0?;
         let days = ms.div_euclid(MS_PER_DAY);
         let in_day = ms.rem_euclid(MS_PER_DAY);
         let (year, month, day) = civil_from_days(days);
-        let weekday = (days + 4).rem_euclid(7) as usize;
-        Some((
+        Some(DateFields {
             year,
             month,
             day,
-            in_day / 3_600_000,
-            in_day / 60_000 % 60,
-            in_day / 1000 % 60,
-            in_day % 1000,
-            weekday,
-        ))
+            hour: in_day / 3_600_000,
+            minute: in_day / 60_000 % 60,
+            second: in_day / 1000 % 60,
+            ms: in_day % 1000,
+            weekday: (days + 4).rem_euclid(7) as usize,
+        })
     }
 
     /// `toISOString()`, or `None` where JavaScript throws a RangeError.
     pub fn to_iso_string(&self) -> Option<String> {
-        let (year, month, day, hour, minute, second, ms, _) = self.fields()?;
+        let DateFields { year, month, day, hour, minute, second, ms, .. } = self.fields()?;
         let year = if (0..=9999).contains(&year) {
             format!("{year:04}")
         } else {
@@ -127,7 +138,7 @@ impl JsDate {
 
     /// `toUTCString()`, e.g. `Sat, 21 Nov 2026 05:53:08 GMT`.
     pub fn to_utc_string(&self) -> String {
-        let Some((year, month, day, hour, minute, second, _, weekday)) = self.fields() else {
+        let Some(DateFields { year, month, day, hour, minute, second, weekday, .. }) = self.fields() else {
             return "Invalid Date".to_string();
         };
         format!(
@@ -1423,7 +1434,7 @@ pub fn box_to_account(username: &str, mailbox: &str) -> String {
 /// INTERNALDATE (RFC 3501 §9 `date-time`): `DD-Mon-YYYY HH:MM:SS +ZZZZ`, the
 /// day space-padded. An Invalid Date prints what the Bun server prints.
 pub fn format_internal_date(date: &JsDate) -> String {
-    let Some((year, month, day, hour, minute, second, _, _)) = date.fields() else {
+    let Some(DateFields { year, month, day, hour, minute, second, .. }) = date.fields() else {
         return "NaN-undefined-NaN NaN:NaN:NaN -NaNNaN".to_string();
     };
     format!(

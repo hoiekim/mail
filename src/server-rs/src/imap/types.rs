@@ -499,10 +499,13 @@ pub enum SearchCriterion {
 }
 
 impl SearchCriterion {
+    /// `NOT <criterion>`.
+    #[allow(clippy::should_implement_trait)]
     pub fn not(criterion: SearchCriterion) -> SearchCriterion {
         SearchCriterion::Not(SubCriterion::new(criterion))
     }
 
+    /// `OR <left> <right>`.
     pub fn or(left: SearchCriterion, right: SearchCriterion) -> SearchCriterion {
         SearchCriterion::Or(SubCriterion::new(left), SubCriterion::new(right))
     }
@@ -977,13 +980,10 @@ impl UidRequest {
 
 impl Drop for UidRequest {
     fn drop(&mut self) {
+        // Detach each nested request before the one holding it is dropped.
         let mut next = std::mem::replace(&mut *self.request, ImapRequest::Noop);
-        loop {
-            let deeper = match &mut next {
-                ImapRequest::Uid(inner) => std::mem::replace(&mut *inner.request, ImapRequest::Noop),
-                _ => break,
-            };
-            next = deeper;
+        while let ImapRequest::Uid(inner) = &mut next {
+            next = std::mem::replace(&mut *inner.request, ImapRequest::Noop);
         }
     }
 }
@@ -1517,7 +1517,9 @@ mod tests {
         assert!(deep != deep_not(levels - 1));
         let json = deep.to_json_string();
         assert!(json.starts_with("{\"type\":\"NOT\",\"criterion\":{\"type\":\"NOT\""));
-        assert!(json.ends_with("{\"type\":\"SEEN\"}}}"));
+        let seen = "{\"type\":\"SEEN\"}";
+        assert_eq!(json.len(), levels * "{\"type\":\"NOT\",\"criterion\":}".len() + seen.len());
+        assert!(json.trim_end_matches('}').ends_with("{\"type\":\"SEEN\""));
         let count = deep.fold(&mut |_| 0usize, &mut |inner| inner + 1, &mut |a, b| a + b);
         assert_eq!(count, levels);
         drop(copy);
@@ -1550,7 +1552,8 @@ mod tests {
         assert!(copy == request);
         let json = request.to_json_string();
         assert!(json.starts_with("{\"type\":\"UID\",\"data\":{\"command\":\"UID\",\"request\":{\"type\":\"UID\""));
-        assert!(json.ends_with("{\"type\":\"NOOP\"}}}}}"));
+        assert!(json.trim_end_matches('}').ends_with("{\"type\":\"NOOP\""));
+        assert_eq!(json.matches("\"command\":\"UID\"").count(), 200_000);
         let ImapRequest::Uid(outer) = request else { panic!("expected UID") };
         let (command, inner) = outer.into_parts();
         assert_eq!(command, "UID");

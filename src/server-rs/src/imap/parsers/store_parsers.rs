@@ -68,13 +68,13 @@ pub fn parse_store(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 }
 
 /// A sequence set and a target mailbox: the arguments of COPY and of MOVE.
-fn parse_copy_arguments(command: &str, context: &mut ParseContext) -> Result<CopyRequest, ParseResult<ImapRequest>> {
+fn parse_copy_arguments(command: &str, context: &mut ParseContext) -> Result<CopyRequest, String> {
     let Some(sequence_set) = parse_sequence_set(context).into_result().ok() else {
-        return Err(ParseResult::fail(format!("Invalid sequence set in {command}")));
+        return Err(format!("Invalid sequence set in {command}"));
     };
     skip_whitespace(context);
     let Some(mailbox) = parse_string(context).into_result().ok() else {
-        return Err(ParseResult::fail(format!("Invalid mailbox name in {command}")));
+        return Err(format!("Invalid mailbox name in {command}"));
     };
     Ok(CopyRequest { sequence_set, mailbox })
 }
@@ -83,7 +83,7 @@ fn parse_copy_arguments(command: &str, context: &mut ParseContext) -> Result<Cop
 pub fn parse_copy(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     match parse_copy_arguments("COPY", context) {
         Ok(data) => ParseResult::ok(ImapRequest::Copy(data), context.position),
-        Err(failure) => failure,
+        Err(error) => ParseResult::fail(error),
     }
 }
 
@@ -91,6 +91,6 @@ pub fn parse_copy(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 pub fn parse_move(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     match parse_copy_arguments("MOVE", context) {
         Ok(data) => ParseResult::ok(ImapRequest::Move(data), context.position),
-        Err(failure) => failure,
+        Err(error) => ParseResult::fail(error),
     }
 }

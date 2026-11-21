@@ -7,9 +7,9 @@ use crate::imap::types::{ImapRequest, ListRequest, ParseContext, ParseResult, Se
 use crate::logger;
 
 /// One string argument after optional spaces, or `error`.
-fn mailbox_argument(context: &mut ParseContext, error: &str) -> Result<String, ParseResult<ImapRequest>> {
+fn mailbox_argument(context: &mut ParseContext, error: &str) -> Result<String, String> {
     skip_whitespace(context);
-    parse_string(context).into_result().map_err(|_| ParseResult::fail(error))
+    parse_string(context).into_result().map_err(|_| error.to_string())
 }
 
 /// Parses LIST or LSUB: a reference name and a mailbox pattern.
@@ -46,7 +46,7 @@ pub fn parse_list(command: &str, context: &mut ParseContext) -> ParseResult<Imap
 pub fn parse_select(read_only: bool, context: &mut ParseContext) -> ParseResult<ImapRequest> {
     let mailbox = match mailbox_argument(context, "Invalid mailbox name") {
         Ok(mailbox) => mailbox,
-        Err(failure) => return failure,
+        Err(error) => return ParseResult::fail(error),
     };
     let data = SelectRequest { mailbox };
     let request = if read_only { ImapRequest::Examine(data) } else { ImapRequest::Select(data) };
@@ -59,7 +59,7 @@ pub fn parse_select(read_only: bool, context: &mut ParseContext) -> ParseResult<
 pub fn parse_status(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     let mailbox = match mailbox_argument(context, "Invalid mailbox name in STATUS") {
         Ok(mailbox) => mailbox,
-        Err(failure) => return failure,
+        Err(error) => return ParseResult::fail(error),
     };
 
     skip_whitespace(context);
@@ -94,7 +94,7 @@ pub fn parse_status(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 pub fn parse_create(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     match mailbox_argument(context, "Invalid mailbox name in CREATE") {
         Ok(mailbox) => ParseResult::ok(ImapRequest::Create { mailbox }, context.position),
-        Err(failure) => failure,
+        Err(error) => ParseResult::fail(error),
     }
 }
 
@@ -102,7 +102,7 @@ pub fn parse_create(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 pub fn parse_delete(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     match mailbox_argument(context, "Invalid mailbox name in DELETE") {
         Ok(mailbox) => ParseResult::ok(ImapRequest::Delete { mailbox }, context.position),
-        Err(failure) => failure,
+        Err(error) => ParseResult::fail(error),
     }
 }
 
@@ -110,11 +110,11 @@ pub fn parse_delete(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 pub fn parse_rename(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     let old_name = match mailbox_argument(context, "Invalid existing mailbox name in RENAME") {
         Ok(name) => name,
-        Err(failure) => return failure,
+        Err(error) => return ParseResult::fail(error),
     };
     let new_name = match mailbox_argument(context, "Invalid new mailbox name in RENAME") {
         Ok(name) => name,
-        Err(failure) => return failure,
+        Err(error) => return ParseResult::fail(error),
     };
     ParseResult::ok(ImapRequest::Rename { old_name, new_name }, context.position)
 }
@@ -123,7 +123,7 @@ pub fn parse_rename(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 pub fn parse_subscribe(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     match mailbox_argument(context, "Invalid mailbox name in SUBSCRIBE") {
         Ok(mailbox) => ParseResult::ok(ImapRequest::Subscribe { mailbox }, context.position),
-        Err(failure) => failure,
+        Err(error) => ParseResult::fail(error),
     }
 }
 
@@ -131,6 +131,6 @@ pub fn parse_subscribe(context: &mut ParseContext) -> ParseResult<ImapRequest> {
 pub fn parse_unsubscribe(context: &mut ParseContext) -> ParseResult<ImapRequest> {
     match mailbox_argument(context, "Invalid mailbox name in UNSUBSCRIBE") {
         Ok(mailbox) => ParseResult::ok(ImapRequest::Unsubscribe { mailbox }, context.position),
-        Err(failure) => failure,
+        Err(error) => ParseResult::fail(error),
     }
 }
