@@ -1621,6 +1621,28 @@ export const conversations: Conversation[] = [
     cmd("QUIT"),
     closed()
   ]),
+  conversation("a flood sent during a slow hook, then the client's FIN", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(100),
+    { send: "NOOP\r\n", times: 30000 },
+    send("QUIT\r\n"),
+    end(),
+    { replies: 30002 },
+    closed()
+  ]),
+  conversation("a flood, then a transaction, with the client's FIN right behind", [
+    hello(),
+    { send: "NOOP\r\n", times: 20000 },
+    send("MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nNOOP\r\nQUIT\r\n"),
+    end(),
+    { replies: 20000 },
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    closed()
+  ]),
   conversation("thirty transactions started in one write", [
     hello(),
     { send: "MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nRSET\r\n", times: 30 },

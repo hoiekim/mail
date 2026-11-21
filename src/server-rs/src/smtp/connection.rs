@@ -72,8 +72,10 @@ const MAX_RECIPIENTS: usize = 100;
 
 const MAX_UNRECOGNIZED_COMMANDS: u32 = 10;
 
-/// The most one read takes off the socket.
-const READ_CHUNK_BYTES: usize = 64 * 1024;
+/// The most one read takes off the socket: what Bun hands a `data` listener
+/// at once. It is what "the same read" means where the Bun server acts on
+/// one, as when it drops what was pipelined behind STARTTLS.
+const READ_CHUNK_BYTES: usize = 512 * 1024;
 
 /// What a paused connection still takes in: the read buffer of a Bun socket.
 const HELD_BACK_BYTES: usize = 64 * 1024;
