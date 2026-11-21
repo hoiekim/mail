@@ -2,6 +2,7 @@
 //! autoconfig, and the built web client with its single-page fallback.
 
 pub mod error_handler;
+pub mod head_stream;
 pub mod issue_session;
 pub mod mime_types;
 pub mod rate_limit;
@@ -513,8 +514,10 @@ async fn into_wire(request: &WireRequest<'_>, mut response: Response) -> hyper::
     } else if !streamed {
         builder = builder.header("Content-Length", length);
     } else if method == "HEAD" && request.http_11 {
-        // For GET the HTTP library names the encoding as it applies it.
-        builder = builder.header("Transfer-Encoding", "chunked");
+        // For GET the HTTP library names the encoding as it applies it. From
+        // a HEAD answer it would drop the header, so a stand-in travels to
+        // the connection's writer, which puts the real name back.
+        builder = builder.header(head_stream::stand_in_header(), "chunked");
     }
     builder.body(body).unwrap_or_else(|_| {
         let mut fallback = hyper::Response::new(full(Bytes::from_static(b"Internal server error")));
@@ -646,7 +649,7 @@ pub async fn initialize_http() -> anyhow::Result<HttpServer> {
                 let _ = stream.set_nodelay(true);
                 let app = app.clone();
                 let connection = builder
-                    .serve_connection(TokioIo::new(stream), service_fn(move |request| serve(app.clone(), request, peer)));
+                    .serve_connection(TokioIo::new(head_stream::HeadStream::new(stream)), service_fn(move |request| serve(app.clone(), request, peer)));
                 let connection = graceful.watch(connection);
                 tokio::spawn(async move {
                     let _ = connection.await;
@@ -687,6 +690,168 @@ mod tests {
         assert!(matches!(parse_range("bytes=4-2", 67), ByteRange::Ignore));
         assert!(matches!(parse_range("bytes=0-0,2-3", 67), ByteRange::Ignore));
         assert!(matches!(parse_range("garbage", 67), ByteRange::Ignore));
+    }
+
+    #[test]
+    fn ranges_as_the_bun_server_reads_them() {
+        // The unit in any letter case, blanks between the parts.
+        for header in ["BYTES=1-2", "Bytes=1-2", "bytes = 1 - 2", "bytes=\t1-2", "bytes=1 -2", "bytes=1- 2", " bytes=1-2 ", "bytes=01-02"] {
+            assert!(matches!(parse_range(header, 10), ByteRange::Partial { start: 1, end: 2 }), "{header:?}");
+        }
+        assert!(matches!(parse_range("bytes= -2", 10), ByteRange::Partial { start: 8, end: 9 }));
+        // No last bytes at all is never satisfiable; an empty file has none to ask for.
+        assert!(matches!(parse_range("bytes=-0", 10), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-00", 10), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-0", 0), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-1", 0), ByteRange::Ignore));
+        assert!(matches!(parse_range("bytes=0-", 0), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=10-", 10), ByteRange::Unsatisfiable));
+        // Numbers are 64 bits wide; wider ones make the header no range at all.
+        assert!(matches!(parse_range("bytes=0-18446744073709551615", 10), ByteRange::Partial { start: 0, end: 9 }));
+        assert!(matches!(parse_range("bytes=18446744073709551615-", 10), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-9223372036854775807", 10), ByteRange::Partial { start: 0, end: 9 }));
+        assert!(matches!(parse_range("bytes=18446744073709551616-", 10), ByteRange::Ignore));
+        assert!(matches!(parse_range("bytes=0-99999999999999999999999", 10), ByteRange::Ignore));
+        for header in [
+            "bytes", "bytes=", "bytes=-", "bytes=a-b", "bytes=+1-2", "bytes=1.0-2", "bytes 1-2", "bytes:1-2", "items=1-2",
+            "byte=1-2", "bytes=1-2;q=1", "bytes=--1", "bytes=1-2-3", "bytes=1", "1-2", "=1-2", "bytes=1-2,", "bytes=,1-2", "",
+        ] {
+            assert!(matches!(parse_range(header, 10), ByteRange::Ignore), "{header:?}");
+        }
+    }
+
+    #[test]
+    fn viewable_types_get_no_content_disposition() {
+        for viewable in [
+            "text/html;charset=utf-8", "text/markdown", "image/png", "audio/mpeg", "video/mp4", "font/woff2",
+            "application/json;charset=utf-8", "application/json", "application/geo+json", "application/wasm", "Text/Plain",
+        ] {
+            assert!(is_viewable_type(viewable), "{viewable}");
+        }
+        for download in [
+            "application/octet-stream", "application/pdf", "application/xml", "application/manifest+json",
+            "application/ld+json", "application/zip", "model/obj", "message/rfc822", "", "nonsense",
+        ] {
+            assert!(!is_viewable_type(download), "{download}");
+        }
+    }
+
+    #[test]
+    fn content_dispositions() {
+        let disposition = |path: &str, content_type: Option<&str>| content_disposition(std::path::Path::new(path), content_type);
+        assert_eq!(disposition("/a/b/report.pdf", Some("application/pdf")).as_deref(), Some("filename=\"report.pdf\""));
+        assert_eq!(disposition("/a/noext", Some("application/octet-stream")).as_deref(), Some("filename=\"noext\""));
+        assert_eq!(disposition("/a/with space;é.bin", Some("application/octet-stream")).as_deref(), Some("filename=\"with space;é.bin\""));
+        // The type decides, whatever the name says; without one the name does.
+        assert_eq!(disposition("/a/photo.png", Some("application/octet-stream")).as_deref(), Some("filename=\"photo.png\""));
+        assert_eq!(disposition("/a/photo.png", Some("image/png")), None);
+        assert_eq!(disposition("/a/photo.png", None), None);
+        assert_eq!(disposition("/a/data.bin", None).as_deref(), Some("filename=\"data.bin\""));
+        // A name that would break the header gets none.
+        assert_eq!(disposition("/a/quo\"te.bin", Some("application/octet-stream")), None);
+        assert_eq!(disposition("/a/line\nfeed.bin", Some("application/octet-stream")), None);
+        assert_eq!(disposition("/a/carriage\rreturn.bin", Some("application/octet-stream")), None);
+    }
+
+    #[test]
+    fn repeated_request_headers_are_joined() {
+        let mut headers = http::HeaderMap::new();
+        headers.append("x-forwarded-for", "1.1.1.1".parse().unwrap());
+        headers.append("x-forwarded-for", "2.2.2.2".parse().unwrap());
+        headers.append("cookie", "a=1".parse().unwrap());
+        headers.append("cookie", "b=2".parse().unwrap());
+        headers.append("content-type", "application/json".parse().unwrap());
+        let joined = joined_headers(&headers);
+        assert_eq!(joined.get("x-forwarded-for").unwrap(), "1.1.1.1, 2.2.2.2");
+        assert_eq!(joined.get("cookie").unwrap(), "a=1; b=2");
+        assert_eq!(joined.get("content-type").unwrap(), "application/json");
+        assert_eq!(joined.len(), 3);
+    }
+
+    /// Sends `request` to a connection whose every answer is `response`, and
+    /// returns what the HTTP library puts on the wire.
+    async fn on_the_wire(request: &str, response: Response) -> String {
+        use tokio::io::AsyncWriteExt;
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let service = service_fn(move |request: hyper::Request<Incoming>| {
+            let response = response.clone();
+            async move {
+                let (parts, _body) = request.into_parts();
+                let method = parts.method.as_str().to_string();
+                let wire = WireRequest { method: &method, headers: &parts.headers, http_11: parts.version == http::Version::HTTP_11 };
+                Ok::<_, std::convert::Infallible>(into_wire(&wire, response).await)
+            }
+        });
+        let io = TokioIo::new(head_stream::HeadStream::new(server));
+        let connection = tokio::spawn(hyper::server::conn::http1::Builder::new().serve_connection(io, service));
+        let (mut read, mut write) = tokio::io::split(client);
+        write.write_all(request.as_bytes()).await.unwrap();
+        let mut wire = Vec::new();
+        read.read_to_end(&mut wire).await.unwrap();
+        let _ = connection.await;
+        String::from_utf8_lossy(&wire).to_lowercase()
+    }
+
+    fn list_of(bytes: usize) -> Response {
+        let mut list = respond::JsonList::new(None);
+        // `{"status":"success","body":[` … `]}` is 30 bytes around the items.
+        list.push(&"x".repeat(bytes - 32));
+        list.finish()
+    }
+
+    #[tokio::test]
+    async fn a_small_list_is_sent_with_its_length() {
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", list_of(255)).await;
+        assert!(wire.contains("content-length: 255\r\n"), "{wire}");
+        assert!(!wire.contains("transfer-encoding"), "{wire}");
+        assert!(wire.ends_with("\"]}"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn a_list_of_256_bytes_or_more_is_chunked_without_a_length() {
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", list_of(256)).await;
+        assert!(wire.contains("transfer-encoding: chunked\r\n"), "{wire}");
+        assert!(!wire.contains("content-length"), "{wire}");
+        assert!(wire.contains("\r\n\r\n100\r\n{\"status\":\"success\""), "{wire}");
+        assert!(wire.ends_with("\r\n0\r\n\r\n"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn a_list_over_http_1_0_is_ended_by_closing() {
+        let wire = on_the_wire("GET / HTTP/1.0\r\n\r\n", list_of(300)).await;
+        assert!(!wire.contains("transfer-encoding"), "{wire}");
+        assert!(!wire.contains("content-length"), "{wire}");
+        assert!(wire.ends_with("\"]}"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn head_of_a_list_has_no_length_and_no_body() {
+        for size in [100, 5000] {
+            let wire = on_the_wire("HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", list_of(size)).await;
+            assert!(!wire.contains("content-length"), "{wire}");
+            assert!(wire.contains("transfer-encoding: chunked\r\n"), "{wire}");
+            assert!(wire.ends_with("\r\n\r\n"), "{wire}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_not_modified_list_says_nothing_about_a_body() {
+        let mut request_headers = http::HeaderMap::new();
+        request_headers.insert("if-none-match", "*".parse().unwrap());
+        let not_modified = conditional("GET", &request_headers, list_of(5000));
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", not_modified).await;
+        assert!(wire.starts_with("http/1.1 304"), "{wire}");
+        assert!(!wire.contains("content-length") && !wire.contains("transfer-encoding"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn whole_bodies_keep_their_length() {
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", text(&"x".repeat(5000), 200)).await;
+        assert!(wire.contains("content-length: 5000\r\n"), "{wire}");
+        assert!(!wire.contains("transfer-encoding"), "{wire}");
+        let head = on_the_wire("HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", text(&"x".repeat(5000), 200)).await;
+        assert!(head.contains("content-length: 5000\r\n"), "{head}");
+        assert!(head.ends_with("\r\n\r\n"), "{head}");
     }
 
     #[test]
