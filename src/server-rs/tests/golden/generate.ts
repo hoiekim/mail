@@ -903,7 +903,7 @@ const htmlInputs = (rng: Random): string[] => {
     "<ol start=\"-Infinity\"><li>a</li></ol>", "<ol start=\"infinity\"><li>a</li></ol>", "<ol start=\"NaN\"><li>a</li></ol>", "<ol start=\"1e\"><li>a</li></ol>", "<ol start=\"e1\"><li>a</li></ol>",
     "<ol start=\"1.2.3\"><li>a</li></ol>", "<ol start=\"0.1\"><li>a</li><li>b</li><li>c</li></ol>", "<ol start=\"9007199254740992\"><li>a</li><li>b</li></ol>", "<ol start=\"1e20\"><li>a</li></ol>",
     "<ol start=\"123456.789\"><li>a</li></ol>", "<ol start=\"0o7705173430276017417\" type=\"A\"><li>a</li><li>b</li></ol>", "<ol start=\"0x20000000000001\"><li>a</li></ol>",
-    "<ol start=\"0x20000000000003\"><li>a</li></ol>", "<ol start=\"0x1fffffffffffff4\"><li>a</li></ol>", "<ol start=\"0x200000000000010000001\"><li>a</li></ol>",
+    "<ol start=\"0x20000000000003\"><li>a</li></ol>", "<ol start=\"0x67e83FAf5da7CDEb93Ed\" type=\"1\"><li>a</li><li>b</li></ol>", "<ol start=\"0x1fffffffffffff4\"><li>a</li></ol>", "<ol start=\"0x200000000000010000001\"><li>a</li></ol>",
     "<ol start=\"893514022863146.2\"><li>a</li><li>b</li></ol>", "<ol start=\"893514022863146.25\"><li>a</li></ol>", "<ol start=\"1125899906842625.25\"><li>a</li></ol>",
     "<ol start=\"1125899906842625.75\"><li>a</li></ol>", "<ol start=\"562949953421313.75\" type=\"I\"><li>a</li></ol>", "<ol start=\"4.35\"><li>a</li><li>b</li></ol>",
     `<ol start="0b1${"0".repeat(52)}1"><li>a</li></ol>`, `<ol start="0b1${"0".repeat(52)}11"><li>a</li></ol>`, `<ol start="0x${"f".repeat(255)}" type="a"><li>a</li></ol>`, `<ol start="0x${"f".repeat(256)}"><li>a</li></ol>`, "<ol start=\"0.00000012345\"><li>a</li></ol>", "<ol type=\"I\" start=\"1994\"><li>a</li><li>b</li></ol>", "<ol type=\"i\" start=\"8\"><li>a</li><li>b</li></ol>",

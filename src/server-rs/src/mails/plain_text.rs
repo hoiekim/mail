@@ -984,40 +984,35 @@ impl TextBuilder {
     }
 }
 
-/// The value of the digits of a hexadecimal, octal or binary literal: the
-/// exact number rounded once to the nearest double, however long it is.
-fn radix_literal(digits: &str, bits_per_digit: u32) -> Option<f64> {
+/// The value of the digits of a hexadecimal, octal or binary literal, as
+/// JavaScriptCore computes it: summed in floating point, and past 2^53
+/// summed again from the last digit up, each step rounding.
+fn radix_literal(digits: &str, radix: u32) -> Option<f64> {
+    let digits: Vec<f64> = digits
+        .chars()
+        .map(|c| c.to_digit(radix).map(f64::from))
+        .collect::<Option<_>>()?;
     if digits.is_empty() {
         return None;
     }
-    // The leading 64 bits, how many bits follow them, and whether any of those is set.
-    let mut leading: u64 = 0;
-    let mut following: i32 = 0;
-    let mut sticky = false;
-    for c in digits.chars() {
-        let digit = c.to_digit(1 << bits_per_digit)?;
-        for bit in (0..bits_per_digit).rev().map(|at| digit >> at & 1) {
-            if leading >> 63 == 0 {
-                leading = leading << 1 | bit as u64;
-            } else {
-                following = following.saturating_add(1);
-                sticky |= bit == 1;
+    let radix = f64::from(radix);
+    let number = digits.iter().fold(0.0, |number, digit| number * radix + digit);
+    if number < 9007199254740992.0 {
+        return Some(number);
+    }
+    let mut number = 0.0;
+    let mut multiplier = 1.0;
+    for &digit in digits.iter().rev() {
+        if multiplier == f64::INFINITY {
+            if digit != 0.0 {
+                return Some(f64::INFINITY);
             }
+        } else {
+            number += digit * multiplier;
         }
+        multiplier *= radix;
     }
-    let significant = 64 - leading.leading_zeros();
-    if significant <= 53 {
-        return Some(leading as f64);
-    }
-    // Round to 53 bits, ties to even.
-    let shift = significant - 53;
-    let half = 1u64 << (shift - 1);
-    let remainder = leading & ((1u64 << shift) - 1);
-    let mut rounded = leading >> shift;
-    if remainder > half || (remainder == half && (sticky || rounded & 1 == 1)) {
-        rounded += 1;
-    }
-    Some(rounded as f64 * 2f64.powi(following.saturating_add(shift as i32)))
+    Some(number)
 }
 
 /// `Number(value)` for a string.
@@ -1026,10 +1021,10 @@ fn string_to_number(value: &str) -> f64 {
     if value.is_empty() {
         return 0.0;
     }
-    for (prefix, bits_per_digit) in [("0x", 4), ("0o", 3), ("0b", 1)] {
+    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
         match value.get(..2) {
             Some(start) if start.eq_ignore_ascii_case(prefix) => {
-                return radix_literal(&value[2..], bits_per_digit).unwrap_or(f64::NAN);
+                return radix_literal(&value[2..], radix).unwrap_or(f64::NAN);
             }
             _ => {}
         }
@@ -1815,6 +1810,8 @@ mod tests {
         assert_eq!(string_to_number("0x20000000000003"), 9007199254740996.0);
         assert_eq!(string_to_number("0x1fffffffffffff4"), 144115188075855860.0);
         assert_eq!(string_to_number("0x200000000000010000001"), 2.417851639229259e24);
+        // Summed in floating point from the last digit up, not rounded once.
+        assert_eq!(string_to_number("0x67e83FAf5da7CDEb93Ed"), 4.906879813501947e23);
         assert_eq!(
             string_to_number(&format!("0b1{}11", "0".repeat(52))),
             18014398509481988.0
