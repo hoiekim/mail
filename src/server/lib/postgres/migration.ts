@@ -336,7 +336,7 @@ export async function migrateTable(
  * would send every boot back through the throwing DDL block for as long as an
  * index can't build, which is the same crashloop entered by a different door.
  */
-export type MarkerKey = "schema_hash" | "maintenance_hash";
+export type MarkerKey = "schema_hash" | "maintenance_hash" | "domains_migration";
 
 // Arbitrary stable lock key for migration serialization across instances.
 // Using a hash of the string "inbox-schema-migration" (decimal: 0x696e62) = 6908002

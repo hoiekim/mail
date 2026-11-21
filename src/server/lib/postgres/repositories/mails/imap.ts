@@ -1,5 +1,6 @@
 import { logger } from "../../../logger";
 import { pool } from "../../client";
+import type { ParamValue } from "../../database";
 import {
   PartialMailModel,
   mailsTable,
@@ -27,6 +28,8 @@ import {
   buildExpungeDeletedSelectQuery,
   buildExpungeUidsFilters,
   buildExpungeUidsSelectQuery,
+  buildScopedExpungeDeletedSelectQuery,
+  buildScopedExpungeUidsSelectQuery,
   buildFirstUnseenUidQuery,
   buildMailFlagUpdatesQuery,
   buildMailsByRangeQuery,
@@ -217,10 +220,11 @@ const countCodePoints = (s: string): number => {
 export const countMessages = async (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): Promise<{ total: number; unread: number }> => {
   try {
-    const { sql, values } = buildCountMessagesQuery(user_id, mailbox, sent);
+    const { sql, values } = buildCountMessagesQuery(user_id, mailbox, sent, domains);
 
     const result = await pool.query(sql, values);
     return {
@@ -262,7 +266,8 @@ export const getMailsByRange = async (
   end: number,
   useUid: boolean,
   fields: string[] = ["*"],
-  changedSince?: number
+  changedSince?: number,
+  domains?: string[]
 ): Promise<Map<string, PartialMailModel>> => {
   const sortedFields = [...fields].sort();
   const inflightKey = JSON.stringify([
@@ -274,9 +279,10 @@ export const getMailsByRange = async (
     useUid,
     sortedFields,
     changedSince ?? null,
+    domains ?? null,
   ]);
   return singleFlight(inflightKey, () => getMailsByRangeUncoalesced(
-    user_id, mailbox, sent, start, end, useUid, fields, changedSince
+    user_id, mailbox, sent, start, end, useUid, fields, changedSince, domains
   ));
 };
 
@@ -288,7 +294,8 @@ const getMailsByRangeUncoalesced = async (
   end: number,
   useUid: boolean,
   fields: string[],
-  changedSince?: number
+  changedSince?: number,
+  domains?: string[]
 ): Promise<Map<string, PartialMailModel>> => {
   try {
     const { sql, values, selectedFields } = buildMailsByRangeQuery(
@@ -299,7 +306,8 @@ const getMailsByRangeUncoalesced = async (
       end,
       useUid,
       fields,
-      changedSince
+      changedSince,
+      domains
     );
 
     const result = await pool.query(sql, values);
@@ -415,7 +423,8 @@ export const setMailFlags = async (
   flags: string[],
   useUid: boolean,
   operation: StoreOperationType = "FLAGS",
-  unchangedSince?: number
+  unchangedSince?: number,
+  domains?: string[]
 ): Promise<SetMailFlagsResult> => {
   try {
     const setClause = buildFlagSetClause(operation, flags);
@@ -434,7 +443,8 @@ export const setMailFlags = async (
       end,
       useUid,
       setClause,
-      conditional
+      conditional,
+      domains
     );
     // No recognized flag change (empty `+FLAGS ()` / `-FLAGS ()` or unknown-only
     // keywords): RFC 3501 §6.4.6 makes this a legal no-op. Return the matched
@@ -502,14 +512,16 @@ export const searchMailsByUid = async (
   user_id: string,
   mailbox: string | null,
   sent: boolean,
-  criteria: { type: string; value?: unknown }[]
+  criteria: { type: string; value?: unknown }[],
+  domains?: string[]
 ): Promise<number[]> => {
   try {
     const { sql, values } = buildSearchMailsByUidQuery(
       user_id,
       mailbox,
       sent,
-      criteria
+      criteria,
+      domains
     );
 
     const result = await pool.query(sql, values);
@@ -529,10 +541,11 @@ export const searchMailsByUid = async (
 export const getAllUids = async (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): Promise<number[]> => {
   try {
-    const { sql, values } = buildAllUidsQuery(user_id, mailbox, sent);
+    const { sql, values } = buildAllUidsQuery(user_id, mailbox, sent, domains);
 
     const result = await pool.query(sql, values);
     return result.rows.map((row: Record<string, unknown>) => row.uid as number);
@@ -562,11 +575,12 @@ export const getMailFlagUpdates = async (
   user_id: string,
   mailbox: string | null,
   sent: boolean,
-  mail_ids: string[]
+  mail_ids: string[],
+  domains?: string[]
 ): Promise<MailFlagUpdate[]> => {
   if (mail_ids.length === 0) return [];
   try {
-    const { sql, values } = buildMailFlagUpdatesQuery(user_id, mailbox, sent, mail_ids);
+    const { sql, values } = buildMailFlagUpdatesQuery(user_id, mailbox, sent, mail_ids, domains);
     const result = await pool.query(sql, values);
     return result.rows.map((row: Record<string, unknown>) => ({
       mail_id: row.mail_id as string,
@@ -592,10 +606,11 @@ export const getMailFlagUpdates = async (
 export const getFirstUnseenUid = async (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): Promise<number | null> => {
   try {
-    const { sql, values } = buildFirstUnseenUidQuery(user_id, mailbox, sent);
+    const { sql, values } = buildFirstUnseenUidQuery(user_id, mailbox, sent, domains);
 
     const result = await pool.query(sql, values);
     const uid = result.rows[0]?.uid;
@@ -607,6 +622,31 @@ export const getFirstUnseenUid = async (
 };
 
 /**
+ * Expunges the rows a `(mail_id, uid)` SELECT names, by id, and answers the
+ * UIDs it flipped. A row expunged concurrently is not reported.
+ */
+const expungeSelected = async (
+  user_id: string,
+  sql: string,
+  values: ParamValue[]
+): Promise<number[]> => {
+  const selected = await pool.query(sql, values);
+  if (selected.rows.length === 0) return [];
+  const uidsByMailId = new Map<string, number>(
+    selected.rows.map((row: Record<string, unknown>) => [row.mail_id as string, Number(row.uid)])
+  );
+  const rows = await mailsTable.updateWhere(
+    { [MAIL_ID]: { op: "IN", value: [...uidsByMailId.keys()] }, [EXPUNGED]: false },
+    // Bump modseq so the expunge advances HIGHESTMODSEQ (RFC 7162).
+    { [EXPUNGED]: true, updated: DB_NOW, [MODSEQ]: await getNextModseq(user_id) },
+    [MAIL_ID]
+  );
+  return rows
+    .map((row: Record<string, unknown>) => uidsByMailId.get(row[MAIL_ID] as string))
+    .filter((uid): uid is number => uid !== undefined);
+};
+
+/**
  * Soft-delete messages marked with \Deleted flag (EXPUNGE operation)
  * Sets expunged = TRUE instead of hard deleting.
  * Returns the UIDs of expunged messages for EXPUNGE responses.
@@ -614,9 +654,16 @@ export const getFirstUnseenUid = async (
 export const expungeDeletedMails = async (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): Promise<number[]> => {
   try {
+    if (usesDomainUidSpace(mailbox) && domains !== undefined) {
+      // A scoped login expunges only the mail of its domains; the filter bag
+      // below cannot carry that predicate, so select the rows and expunge by id.
+      const scoped = buildScopedExpungeDeletedSelectQuery(user_id, mailbox, sent, domains);
+      return await expungeSelected(user_id, scoped.sql, scoped.values);
+    }
     if (usesDomainUidSpace(mailbox)) {
       // Domain-wide expunge — still on uid_domain, unchanged.
       const rows = await mailsTable.updateWhere(
@@ -634,7 +681,7 @@ export const expungeDeletedMails = async (
     // with an IN filter so the data-bag pattern bumps `updated`. The
     // RETURNING side reads x.uid from a second SELECT that fetches the
     // per-mailbox UIDs for the just-expunged rows.
-    const deletedQuery = buildExpungeDeletedSelectQuery(user_id, mailbox, sent);
+    const deletedQuery = buildExpungeDeletedSelectQuery(user_id, mailbox, sent, domains);
     const selectResult = await pool.query(deletedQuery.sql, deletedQuery.values);
     if (selectResult.rows.length === 0) return [];
     const mailIds = selectResult.rows.map(
@@ -678,10 +725,15 @@ export const expungeMailsByUid = async (
   user_id: string,
   mailbox: string | null,
   sent: boolean,
-  uids: number[]
+  uids: number[],
+  domains?: string[]
 ): Promise<number[]> => {
   if (uids.length === 0) return [];
   try {
+    if (usesDomainUidSpace(mailbox) && domains !== undefined) {
+      const scoped = buildScopedExpungeUidsSelectQuery(user_id, mailbox, sent, uids, domains);
+      return await expungeSelected(user_id, scoped.sql, scoped.values);
+    }
     if (usesDomainUidSpace(mailbox)) {
       // Domain-wide: simple equality on user_id+sent + IN(uids).
       const rows = await mailsTable.updateWhere(
@@ -698,7 +750,7 @@ export const expungeMailsByUid = async (
     // resolve the mail_ids, then updateWhere by mail_id IN so the data-bag
     // pattern bumps `updated`. Snapshot uid_by_mail_id so RETURNING can
     // map the UPDATE's mail_id output back to the per-mailbox UIDs.
-    const uidsQuery = buildExpungeUidsSelectQuery(user_id, mailbox, sent, uids);
+    const uidsQuery = buildExpungeUidsSelectQuery(user_id, mailbox, sent, uids, domains);
     const selectResult = await pool.query(uidsQuery.sql, uidsQuery.values);
     const uidsByMailId = new Map<string, number>(
       selectResult.rows.map((row: Record<string, unknown>) => [

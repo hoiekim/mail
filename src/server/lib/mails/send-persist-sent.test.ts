@@ -1,16 +1,17 @@
 /**
  * `persistToSentMailbox: false` is what keeps a live bearer credential out of
- * the sending identity's Sent mailbox — the `/token` flow relies on it, and a
- * read-only session reads admin's mail by design, so a Sent record there is a
- * write credential handed to a read-only caller.
+ * the sending identity's Sent mailbox: anyone with the viewer role on the
+ * sending domain reads it, so a Sent record there would hand them the
+ * credential.
  *
  * The property is "`sendMail`, given that option, writes no Sent record" — not
  * "the caller passes an option object", which a mocked `sendMail` is all that
  * can assert. These drive the real one and assert on `saveMail` itself.
  */
-import { describe, it, expect, mock, beforeEach, afterAll } from "bun:test";
+import { describe, it, expect, mock, spyOn, beforeEach, afterAll } from "bun:test";
 import { MailDataToSend, SignedUser } from "common";
 import * as mailgunModule from "./mailgun";
+import * as domainRepo from "../postgres/repositories/domains";
 
 const REAL_SERVER = (globalThis as Record<string, unknown>).__REAL_SERVER as Record<
   string,
@@ -42,13 +43,30 @@ mock.module("./mailgun", () => ({
   sendMailgunMail: mockSendMailgunMail,
 }));
 
+// The domains the sender owns; spied so no database is reached.
+const ownedAccess = (name: string): domainRepo.DomainAccess => ({
+  domainId: `d-${name}`,
+  name,
+  ownerId: "11111111-2222-3333-4444-555555555555",
+  ownerUsername: "admin",
+  role: "owner",
+  verifiedAt: null,
+});
+const mockListDomainAccess = spyOn(domainRepo, "listDomainAccess").mockResolvedValue([
+  ownedAccess("example.com"),
+  ownedAccess("example.org"),
+  { ...ownedAccess("example.net"), role: "viewer", ownerId: "someone-else" },
+]);
+
 const { sendMail } = await import("./send");
+const { MailValidationError } = await import("./validation");
 
 // `mock.module` is process-global with no unmock API — hand the real modules
 // back so the next file in the same run does not inherit these stubs.
 afterAll(() => {
   if (REAL_SERVER) mock.module("server", () => REAL_SERVER);
   mock.module("./mailgun", () => REAL_MAILGUN);
+  mockListDomainAccess.mockRestore();
 });
 
 const USER = new SignedUser({
@@ -95,5 +113,40 @@ describe("sendMail — persistToSentMailbox", () => {
     await sendMail(USER, MAIL, undefined, { persistToSentMailbox: true });
 
     expect(mockSaveMail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sendMail — the domain it sends from", () => {
+  it("sends from the sender's default domain when the mail names none", async () => {
+    await sendMail(USER, new MailDataToSend({ ...MAIL }), undefined, { persistToSentMailbox: false });
+    expect((mockSendMailgunMail.mock.calls[0] as unknown[])[0]).toBe("example.com");
+  });
+
+  it("sends from another domain the sender owns when the mail names it", async () => {
+    await sendMail(USER, new MailDataToSend({ ...MAIL, senderDomain: "Example.ORG" }), undefined, {
+      persistToSentMailbox: false,
+    });
+    expect((mockSendMailgunMail.mock.calls[0] as unknown[])[0]).toBe("example.org");
+  });
+
+  it("refuses a domain the sender only views, without sending anything", async () => {
+    const send = sendMail(USER, new MailDataToSend({ ...MAIL, senderDomain: "example.net" }));
+    await expect(send).rejects.toBeInstanceOf(MailValidationError);
+    expect(mockSendMailgunMail).not.toHaveBeenCalled();
+    expect(mockSaveMail).not.toHaveBeenCalled();
+  });
+
+  it("refuses a domain the sender holds no role on", async () => {
+    const send = sendMail(USER, new MailDataToSend({ ...MAIL, senderDomain: "elsewhere.test" }));
+    await expect(send).rejects.toThrow("You can't send from elsewhere.test.");
+    expect(mockSendMailgunMail).not.toHaveBeenCalled();
+  });
+
+  it("stores the Sent copy under the address it was sent from", async () => {
+    await sendMail(USER, new MailDataToSend({ ...MAIL, senderDomain: "example.org" }));
+    const saved = (mockSaveMail.mock.calls[0] as unknown[])[0] as {
+      from: { value: { address: string }[] };
+    };
+    expect(saved.from.value[0].address).toBe("admin@example.org");
   });
 });

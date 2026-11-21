@@ -16,7 +16,7 @@ import { pool, resetPool } from "../client";
 import {
   PostgresSessionStore,
   purgeSessions,
-  deleteSessionsAuthenticatedAs,
+  deleteReadOnlySessions,
 } from "./sessions";
 
 type Mode = "ok" | "empty" | "throw";
@@ -29,6 +29,8 @@ let revokeMode: Mode = "ok";
 // deleted account row, "throw" a lookup fault.
 let userVersionMode: number | "missing" | "throw" = 1;
 let stampedVersion = 1;
+// Whether the stored row was issued by the retired read-only admin login.
+let readOnlyRow = false;
 const insertValues: unknown[][] = [];
 
 const issuedSql: string[] = [];
@@ -61,8 +63,8 @@ const liveSessionRow = () => ({
   session_user_id: USER.id,
   session_username: USER.username,
   session_email: USER.email,
-  session_is_read_only: null,
-  session_authenticated_as: null,
+  session_is_read_only: readOnlyRow ? true : null,
+  session_authenticated_as: readOnlyRow ? "admin-ro" : null,
   session_password_version: stampedVersion,
   auth_sid: null,
   auth_refresh_token: null,
@@ -101,7 +103,7 @@ const mockQuery = mock(async (sql: string, values: unknown[] = []) => {
     if (purgeMode === "throw") throw new Error("permission denied for table sessions");
     return { rows: [{ session_id: SESSION_ID }], rowCount: 1 };
   }
-  if (sql.startsWith("DELETE FROM sessions") && sql.includes("session_authenticated_as")) {
+  if (sql.startsWith("DELETE FROM sessions") && sql.includes("session_is_read_only")) {
     if (revokeMode === "throw") throw new Error("deadlock detected");
     return { rows: [{ session_id: SESSION_ID }], rowCount: 1 };
   }
@@ -127,6 +129,7 @@ beforeEach(() => {
   revokeMode = "ok";
   userVersionMode = 1;
   stampedVersion = 1;
+  readOnlyRow = false;
   issuedSql.length = 0;
   insertValues.length = 0;
   installQueryStub();
@@ -210,6 +213,31 @@ describe("PostgresSessionStore.get", () => {
   });
 });
 
+describe("PostgresSessionStore.get — a session the retired read-only login issued", () => {
+  it("is refused and destroyed rather than served as the account it names", async () => {
+    // Such a row carries admin's user id. Served, it would hand the
+    // read-only login admin's whole account, writes included.
+    readOnlyRow = true;
+
+    const { err, session } = await getResult(SESSION_ID);
+
+    expect(err).toBeNull();
+    expect(session).toBeNull();
+    expect(
+      issuedSql.some((sql) => sql.startsWith("DELETE FROM sessions WHERE session_id = $1"))
+    ).toBe(true);
+  });
+
+  it("is never written by this version", async () => {
+    const { session } = await getResult(SESSION_ID);
+    await store.set(SESSION_ID, session!);
+    const columns = issuedSql.find((sql) => sql.startsWith("INSERT INTO sessions"))!;
+    const names = columns.slice(columns.indexOf("(") + 1, columns.indexOf(")")).split(",").map((c) => c.trim());
+    const values = insertValues[insertValues.length - 1];
+    expect(values[names.indexOf("session_is_read_only")]).toBeNull();
+  });
+});
+
 describe("PostgresSessionStore.get credential-version fence", () => {
   it("rejects a session stamped behind the user's current password_version and destroys the row", async () => {
     // The revocation fence: the row was minted on generation 1
@@ -289,14 +317,14 @@ describe("purgeSessions", () => {
   });
 });
 
-describe("deleteSessionsAuthenticatedAs", () => {
-  it("rejects when the revocation delete raises", async () => {
+describe("deleteReadOnlySessions", () => {
+  it("rejects when the delete raises, so the boot does not pass over it", async () => {
     revokeMode = "throw";
 
-    await expect(deleteSessionsAuthenticatedAs("admin-ro")).rejects.toThrow("deadlock detected");
+    await expect(deleteReadOnlySessions()).rejects.toThrow("deadlock detected");
   });
 
-  it("resolves the deleted count when the revocation lands", async () => {
-    await expect(deleteSessionsAuthenticatedAs("admin-ro")).resolves.toBe(1);
+  it("resolves the deleted count when the delete lands", async () => {
+    await expect(deleteReadOnlySessions()).resolves.toBe(1);
   });
 });

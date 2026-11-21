@@ -279,8 +279,9 @@ describe("createAuthenticationMail", () => {
 
   it("returns expected envelope fields", () => {
     const mail = createAuthenticationMail("alice@example.com", "tok123");
-    expect(mail.sender).toBe("admin");
-    expect(mail.senderFullName).toBe("Administrator");
+    // Sent by the server itself (`sendSystemMail`), not from any account.
+    expect(mail.sender).toBe("no-reply");
+    expect(mail.senderFullName).toBe("Mail");
     expect(mail.to).toBe("alice@example.com");
     expect(mail.subject).toBe("Please set your password for Mail");
   });
@@ -682,7 +683,12 @@ describe("setUserInfo", () => {
       token: "tok",
     });
 
-    expect(mockQuery).toHaveBeenCalledTimes(3);
+    // The read, the session eviction, the UPDATE, then the account's own
+    // domain (an idempotent INSERT … ON CONFLICT DO NOTHING).
+    expect(mockQuery).toHaveBeenCalledTimes(4);
+    const [domainSql, domainValues] = mockQuery.mock.calls[3] as [string, unknown[]];
+    expect(domainSql).toContain("INSERT INTO domains");
+    expect(domainValues).toEqual(["alice.mydomain", "u-1"]);
     const [sql, values] = mockQuery.mock.calls[2] as [string, unknown[]];
     expect(sql).toContain("UPDATE");
     // existing username wins; token + expiry cleared to null; password hashed.

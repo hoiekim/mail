@@ -4,21 +4,16 @@
  *   get-search, get-domain, get-allowlist, post-allowlist,
  *   delete-allowlist, post-send, post-spam-mark, get-attachment
  */
-import { describe, it, expect, mock, afterAll, beforeEach } from "bun:test";
+import { describe, it, expect, mock, spyOn, afterAll, beforeEach } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ApiResponse } from "../route";
-import {
-  ADMIN_RO_USERNAME,
-  refuseReadOnly,
-  remapReadOnlySession,
-} from "../../../read-only";
+import * as domainRepo from "../../../postgres/repositories/domains";
 import {
   ALLOWLIST_COUNT_MAX,
   ALLOWLIST_PATTERN_MAX_BYTES,
 } from "../../../postgres/models/spam_allowlist";
-import { SignedUser } from "common";
 import { MAX_ATTACHMENTS_PER_MAIL } from "../../upload";
 import type { HttpRequest } from "../../request";
 
@@ -37,7 +32,6 @@ const mockMarkRead = mock(async () => true);
 const mockMarkSaved = mock(async () => true);
 const mockDecrementBadgeCount = mock(async () => {});
 const mockNotifyFlagChange = mock(async () => {});
-const mockAddressToUsername = mock((addr: string) => addr.split("@")[0]);
 const mockGetUser = mock(async () => null as unknown);
 
 // New mocks for additional routes
@@ -93,7 +87,6 @@ mock.module("server", () => ({
     storeSubscription: mock(async () => null),
     refreshSubscription: mock(async () => null),
   },
-  addressToUsername: mockAddressToUsername,
   getUser: mockGetUser,
   logger: { error: mock(() => {}), info: mock(() => {}), warn: mock(() => {}) },
   searchMail: mockSearchMail,
@@ -121,13 +114,25 @@ mock.module("server", () => ({
   createAuthenticationMail: mock(() => ({})),
   startTimer: mock(() => {}),
   version: "0.0.0",
-  // Read-only role attribution — real implementations so guards compare
-  // against the real constant. Duplicating the literal here would leave
-  // prod's guard comparing to a value this file could rename in isolation.
-  ADMIN_RO_USERNAME,
-  refuseReadOnly,
-  remapReadOnlySession,
 }));
+
+/**
+ * The role a person holds on a domain, spied (restored in afterAll) so no
+ * database is reached. By default the session user owns every domain, which
+ * is what the per-account routes needed before domains were resources.
+ */
+const ownerOf = (userId: string, name: string): domainRepo.DomainAccess => ({
+  domainId: `d-${name}`,
+  name,
+  ownerId: userId,
+  ownerUsername: "alice",
+  role: "owner",
+  verifiedAt: null,
+});
+const mockGetDomainAccess = spyOn(domainRepo, "getDomainAccess").mockImplementation(
+  async (userId, name) => ownerOf(userId, name)
+);
+const mockListDomainAccess = spyOn(domainRepo, "listDomainAccess").mockResolvedValue([]);
 
 // Mock logger used directly in post-mark / post-spam-mark
 const mockLoggerError = mock(() => {});
@@ -142,6 +147,8 @@ afterAll(() => {
   const realServer = (globalThis as Record<string, unknown>).__REAL_SERVER as
     | Record<string, unknown>
     | undefined;
+  mockGetDomainAccess.mockRestore();
+  mockListDomainAccess.mockRestore();
   if (!realServer) return;
   mock.module("server", () => realServer);
   mock.module("../../../logger", () => ({ logger: realServer.logger, default: realServer.logger }));
@@ -150,8 +157,12 @@ afterAll(() => {
 // Mock deep imports used by post-spam-mark.ts (its trainWithEmail + getMailById
 // reach into specific server submodules, not the "server" barrel).
 const mockGetMailById = mock(async () => null as unknown);
+const mockFindViewableMail = mock(
+  async (..._args: unknown[]) => null as { ownerId: string; domains: string[] } | null
+);
 mock.module("server/lib/postgres/repositories/mails", () => ({
   getMailById: mockGetMailById,
+  findViewableMail: mockFindViewableMail,
 }));
 
 const mockTrainWithEmail = mock(async () => undefined);
@@ -183,7 +194,6 @@ describe("getHeadersRoute", () => {
   beforeEach(() => {
     mockGetMailHeaders.mockClear();
     mockGetMailHeadersDelta.mockClear();
-    mockAddressToUsername.mockClear();
   });
 
   it("returns success with mail headers for valid user", async () => {
@@ -204,27 +214,61 @@ describe("getHeadersRoute", () => {
     expect((result as ApiResponse<unknown>).body).toEqual(fakeMails);
   });
 
-  it("allows admin user to access any account", async () => {
+  it("reads the user's own rows, unfiltered, for a domain they own", async () => {
     const { getHeadersRoute } = await import("./get-headers");
 
-    mockGetMailHeaders.mockResolvedValueOnce([] as never);
-    mockAddressToUsername.mockReturnValueOnce("bob");
+    mockGetMailHeaders.mockResolvedValueOnce(oneBatch([]) as never);
 
     const req = makeReq({
       method: "GET",
-      session: { user: makeUser("admin") },
-      params: { account: "bob@example.com" },
+      session: { user: makeUser("alice") },
+      params: { account: "Info@Example.com" },
       query: {},
     });
 
     const result = await apiResult(await getHeadersRoute.callback(req));
     expect((result as ApiResponse<unknown>).status).toBe("success");
+    expect(mockGetDomainAccess).toHaveBeenCalledWith("u1", "example.com");
+    const [store, , options] = mockGetMailHeaders.mock.calls[0] as unknown as [
+      { id: string },
+      string,
+      { domains?: string[] },
+    ];
+    expect(store.id).toBe("u1");
+    expect(options.domains).toBeUndefined();
   });
 
-  it("returns failed when user tries to access another user's account", async () => {
+  it("reads a viewed domain from its owner's rows, filtered to that domain", async () => {
     const { getHeadersRoute } = await import("./get-headers");
 
-    mockAddressToUsername.mockReturnValueOnce("charlie");
+    mockGetMailHeaders.mockResolvedValueOnce(oneBatch([]) as never);
+    mockGetDomainAccess.mockResolvedValueOnce({
+      ...ownerOf("owner-1", "example.com"),
+      role: "viewer",
+    });
+
+    const req = makeReq({
+      method: "GET",
+      session: { user: makeUser("alice") },
+      params: { account: "info@example.com" },
+      query: {},
+    });
+
+    const result = await apiResult(await getHeadersRoute.callback(req));
+    expect((result as ApiResponse<unknown>).status).toBe("success");
+    const [store, , options] = mockGetMailHeaders.mock.calls[0] as unknown as [
+      { id: string },
+      string,
+      { domains?: string[] },
+    ];
+    expect(store.id).toBe("owner-1");
+    expect(options.domains).toEqual(["example.com"]);
+  });
+
+  it("returns failed for a domain the user holds no role on", async () => {
+    const { getHeadersRoute } = await import("./get-headers");
+
+    mockGetDomainAccess.mockResolvedValueOnce(null);
 
     const req = makeReq({
       method: "GET",
@@ -241,7 +285,6 @@ describe("getHeadersRoute", () => {
     const { getHeadersRoute } = await import("./get-headers");
 
     mockGetMailHeaders.mockResolvedValueOnce([]);
-    mockAddressToUsername.mockReturnValueOnce("alice");
 
     const req = makeReq({
       method: "GET",
@@ -260,7 +303,6 @@ describe("getHeadersRoute", () => {
     const { getHeadersRoute } = await import("./get-headers");
 
     mockGetMailHeaders.mockResolvedValueOnce([]);
-    mockAddressToUsername.mockReturnValueOnce("alice");
 
     const req = makeReq({
       method: "GET",
@@ -279,7 +321,6 @@ describe("getHeadersRoute", () => {
     const { getHeadersRoute } = await import("./get-headers");
 
     mockGetMailHeaders.mockResolvedValueOnce(oneBatch([{ id: "m1" }]) as never);
-    mockAddressToUsername.mockReturnValueOnce("alice");
 
     const req = makeReq({
       method: "GET",
@@ -299,7 +340,6 @@ describe("getHeadersRoute", () => {
 
     const delta = { as_of: "2024-02-01T00:00:00.000Z", headers: [{ id: "m9" }], expunged_ids: ["x"] };
     mockGetMailHeadersDelta.mockResolvedValueOnce(delta as never);
-    mockAddressToUsername.mockReturnValueOnce("alice");
 
     const since = "2024-01-01T00:00:00.000Z";
     const req = makeReq({
@@ -320,7 +360,6 @@ describe("getHeadersRoute", () => {
   it("rejects a malformed ?since= at the boundary instead of full-fetching or hitting SQL", async () => {
     const { getHeadersRoute } = await import("./get-headers");
 
-    mockAddressToUsername.mockReturnValueOnce("alice");
 
     const req = makeReq({
       method: "GET",
@@ -577,22 +616,31 @@ describe("getBodyRoute", () => {
     expect((result as ApiResponse<unknown>).body).toEqual(fakeMail);
   });
 
-  it("skips the mark for read-only sessions but still serves the body", async () => {
+  it("serves a mail of a viewed domain from its owner's rows, without marking it", async () => {
     const { getBodyRoute } = await import("./get-body");
 
     const fakeMail = { id: "m1", html: "<p>Hello</p>" };
-    mockGetMailBody.mockResolvedValueOnce(fakeMail);
+    mockGetMailBody.mockImplementation((async (userId: string) =>
+      userId === "owner-1" ? fakeMail : null) as never);
+    mockFindViewableMail.mockResolvedValueOnce({ ownerId: "owner-1", domains: ["example.com"] });
 
-    const readOnlyUser = remapReadOnlySession(
-      new SignedUser({ id: "u1", username: "admin", email: "admin@localhost" }),
-      ADMIN_RO_USERNAME
-    );
-    const req = makeReq({
-      params: { id: MAIL_ID },
-      session: { user: readOnlyUser },
-    });
-    const result = await getBodyRoute.callback(req);
+    const result = await getBodyRoute.callback(makeReq({ params: { id: MAIL_ID } }));
     expect((result as ApiResponse<unknown>).status).toBe("success");
+    expect((result as ApiResponse<unknown>).body).toEqual(fakeMail);
+    expect(mockFindViewableMail).toHaveBeenCalledWith("u1", MAIL_ID);
+    // The read state is the owner's, not the viewer's to change.
+    expect(mockMarkRead).not.toHaveBeenCalled();
+    mockGetMailBody.mockImplementation(async () => null);
+  });
+
+  it("refuses a mail that is neither the user's nor of a domain they view", async () => {
+    const { getBodyRoute } = await import("./get-body");
+
+    mockGetMailBody.mockResolvedValue(null);
+    mockFindViewableMail.mockResolvedValueOnce(null);
+
+    const result = await getBodyRoute.callback(makeReq({ params: { id: MAIL_ID } }));
+    expect((result as ApiResponse<unknown>).status).toBe("failed");
     expect(mockMarkRead).not.toHaveBeenCalled();
   });
 });
@@ -1503,130 +1551,6 @@ describe("mail routes reject a malformed mail_id before it reaches Postgres (#74
     const result = await getBodyRoute.callback(makeReq({ params: { id } }));
     expect(mockGetMailBody).toHaveBeenCalledWith("u1", id);
     expect((result as ApiResponse<unknown>).status).toBe("success");
-  });
-});
-
-// ── read-only guard sweep ─────────────────────────────────────────────────────
-
-describe("read-only guard on mutating mail + push routes", () => {
-  const makeReadOnlyUser = () =>
-    remapReadOnlySession(
-      new SignedUser({ id: "u1", username: "admin", email: "admin@localhost" }),
-      ADMIN_RO_USERNAME
-    );
-
-  const readOnlyReq = (overrides: Record<string, unknown> = {}) =>
-    ({
-      method: "POST",
-      session: { user: makeReadOnlyUser() },
-      params: {},
-      query: {},
-      body: {},
-      ...overrides,
-    }) as unknown as HttpRequest;
-
-  beforeEach(() => {
-    mockDeleteMail.mockClear();
-    mockMarkRead.mockClear();
-    mockMarkSaved.mockClear();
-    mockSendMail.mockClear();
-    mockMarkSpam.mockClear();
-    mockAddAllowlistEntry.mockClear();
-    mockRemoveAllowlistEntry.mockClear();
-  });
-
-  it("post-send refuses a read-only session BEFORE sendMail", async () => {
-    // Guard MUST fire before sendMail — otherwise a read-only session
-    // could burn one call against the outbound Mailgun quota per attempt.
-    const { postSendMailRoute } = await import("./post-send");
-    const req = readOnlyReq({
-      body: { to: "b@c.com", subject: "hi", html: "" },
-    });
-    const result = await postSendMailRoute.callback(req);
-    expect((result as ApiResponse<unknown>).status).toBe("failed");
-    expect((result as ApiResponse<unknown>).message).toContain("read-only");
-    expect((result as ApiResponse<unknown>).message).toContain(ADMIN_RO_USERNAME);
-    expect(mockSendMail).not.toHaveBeenCalled();
-  });
-
-  it("post-mark refuses a read-only session BEFORE markRead / markSaved", async () => {
-    const { postMarkMailRoute } = await import("./post-mark");
-    const req = readOnlyReq({
-      body: { mail_id: MAIL_ID, read: true },
-    });
-    const result = await postMarkMailRoute.callback(req);
-    expect((result as ApiResponse<unknown>).status).toBe("failed");
-    expect((result as ApiResponse<unknown>).message).toContain("read-only");
-    expect(mockMarkRead).not.toHaveBeenCalled();
-    expect(mockMarkSaved).not.toHaveBeenCalled();
-  });
-
-  it("post-spam-mark refuses a read-only session BEFORE markSpam", async () => {
-    const { postMarkSpamMailRoute } = await import("./post-spam-mark");
-    const req = readOnlyReq({
-      body: { mail_id: MAIL_ID, is_spam: true },
-    });
-    const result = await postMarkSpamMailRoute.callback(req);
-    expect((result as ApiResponse<unknown>).status).toBe("failed");
-    expect((result as ApiResponse<unknown>).message).toContain("read-only");
-    expect(mockMarkSpam).not.toHaveBeenCalled();
-  });
-
-  it("delete refuses a read-only session BEFORE deleteMail", async () => {
-    const { deleteMailRoute } = await import("./delete");
-    const req = readOnlyReq({
-      method: "DELETE",
-      params: { id: MAIL_ID },
-    });
-    const result = await deleteMailRoute.callback(req);
-    expect((result as ApiResponse<unknown>).status).toBe("failed");
-    expect((result as ApiResponse<unknown>).message).toContain("read-only");
-    expect(mockDeleteMail).not.toHaveBeenCalled();
-  });
-
-  it("post-allowlist refuses a read-only session BEFORE addAllowlistEntry", async () => {
-    const { postSpamAllowlistRoute } = await import("./post-allowlist");
-    const req = readOnlyReq({
-      body: { pattern: "user@example.com" },
-    });
-    const result = await postSpamAllowlistRoute.callback(req);
-    expect((result as ApiResponse<unknown>).status).toBe("failed");
-    expect((result as ApiResponse<unknown>).message).toContain("read-only");
-    expect(mockAddAllowlistEntry).not.toHaveBeenCalled();
-  });
-
-  it("delete-allowlist refuses a read-only session BEFORE removeAllowlistEntry", async () => {
-    const { deleteSpamAllowlistRoute } = await import("./delete-allowlist");
-    const req = readOnlyReq({
-      method: "DELETE",
-      params: { pattern: "user@example.com" },
-    });
-    const result = await deleteSpamAllowlistRoute.callback(req);
-    expect((result as ApiResponse<unknown>).status).toBe("failed");
-    expect((result as ApiResponse<unknown>).message).toContain("read-only");
-    expect(mockRemoveAllowlistEntry).not.toHaveBeenCalled();
-  });
-
-  it("post-send allows a non-read-only session (mutation-test the discriminator)", async () => {
-    // Mutation-test the discriminator — replacing isReadOnly with any
-    // value the code coerces to false must pass the guard. A wrong-sense
-    // check (`!isReadOnly` instead of `isReadOnly`) would trip here.
-    const { postSendMailRoute } = await import("./post-send");
-    const req = ({
-      method: "POST",
-      session: {
-        user: new SignedUser({
-          id: "u1",
-          username: "admin",
-          email: "admin@localhost",
-        }),
-      },
-      params: {},
-      query: {},
-      body: { to: "b@c.com", subject: "hi", html: "" },
-    }) as unknown as HttpRequest;
-    await postSendMailRoute.callback(req);
-    expect(mockSendMail).toHaveBeenCalledTimes(1);
   });
 });
 
