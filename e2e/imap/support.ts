@@ -3,8 +3,10 @@
  * how mail gets into a mailbox, and the strings every file compares against.
  * Not a test file (no `.e2e.ts`), so the runner never picks it up on its own.
  */
+import net from "net";
 import {
   deliverMail,
+  ReplyReader,
   rfc822,
   startServer,
   type MessageParts,
@@ -12,6 +14,7 @@ import {
   type TestServer,
 } from "../harness";
 import { ImapClient, type CommandResult, type ImapResponse } from "../harness/imap";
+import { message, type FixtureName } from "./messages";
 
 /** CAPABILITY on a TLS connection, and on a plain one when no certificate is configured. */
 export const CAPABILITIES =
@@ -79,6 +82,64 @@ export const deliverRaw = async (
     throw new Error(`The server refused a test delivery: ${result.final}\n${result.replies.join("\n")}`);
   }
   return mailByMessageId(server, delivery.messageId);
+};
+
+/**
+ * Delivers a message given as octets (a latin1 string, one char per octet)
+ * over SMTP and returns its stored row. `deliverMail` writes a JS string as
+ * UTF-8, which cannot carry a raw 8-bit body in another charset; this writes
+ * the bytes as they are.
+ */
+export const deliverOctets = async (
+  server: TestServer,
+  delivery: { from?: string; to: string[]; data: string; messageId: string; username?: string }
+): Promise<DeliveredMail> => {
+  const socket = net.createConnection({ port: server.ports.smtp, host: "127.0.0.1" });
+  const reader = new ReplyReader(socket);
+  const step = async (bytes: string | undefined, what: string) => {
+    if (bytes !== undefined) socket.write(Buffer.from(bytes, "latin1"));
+    const reply = await reader.next(30_000);
+    if (reply === undefined || !/^[23]/.test(reply)) {
+      throw new Error(`The server refused a test delivery at ${what}: ${reply ?? "(connection closed)"}`);
+    }
+  };
+  try {
+    await step(undefined, "the greeting");
+    await step("EHLO client.remote.example\r\n", "EHLO");
+    await step(`MAIL FROM:<${delivery.from ?? "sender@remote.example"}>\r\n`, "MAIL FROM");
+    for (const recipient of delivery.to) await step(`RCPT TO:<${recipient}>\r\n`, "RCPT TO");
+    await step("DATA\r\n", "DATA");
+    const stuffed = delivery.data.replace(/^\./gm, "..").replace(/(\r\n)?$/, "\r\n");
+    await step(`${stuffed}.\r\n`, "the end of DATA");
+    socket.write("QUIT\r\n");
+  } finally {
+    socket.destroy();
+  }
+  return mailByMessageId(server, delivery.messageId, delivery.username);
+};
+
+/** The mail domain of an account: `<name>.<domain>`, or the bare domain for the admin. */
+export const mailDomain = (server: TestServer, username: string): string =>
+  username === "admin" ? server.domain : `${username}.${server.domain}`;
+
+/**
+ * Delivers the fixture `name` from `messages.ts` to `hello@` the account of
+ * `username`, and returns its stored row.
+ */
+export const deliverFixture = (
+  server: TestServer,
+  name: FixtureName,
+  username: string
+): Promise<DeliveredMail> => {
+  const domain = mailDomain(server, username);
+  const fixture = message(name, domain);
+  return deliverOctets(server, {
+    from: "carol@remote.example",
+    to: [`hello@${domain}`],
+    data: fixture.data,
+    messageId: fixture.messageId,
+    username,
+  });
 };
 
 let counter = 0;
