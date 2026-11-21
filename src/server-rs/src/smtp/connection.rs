@@ -956,6 +956,9 @@ impl Connection {
             return self.on_close();
         };
         let out = self.out.split().freeze();
+        // What the paused connection had taken in behind STARTTLS is left
+        // unread: the TLS layer reads the socket, not what was held back.
+        self.held_back.clear();
         let handshake = async {
             let mut plain = plain;
             plain.write_all(&out).await?;
@@ -989,11 +992,10 @@ impl Connection {
             }
             Ok(Err(error)) => {
                 self.destroyed = true;
-                // A client that hangs up mid-handshake is a closed socket, not a failure.
-                if error.kind() != io::ErrorKind::UnexpectedEof {
-                    let error = SmtpServerError::handshake(Some(&error), Some(self.remote_address.clone()));
-                    self.on_error(error);
-                }
+                // A client that hangs up mid-handshake is a reset: reported
+                // only when it leaves a transaction open.
+                let error = SmtpServerError::handshake(Some(&error), Some(self.remote_address.clone()));
+                self.on_error(error);
                 self.on_close();
             }
             Err(_) => {

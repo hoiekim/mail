@@ -527,5 +527,16 @@ mod tests {
         assert_eq!(closed.meta, meta("connect", Some("203.0.113.7")));
         assert!(warns(true, &closed));
         assert!(warns(false, &closed));
+
+        // A client that leaves mid-handshake: noise before a session exists,
+        // worth a page inside one — where the connection only reports it
+        // when it cuts a transaction short.
+        let hung_up = std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
+        let hung_up = SmtpServerError::handshake(Some(&hung_up), Some("203.0.113.7".to_string()));
+        assert_eq!(hung_up.message, "socket hang up");
+        assert_eq!(hung_up.code.as_deref(), Some("ECONNRESET"));
+        assert_eq!(hung_up.meta, meta("connect", Some("203.0.113.7")));
+        assert!(warns(true, &hung_up));
+        assert!(!warns(false, &hung_up));
     }
 }

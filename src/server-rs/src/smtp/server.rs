@@ -86,11 +86,17 @@ impl SmtpServerError {
     }
 
     /// Tags a TLS handshake failure so listeners can tell it from a
-    /// mid-session error. `None` is a socket that closed mid-handshake.
+    /// mid-session error. A client that closes mid-handshake is the "socket
+    /// hang up" Bun reports; `None` is a socket that closed with no error.
     pub(crate) fn handshake(error: Option<&io::Error>, remote_address: Option<String>) -> SmtpServerError {
         let mut tagged = match error {
-            Some(error) if error.kind() != io::ErrorKind::UnexpectedEof => SmtpServerError::from_io("read", error),
-            _ => SmtpServerError {
+            Some(error) if error.kind() == io::ErrorKind::UnexpectedEof => SmtpServerError {
+                message: "socket hang up".to_string(),
+                code: Some("ECONNRESET".to_string()),
+                ..Default::default()
+            },
+            Some(error) => SmtpServerError::from_io("read", error),
+            None => SmtpServerError {
                 message: "Socket closed while initiating TLS".to_string(),
                 code: Some("SocketError".to_string()),
                 ..Default::default()

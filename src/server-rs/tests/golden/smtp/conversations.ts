@@ -992,6 +992,25 @@ export const conversations: Conversation[] = [
     cmd("RCPT TO:<b@y.org>"),
     cmd("MAIL FROM:<a@x.org>")
   ], TLS),
+  conversation("cleartext sent behind STARTTLS in a write of its own, during a slow hook", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(60),
+    send("STARTTLS\r\n"),
+    wait(60),
+    send("RCPT TO:<injected@y.org>\r\n"),
+    reply(),
+    reply(),
+    // The server waits for a handshake: what it had taken in is not read.
+    { closed: true, within: 600 }
+  ], TLS, { errors: true }),
+  conversation("cleartext sent behind STARTTLS in a write of its own", [
+    hello(),
+    send("STARTTLS\r\n"),
+    reply(),
+    send("RCPT TO:<injected@y.org>\r\n"),
+    closed()
+  ], TLS, { errors: true }),
   conversation("STARTTLS keeps the count of unrecognized commands", [
     greeted(),
     ...Array.from({ length: 8 }, (_, i) => cmd(`XYZ${i}`)),
