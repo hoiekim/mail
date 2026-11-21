@@ -478,7 +478,9 @@ const mutate = (random: () => number, line: string): string => {
   }
   // A lone surrogate cannot come off the wire (the line is decoded UTF-8)
   // and cannot round-trip through a JSON fixture.
-  return out.isWellFormed() ? out : out.toWellFormed();
+  // Typed by hand: the project's `lib` predates these two String methods.
+  const text = out as unknown as { isWellFormed(): boolean; toWellFormed(): string };
+  return text.isWellFormed() ? out : text.toWellFormed();
 };
 {
   const random = rng(20261121);
@@ -550,6 +552,8 @@ counts["commands_deep.json"] = write("commands_deep.json", deep);
 
 type ParserCase = { fn: string; input: string; position?: number; args?: unknown[]; literals?: unknown[] };
 const parserCases: ParserCase[] = [];
+// The parsers take differently shaped contexts and arguments.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const direct: Record<string, (context: any, ...args: any[]) => unknown> = {
   parseAtom: P.parseAtom,
   parseDate: P.parseDate,
@@ -1220,6 +1224,7 @@ const drain = async (stream: AsyncIterable<Buffer>): Promise<{ emitted: number; 
   return { emitted, sha256: hash.digest("hex") };
 };
 /** A response part as JSON; a stream is drained, unless it would read the database. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const part = async (value: any, lazy: boolean): Promise<unknown> => {
   if (value === null || value === undefined) return null;
   if (value.type === "stream") {
