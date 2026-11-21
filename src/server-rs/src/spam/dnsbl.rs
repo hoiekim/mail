@@ -3,14 +3,13 @@
 //! Layer 1: the connecting address is looked up in DNS blocklists. A listing
 //! marks a known spam source.
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{LazyLock, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 use futures_util::future::{join_all, BoxFuture};
-use hickory_resolver::config::{
-    NameServerConfig, Protocol, ResolverConfig, ResolverOpts, ServerOrderingStrategy,
-};
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::error::{ResolveError, ResolveErrorKind};
 use hickory_resolver::proto::error::ProtoErrorKind;
 use hickory_resolver::proto::op::ResponseCode;
@@ -209,28 +208,365 @@ pub trait DnsLookup: Send + Sync {
     fn resolve4<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Vec<String>, DnsLookupError>>;
 }
 
-/// The code Node's resolver gives a failure, where one corresponds. (Bun's
-/// folds an empty answer into `ENOTFOUND`; that and `ENODATA` both clear.)
-fn node_code(error: &ResolveError) -> Option<&'static str> {
+// ---------------------------------------------------------------------------
+// The system resolver
+//
+// A verdict depends on more than the DNS answer: on which name server was
+// asked, on how long it was given, on whether an earlier answer was reused.
+// The Bun server leaves all of that to its runtime's resolver (c-ares, as Bun
+// builds and drives it), so that resolver's conduct is reproduced here.
+// `tests/golden/spam/resolver.ts` records it against scripted name servers
+// and `tests/spam_golden.rs` replays the record to this code. In short:
+//
+// - Whatever a name server answers is the answer, a failure code included.
+//   Only silence, or a server that cannot be reached, moves on to the next.
+// - The name servers are asked in the order given. One that did not answer
+//   goes to the back until it answers again; after five seconds, one question
+//   in ten also goes to it on the side, to see whether it has recovered.
+// - A server never heard from gets two seconds (or resolv.conf's `timeout`).
+//   One with a record gets five times its average response time, at least a
+//   quarter second, at most five. The wait doubles with each pass over the
+//   servers, and the timers are checked once a second.
+// - A question is sent four times per name server before it fails. Each
+//   sending replaces the one before: an answer to an earlier one is lost.
+// - An answer is kept for as long as its records say, a missing name for as
+//   long as the zone's SOA record says, an empty answer for an hour, each
+//   for an hour at most. Failures are not kept.
+// - A question outlives the check that asked it. What the resolver learns
+//   after the two-second timeout is there for the next mail.
+// ---------------------------------------------------------------------------
+
+/// Sendings of one question per name server before it fails.
+const TRIES: usize = 4;
+/// The wait for a name server with no record of answering, in milliseconds.
+const DEFAULT_TIMEOUT_MS: u64 = 2000;
+/// Bounds of the wait for a name server with a record, in milliseconds.
+const MIN_TIMEOUT_MS: u64 = 250;
+const MAX_TIMEOUT_MS: u64 = 5000;
+/// The wait is this many times the average response time.
+const TIMEOUT_PER_AVERAGE: u64 = 5;
+/// Responses needed in a period before their average counts.
+const MIN_SAMPLES: u64 = 3;
+/// How long a name server that did not answer is left alone, and the chance
+/// (one in this many questions) of trying it on the side after that.
+const RETRY_DELAY: Duration = Duration::from_secs(5);
+const RETRY_CHANCE: u16 = 10;
+/// The longest any answer is kept.
+const CACHE_MAX_TTL: Duration = Duration::from_secs(3600);
+/// Answers kept at once; the cache is emptied of expired ones when it fills.
+const CACHE_CAPACITY: usize = 16_384;
+
+/// The periods response times are averaged over, in seconds, shortest first;
+/// zero is "since the start". The first one with enough responses decides.
+const LATENCY_PERIODS: [u64; 5] = [60, 900, 3600, 86_400, 0];
+
+/// Response times within one period: the current stretch and the one before.
+#[derive(Debug, Clone, Copy, Default)]
+struct LatencyBucket {
+    slot: u64,
+    count: u64,
+    total_ms: u64,
+    previous_slot: u64,
+    previous_count: u64,
+    previous_total_ms: u64,
+}
+
+/// A name server's response times, kept the way the Bun server's resolver
+/// keeps them.
+#[derive(Debug, Clone, Copy, Default)]
+struct Latency {
+    buckets: [LatencyBucket; 5],
+}
+
+impl Latency {
+    /// Which stretch of a period a moment falls in; never zero, so an unused
+    /// bucket matches none.
+    fn slot(period: u64, now_secs: u64) -> u64 {
+        if period == 0 {
+            1
+        } else {
+            now_secs / period + 1
+        }
+    }
+
+    fn record(&mut self, now_secs: u64, elapsed: Duration) {
+        let ms = (elapsed.as_millis() as u64).max(1);
+        for (bucket, period) in self.buckets.iter_mut().zip(LATENCY_PERIODS) {
+            let slot = Latency::slot(period, now_secs);
+            if bucket.slot != slot {
+                bucket.previous_slot = bucket.slot;
+                bucket.previous_count = bucket.count;
+                bucket.previous_total_ms = bucket.total_ms;
+                bucket.slot = slot;
+                bucket.count = 0;
+                bucket.total_ms = 0;
+            }
+            bucket.count += 1;
+            bucket.total_ms += ms;
+        }
+    }
+
+    /// The average response time in milliseconds, once there are enough
+    /// responses to speak of one.
+    fn average_ms(&self, now_secs: u64) -> Option<u64> {
+        self.buckets.iter().zip(LATENCY_PERIODS).find_map(|(bucket, period)| {
+            let slot = Latency::slot(period, now_secs);
+            if bucket.slot == slot && bucket.count >= MIN_SAMPLES {
+                Some(bucket.total_ms / bucket.count)
+            } else if bucket.previous_slot + 1 == slot && bucket.previous_count >= MIN_SAMPLES {
+                Some(bucket.previous_total_ms / bucket.previous_count)
+            } else {
+                None
+            }
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+struct ServerState {
+    /// Questions in a row this server did not answer.
+    consecutive_failures: u32,
+    /// When it may be tried on the side again.
+    retry_at: Option<Instant>,
+    probe_pending: bool,
+    latency: Latency,
+}
+
+struct NameServer {
+    resolver: TokioAsyncResolver,
+    state: Mutex<ServerState>,
+}
+
+impl NameServer {
+    fn new(address: SocketAddr) -> NameServer {
+        let mut config = ResolverConfig::new();
+        for protocol in [Protocol::Udp, Protocol::Tcp] {
+            config.add_name_server(NameServerConfig::new(address, protocol));
+        }
+        // One sending per call, never from a cache or the hosts file; how long
+        // to wait and whom to ask next is decided here, per question.
+        let mut options = ResolverOpts::default();
+        options.timeout = Duration::from_secs(60);
+        options.attempts = 0;
+        options.cache_size = 0;
+        options.use_hosts_file = false;
+        NameServer { resolver: TokioAsyncResolver::tokio(config, options), state: Mutex::default() }
+    }
+
+    fn state(&self) -> MutexGuard<'_, ServerState> {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// How long this sending waits: the server's own timeout, doubled for
+    /// each pass already made over the servers, on the resolver's
+    /// once-a-second timer.
+    fn wait(&self, default_ms: u64, passes: u32, now_secs: u64) -> Duration {
+        let timeout_ms = match self.state().latency.average_ms(now_secs) {
+            Some(average) => (average * TIMEOUT_PER_AVERAGE).clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS),
+            None => default_ms,
+        };
+        Duration::from_secs((timeout_ms << passes.min(5)).div_ceil(1000))
+    }
+}
+
+/// What one sending to one name server came to.
+enum Reply {
+    /// The server answered, with addresses or with a code. `keep_for` is how
+    /// long the answer may be reused.
+    Answered { outcome: Result<Vec<String>, DnsLookupError>, keep_for: Option<Duration> },
+    /// Nothing came back in time, or the server could not be reached.
+    Unanswered(DnsLookupError),
+}
+
+struct Resolver {
+    servers: Vec<NameServer>,
+    default_timeout_ms: u64,
+    cache: Mutex<HashMap<String, (Instant, Result<Vec<String>, DnsLookupError>)>>,
+    started: Instant,
+}
+
+impl Resolver {
+    fn now_secs(&self) -> u64 {
+        self.started.elapsed().as_secs()
+    }
+
+    fn cache(&self) -> MutexGuard<'_, HashMap<String, (Instant, Result<Vec<String>, DnsLookupError>)>> {
+        self.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn remembered(&self, key: &str) -> Option<Result<Vec<String>, DnsLookupError>> {
+        let mut cache = self.cache();
+        match cache.get(key) {
+            Some((until, outcome)) if *until > Instant::now() => Some(outcome.clone()),
+            Some(_) => {
+                cache.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn remember(&self, key: &str, outcome: &Result<Vec<String>, DnsLookupError>, keep_for: Duration) {
+        if keep_for.is_zero() {
+            return;
+        }
+        let now = Instant::now();
+        let mut cache = self.cache();
+        if cache.len() >= CACHE_CAPACITY {
+            cache.retain(|_, (until, _)| *until > now);
+            if cache.len() >= CACHE_CAPACITY {
+                cache.clear();
+            }
+        }
+        cache.insert(key.to_string(), (now + keep_for.min(CACHE_MAX_TTL), outcome.clone()));
+    }
+
+    /// The name server to ask: the one with the fewest unanswered questions
+    /// in a row, the earlier one on a tie.
+    fn choose(&self) -> usize {
+        (0..self.servers.len())
+            .min_by_key(|index| (self.servers[*index].state().consecutive_failures, *index))
+            .unwrap_or(0)
+    }
+
+    /// Sends the question to one name server and waits for it; the outcome is
+    /// entered in that server's record.
+    async fn send(&self, index: usize, query: &Name, name: &str, wait: Duration) -> Reply {
+        let server = &self.servers[index];
+        let sent = Instant::now();
+        // Dropping the lookup at the timeout closes its socket: a later
+        // answer to this sending has nowhere to arrive.
+        let reply = match tokio::time::timeout(wait, server.resolver.ipv4_lookup(query.clone())).await {
+            Err(_) => {
+                Reply::Unanswered(DnsLookupError::new(Some("ETIMEOUT"), format!("queryA ETIMEOUT {name}")))
+            }
+            Ok(Ok(lookup)) => {
+                let addresses: Vec<String> = lookup.iter().map(|address| address.to_string()).collect();
+                let keep_for = lookup.valid_until().checked_duration_since(Instant::now());
+                let outcome = if addresses.is_empty() {
+                    // An answer holding no A record, such as a bare CNAME.
+                    Err(DnsLookupError::new(Some("ENODATA"), format!("queryA ENODATA {name}")))
+                } else {
+                    Ok(addresses)
+                };
+                Reply::Answered { outcome, keep_for }
+            }
+            Ok(Err(error)) => match error.kind() {
+                ResolveErrorKind::NoRecordsFound { response_code, negative_ttl, .. } => {
+                    let keep_for = match response_code {
+                        ResponseCode::NXDomain => negative_ttl.map(|ttl| Duration::from_secs(u64::from(ttl))),
+                        // An empty answer carries no record to take a
+                        // lifetime from, and is kept for the longest there is.
+                        ResponseCode::NoError => Some(CACHE_MAX_TTL),
+                        _ => None,
+                    };
+                    let code = response_code_name(*response_code);
+                    let outcome = Err(DnsLookupError::new(Some(code), format!("queryA {code} {name}")));
+                    Reply::Answered { outcome, keep_for }
+                }
+                _ => Reply::Unanswered(DnsLookupError::new(transport_code(&error), error.to_string())),
+            },
+        };
+
+        let mut state = server.state();
+        match &reply {
+            Reply::Answered { outcome, .. } => {
+                state.consecutive_failures = 0;
+                // Only an answer or a missing name says how fast the server is.
+                let timed = matches!(outcome, Ok(_))
+                    || matches!(outcome, Err(error) if matches!(error.code.as_deref(), Some("ENOTFOUND" | "ENODATA")));
+                if timed {
+                    state.latency.record(self.now_secs(), sent.elapsed());
+                }
+            }
+            Reply::Unanswered(_) => {
+                state.consecutive_failures += 1;
+                state.retry_at = Some(Instant::now() + RETRY_DELAY);
+            }
+        }
+        reply
+    }
+
+    /// With the question going to a healthy name server, now and then sends
+    /// it to one that stopped answering as well, to learn whether it is back.
+    fn probe(self: &Arc<Self>, asked: usize, query: &Name, name: &str) {
+        if self.servers[asked].state().consecutive_failures > 0 {
+            return;
+        }
+        let now = Instant::now();
+        let due = |state: &ServerState| {
+            state.consecutive_failures > 0
+                && !state.probe_pending
+                && state.retry_at.is_none_or(|at| at <= now)
+        };
+        let Some(index) = (0..self.servers.len()).find(|index| due(&self.servers[*index].state())) else {
+            return;
+        };
+        if rand::random::<u16>() % RETRY_CHANCE != 0 {
+            return;
+        }
+        self.servers[index].state().probe_pending = true;
+        let (resolver, query, name) = (self.clone(), query.clone(), name.to_string());
+        tokio::spawn(async move {
+            let wait = resolver.servers[index].wait(resolver.default_timeout_ms, 0, resolver.now_secs());
+            resolver.send(index, &query, &name, wait).await;
+            resolver.servers[index].state().probe_pending = false;
+        });
+    }
+
+    /// Asks the name servers until one answers or every sending is used up.
+    async fn ask(
+        self: Arc<Self>,
+        query: Name,
+        name: String,
+        key: String,
+    ) -> Result<Vec<String>, DnsLookupError> {
+        let mut last = DnsLookupError::new(Some("ETIMEOUT"), format!("queryA ETIMEOUT {name}"));
+        for sending in 0..TRIES * self.servers.len() {
+            let index = self.choose();
+            if sending == 0 {
+                self.probe(index, &query, &name);
+            }
+            let passes = (sending / self.servers.len()) as u32;
+            let wait = self.servers[index].wait(self.default_timeout_ms, passes, self.now_secs());
+            match self.send(index, &query, &name, wait).await {
+                Reply::Answered { outcome, keep_for } => {
+                    if let Some(keep_for) = keep_for {
+                        self.remember(&key, &outcome, keep_for);
+                    }
+                    return outcome;
+                }
+                Reply::Unanswered(error) => last = error,
+            }
+        }
+        Err(last)
+    }
+}
+
+/// The code Node's resolver has for a response code. Bun's reads the
+/// remaining codes of the header's four bits as a failed server from 12 up,
+/// and below that as an answer that happens to hold no address.
+fn response_code_name(code: ResponseCode) -> &'static str {
+    match code {
+        ResponseCode::NXDomain => "ENOTFOUND",
+        ResponseCode::NoError => "ENODATA",
+        ResponseCode::ServFail => "ESERVFAIL",
+        ResponseCode::Refused => "EREFUSED",
+        ResponseCode::FormErr => "EFORMERR",
+        ResponseCode::NotImp => "ENOTIMP",
+        ResponseCode::Unknown(12..=15) => "ESERVFAIL",
+        _ => "ENODATA",
+    }
+}
+
+/// The code Node's resolver has for a question that got no response, where one corresponds.
+fn transport_code(error: &ResolveError) -> Option<&'static str> {
     let io_code = |error: &std::io::Error| match error.kind() {
         std::io::ErrorKind::ConnectionRefused => Some("ECONNREFUSED"),
         std::io::ErrorKind::TimedOut => Some("ETIMEOUT"),
         _ => None,
     };
     match error.kind() {
-        ResolveErrorKind::NoRecordsFound { response_code, .. } => Some(match response_code {
-            ResponseCode::NXDomain => "ENOTFOUND",
-            ResponseCode::NoError => "ENODATA",
-            ResponseCode::ServFail => "ESERVFAIL",
-            ResponseCode::Refused => "EREFUSED",
-            ResponseCode::FormErr => "EFORMERR",
-            ResponseCode::NotImp => "ENOTIMP",
-            // The Bun server's resolver reads the remaining codes of the
-            // header's four bits as a failed server from 12 up, and below
-            // that as an answer that happens to hold no address.
-            ResponseCode::Unknown(12..=15) => "ESERVFAIL",
-            _ => "ENODATA",
-        }),
         ResolveErrorKind::Timeout => Some("ETIMEOUT"),
         ResolveErrorKind::Io(error) => io_code(error),
         ResolveErrorKind::Proto(error) => match error.kind() {
@@ -242,66 +578,69 @@ fn node_code(error: &ResolveError) -> Option<&'static str> {
     }
 }
 
-/// DNS over the network, through the system's name servers.
-///
-/// It asks the way the Bun server's resolver does: for the name as given,
-/// never through the search list, without consulting the hosts file, and
-/// without a cache — every mail asks the blocklists afresh.
-/// `tests/golden/spam/resolver.json` records what that resolver made of a
-/// scripted name server; `tests/spam_golden.rs` holds this one to it.
+/// `options timeout:N` of resolv.conf or of `RES_OPTIONS`, in milliseconds;
+/// the default when neither sets one. (`attempts` is not read: the Bun
+/// server's resolver sends four times whatever it says.)
+fn configured_timeout_ms() -> u64 {
+    let resolv_conf = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+    let from_file = resolv_conf
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("options"))
+        .flat_map(|options| options.split_whitespace().map(str::to_string).collect::<Vec<_>>());
+    let from_env = std::env::var("RES_OPTIONS").unwrap_or_default();
+    let seconds = from_file
+        .chain(from_env.split_whitespace().map(str::to_string))
+        .filter_map(|option| option.strip_prefix("timeout:").and_then(|value| value.parse::<u64>().ok()))
+        .last();
+    match seconds {
+        Some(seconds) if seconds > 0 => seconds.min(30) * 1000,
+        _ => DEFAULT_TIMEOUT_MS,
+    }
+}
+
+/// DNS over the network, through the system's name servers, asked the way
+/// the Bun server's resolver asks them (see the notes above).
 pub struct SystemDnsLookup {
-    resolver: TokioAsyncResolver,
+    resolver: Arc<Resolver>,
 }
 
 impl SystemDnsLookup {
     /// A resolver over the name servers of `/etc/resolv.conf`, or over
     /// `127.0.0.1` when the file is unreadable or names none.
     pub fn from_system_conf() -> SystemDnsLookup {
-        match hickory_resolver::system_conf::read_system_conf() {
-            Ok((config, options)) if !config.name_servers().is_empty() => {
-                SystemDnsLookup::build(config, options)
+        let mut addresses: Vec<SocketAddr> = Vec::new();
+        if let Ok((config, _)) = hickory_resolver::system_conf::read_system_conf() {
+            for name_server in config.name_servers() {
+                if !addresses.contains(&name_server.socket_addr) {
+                    addresses.push(name_server.socket_addr);
+                }
             }
-            _ => SystemDnsLookup::with_name_servers(&[SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 53)]),
         }
+        if addresses.is_empty() {
+            addresses.push(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 53));
+        }
+        SystemDnsLookup::build(&addresses, configured_timeout_ms())
     }
 
-    /// A resolver over the given name servers, asked over UDP, then TCP for a
-    /// truncated answer.
+    /// A resolver over the given name servers, in that order, each asked over
+    /// UDP and over TCP for an answer too long for it.
     pub fn with_name_servers(name_servers: &[SocketAddr]) -> SystemDnsLookup {
-        let mut config = ResolverConfig::new();
-        for address in name_servers {
-            for protocol in [Protocol::Udp, Protocol::Tcp] {
-                config.add_name_server(NameServerConfig::new(*address, protocol));
-            }
-        }
-        SystemDnsLookup::build(config, ResolverOpts::default())
+        SystemDnsLookup::build(name_servers, DEFAULT_TIMEOUT_MS)
     }
 
-    fn build(config: ResolverConfig, mut options: ResolverOpts) -> SystemDnsLookup {
-        // The name servers are asked one at a time in the order given, and the
-        // first one's "no such name" is the answer: which server is asked
-        // decides the verdict when one of them is a public resolver a
-        // blocklist refuses.
-        let name_servers: Vec<NameServerConfig> = config
-            .name_servers()
-            .iter()
-            .cloned()
-            .map(|mut name_server| {
-                name_server.trust_negative_responses = true;
-                name_server
-            })
-            .collect();
-        options.num_concurrent_reqs = 1;
-        options.server_ordering_strategy = ServerOrderingStrategy::UserProvidedOrder;
-        options.cache_size = 0;
-        options.use_hosts_file = false;
-        // Every query is for an absolute name, so no search list is carried over.
-        let config = ResolverConfig::from_parts(None, Vec::new(), name_servers);
-        SystemDnsLookup { resolver: TokioAsyncResolver::tokio(config, options) }
+    fn build(name_servers: &[SocketAddr], default_timeout_ms: u64) -> SystemDnsLookup {
+        SystemDnsLookup {
+            resolver: Arc::new(Resolver {
+                servers: name_servers.iter().copied().map(NameServer::new).collect(),
+                default_timeout_ms,
+                cache: Mutex::default(),
+                started: Instant::now(),
+            }),
+        }
     }
 }
 
-/// The characters the Bun server's resolver (c-ares) accepts in a name.
+/// The characters the Bun server's resolver accepts in a name.
 fn is_hostname_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'/' | b'*')
 }
@@ -365,24 +704,24 @@ impl DnsLookup for SystemDnsLookup {
                 // there, and has to here.
                 return Err(DnsLookupError::new(Some("ENOTFOUND"), format!("queryA ENOTFOUND {name}")));
             };
-            // Absolute, so the search list of resolv.conf never applies. A name
-            // of 254 or 255 characters is one the Bun server's resolver sends
-            // although DNS has no room for it; this one will not.
+            let key = labels
+                .iter()
+                .map(|label| String::from_utf8_lossy(label).to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join(".");
+            if let Some(outcome) = self.resolver.remembered(&key) {
+                return outcome;
+            }
+            // Absolute, so no search list ever applies. A name of 254 or 255
+            // characters is one the Bun server's resolver sends although DNS
+            // has no room for it; this one will not.
             let mut query =
                 Name::from_labels(labels).map_err(|error| DnsLookupError::new(None, error.to_string()))?;
             query.set_fqdn(true);
-            match self.resolver.ipv4_lookup(query).await {
-                Ok(lookup) => {
-                    let addresses: Vec<String> = lookup.iter().map(|address| address.to_string()).collect();
-                    if addresses.is_empty() {
-                        // An answer holding no A record, such as a bare CNAME.
-                        Err(DnsLookupError::new(Some("ENODATA"), format!("queryA ENODATA {name}")))
-                    } else {
-                        Ok(addresses)
-                    }
-                }
-                Err(error) => Err(DnsLookupError::new(node_code(&error), error.to_string())),
-            }
+            // On a task of its own: the check gives up after two seconds, the
+            // question does not, and what it learns is there for the next one.
+            let asking = tokio::spawn(self.resolver.clone().ask(query, name.to_string(), key));
+            asking.await.unwrap_or_else(|error| Err(DnsLookupError::new(None, error.to_string())))
         })
     }
 }
@@ -1002,6 +1341,82 @@ mod tests {
         for octet in ["", "256", "1000", "99999999999999999999", "1a", "-1", "+1", " 1", "1 ", "٣"] {
             assert!(!is_octet(octet), "{octet}");
         }
+    }
+
+    #[test]
+    fn a_name_server_is_given_five_times_its_average_response_time() {
+        // The waits Bun's resolver was measured to give a server that had
+        // answered in so many milliseconds, before moving on from its silence.
+        let server = NameServer::new("127.0.0.1:9".parse().unwrap());
+        let wait = |server: &NameServer| server.wait(DEFAULT_TIMEOUT_MS, 0, 0).as_millis();
+        // Never heard from, or heard from twice: the default.
+        assert_eq!(wait(&server), 2000);
+        for _ in 0..2 {
+            server.state().latency.record(0, Duration::from_millis(1));
+        }
+        assert_eq!(wait(&server), 2000);
+        // A third response makes a record: a quarter second at least, on a
+        // timer that is checked once a second.
+        server.state().latency.record(0, Duration::from_millis(1));
+        assert_eq!(wait(&server), 1000);
+
+        for (average_ms, expected_ms) in [
+            (60, 1000),
+            (150, 1000),
+            (200, 1000),
+            (202, 2000),
+            (392, 2000),
+            (412, 3000),
+            (902, 5000),
+            (5000, 5000),
+        ] {
+            let server = NameServer::new("127.0.0.1:9".parse().unwrap());
+            for _ in 0..3 {
+                server.state().latency.record(0, Duration::from_millis(average_ms));
+            }
+            assert_eq!(wait(&server), expected_ms, "{average_ms} ms");
+        }
+
+        // Each pass over the name servers doubles the wait.
+        let unheard = NameServer::new("127.0.0.1:9".parse().unwrap());
+        let waits: Vec<u64> =
+            (0..4).map(|pass| unheard.wait(DEFAULT_TIMEOUT_MS, pass, 0).as_secs()).collect();
+        assert_eq!(waits, vec![2, 4, 8, 16]);
+    }
+
+    #[test]
+    fn response_times_are_averaged_over_the_latest_period_that_has_enough() {
+        let mut latency = Latency::default();
+        assert_eq!(latency.average_ms(0), None);
+        for elapsed in [10, 20, 60] {
+            latency.record(5, Duration::from_millis(elapsed));
+        }
+        assert_eq!(latency.average_ms(30), Some(30));
+        // Once that minute is over the quarter hour speaks for it, and much
+        // later everything since the start.
+        assert_eq!(latency.average_ms(90), Some(30));
+        assert_eq!(latency.average_ms(600), Some(30));
+        assert_eq!(latency.average_ms(10_000_000), Some(30));
+        // New responses take over once there are three of them.
+        for elapsed in [300, 300] {
+            latency.record(10_000_000, Duration::from_millis(elapsed));
+        }
+        assert_eq!(latency.average_ms(10_000_000), Some((10 + 20 + 60 + 300 + 300) / 5));
+        latency.record(10_000_000, Duration::from_millis(300));
+        assert_eq!(latency.average_ms(10_000_000), Some(300));
+        // A response too fast to measure counts as a millisecond.
+        let mut instant = Latency::default();
+        for _ in 0..3 {
+            instant.record(0, Duration::ZERO);
+        }
+        assert_eq!(instant.average_ms(0), Some(1));
+    }
+
+    #[test]
+    fn the_resolv_conf_timeout_is_read_in_seconds() {
+        // Whatever this machine's resolv.conf says, it is a whole number of seconds.
+        let timeout = configured_timeout_ms();
+        assert!(timeout >= 1000 && timeout % 1000 == 0, "{timeout}");
     }
 
     /// A DNS server on a loopback UDP port that answers every A query from
