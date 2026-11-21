@@ -176,6 +176,8 @@ const buildEnv = (
   const { ports, db, mailgun, alarms, certificate } = parts;
   const env: Record<string, string | undefined> = {
     ...baseEnv(),
+    // INTERNALDATE, SEARCH dates and log stamps follow the server's zone.
+    TZ: "UTC",
     EMAIL_DOMAIN: DOMAIN,
     APP_HOSTNAME: `app.${DOMAIN}`,
     ADMIN_PASSWORD,
