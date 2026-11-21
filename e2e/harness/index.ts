@@ -6,3 +6,4 @@ export * from "./postgres";
 export * from "./server";
 export * from "./stubs";
 export * from "./tls";
+export * from "./deliver";
