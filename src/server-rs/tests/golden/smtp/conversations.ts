@@ -1183,6 +1183,38 @@ export const conversations: Conversation[] = [
     reply(),
     closed()
   ], { socketTimeout: 150 }),
+  // Each write lands 100 ms before the timeout would have fired, and the
+  // hook answers 100 ms before the timeout the last write set.
+  conversation("what arrives during a slow hook holds off the idle timeout", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(100),
+    send("NOOP\r\n"),
+    wait(100),
+    send("NOOP\r\n"),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    closed()
+  ], { socketTimeout: 200 }),
+  conversation("the idle timeout counts from the last reply", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    reply(),
+    silence(250),
+    reply(),
+    closed()
+  ], { socketTimeout: 400 }),
+  conversation("shutdown during a slow hook", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\nNOOP\r\n"),
+    wait(100),
+    { server: "close" },
+    reply(),
+    reply(),
+    closed()
+  ], { closeTimeout: 2000 }),
   conversation("a rotated credential closes its connections", [
     hello("authed"),
     hello("other"),
@@ -1355,6 +1387,50 @@ export const conversations: Conversation[] = [
     reply(),
     reply(),
     closed()
+  ]),
+  conversation("the client half-closes behind two writes sent during a slow hook", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(80),
+    send("RCPT TO:<c@y.org>\r\n"),
+    wait(60),
+    send("NOOP\r\nQUIT\r\n"),
+    end(),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    closed()
+  ]),
+  conversation("the client half-closes behind two writes that both call hooks, during a slow hook", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(80),
+    send("RCPT TO:<c@y.org>\r\n"),
+    wait(60),
+    send("RCPT TO:<e@y.org>\r\nNOOP\r\nRCPT TO:<f@y.org>\r\n"),
+    end(),
+    reply(),
+    reply(),
+    reply(),
+    closed()
+  ]),
+  conversation("commands sent in pieces during a slow hook", [
+    hello(),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(60),
+    send("RCPT TO:<c@y.org>\r\nNO"),
+    wait(60),
+    send("OP\r\nRCPT TO:<e@"),
+    wait(60),
+    send("y.org>\r\nDATA\r\n"),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    send(`${MESSAGE}.\r\n`),
+    reply()
   ]),
   conversation("the client drops during a slow hook", [
     hello(),

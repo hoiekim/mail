@@ -17,14 +17,17 @@
 //! - A hook whose answer needs no outside event is answered on the spot, as
 //!   a hook calling back synchronously is there; the lines behind it are then
 //!   handled before anything else is read off the socket.
-//! - The client's FIN is acted on as soon as it is the next thing in the
-//!   socket, even while a hook is running: the connection is over, the
-//!   hook's answer goes nowhere, and lines not yet handled are dropped. The
-//!   hook itself still runs to its end. A FIN that arrived, behind more
-//!   commands, while the socket was not being read is acted on right after
-//!   the first of those commands that calls a hook.
+//! - A paused socket still takes in a socket buffer's worth: what arrives
+//!   meanwhile counts as activity for the idle timeout, and waits its turn.
+//! - The client's FIN is acted on as soon as nothing is left in front of it,
+//!   even while a hook is running: the connection is over, the hook's answer
+//!   goes nowhere, and lines not yet handled are dropped. The hook itself
+//!   still runs to its end. A FIN that came in behind commands while the
+//!   socket was paused is acted on right after the first of those commands
+//!   that calls a hook.
 
 use std::any::Any;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::panic::AssertUnwindSafe;
@@ -71,6 +74,9 @@ const MAX_UNRECOGNIZED_COMMANDS: u32 = 10;
 
 /// The most one read takes off the socket.
 const READ_CHUNK_BYTES: usize = 64 * 1024;
+
+/// What a paused connection still takes in: the read buffer of a Bun socket.
+const HELD_BACK_BYTES: usize = 64 * 1024;
 
 /// Replies queued past this stop the command loop until the client has read
 /// them: the high-water mark of a Bun socket.
@@ -377,8 +383,10 @@ pub(crate) struct Connection {
     destroyed: bool,
     /// The writing side has been ended; replies from here on are dropped.
     ended: bool,
-    /// The client sent FIN.
+    /// The client's FIN has been acted on.
     eof: bool,
+    /// The client's FIN was read behind data that is still held back.
+    fin_held_back: bool,
     /// The TLS handshake of STARTTLS is due.
     upgrading: Option<TlsAcceptor>,
     busy: bool,
@@ -387,9 +395,10 @@ pub(crate) struct Connection {
     /// A hook answered on the spot; the command loop picks up after it.
     resume_pending: bool,
     pending: BytesMut,
-    /// Read off the socket while the connection could not take it, or (the
-    /// flag unset) read ahead of its turn.
-    lookahead: Option<(Bytes, bool)>,
+    /// Read off the socket while the connection was paused, in order.
+    held_back: VecDeque<Bytes>,
+    /// How much more a paused connection takes in.
+    held_back_room: usize,
     next_line: Option<NextLine>,
     unrecognized: u32,
     transaction_count: u64,
@@ -454,12 +463,14 @@ impl Connection {
             destroyed: false,
             ended: false,
             eof: false,
+            fin_held_back: false,
             upgrading: None,
             busy: false,
             reply_backlog: false,
             resume_pending: false,
             pending: BytesMut::new(),
-            lookahead: None,
+            held_back: VecDeque::new(),
+            held_back_room: HELD_BACK_BYTES,
             next_line: None,
             unrecognized: 0,
             transaction_count: 0,
@@ -487,16 +498,17 @@ impl Connection {
                 self.upgrade().await;
                 continue;
             }
-            if self.flowing() {
-                if let Some((chunk, held_back)) = self.lookahead.take() {
-                    self.on_chunk(chunk, held_back, &mut buffer);
+            let flowing = self.flowing();
+            if flowing {
+                if let Some(chunk) = self.held_back.pop_front() {
+                    self.on_chunk(chunk, true, &mut buffer);
                     continue;
                 }
             }
 
             self.handle.queued.store(self.out.len(), Ordering::Relaxed);
             let deadline = [self.greeting_at, self.idle_at, self.stall_at].into_iter().flatten().min();
-            let want_read = self.lookahead.is_none() && !self.eof;
+            let want_read = !self.eof && !self.fin_held_back && (flowing || self.held_back_room > 0);
             let want_shutdown = self.ended && !self.shut_down;
             tokio::select! {
                 biased;
@@ -594,16 +606,20 @@ impl Connection {
 
     fn on_io(&mut self, event: IoEvent, buffer: &mut [u8]) {
         match event {
-            IoEvent::Read(Ok(0)) => self.on_eof(),
+            IoEvent::Read(Ok(0)) => self.on_fin(),
             IoEvent::Read(Ok(read)) => {
                 let chunk = Bytes::copy_from_slice(&buffer[..read]);
                 if self.flowing() {
+                    self.held_back_room = HELD_BACK_BYTES;
                     self.on_chunk(chunk, false, buffer);
                 } else {
-                    self.lookahead = Some((chunk, true));
+                    // Taken in while paused: activity, but not yet its turn.
+                    self.touch();
+                    self.held_back_room = self.held_back_room.saturating_sub(read);
+                    self.held_back.push_back(chunk);
                 }
             }
-            IoEvent::Read(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => self.on_eof(),
+            IoEvent::Read(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => self.on_fin(),
             IoEvent::Read(Err(error)) => self.on_socket_error("read", error),
             IoEvent::Wrote(Ok(0)) => self.on_socket_error("write", io::ErrorKind::WriteZero.into()),
             IoEvent::Wrote(Ok(written)) => {
@@ -640,8 +656,8 @@ impl Connection {
         self.on_close();
     }
 
-    /// Whether what the client sends is taken as it arrives. While it is
-    /// not, at most one read is held back in `lookahead`.
+    /// Whether what the client sends is handled as it arrives. While it is
+    /// not, what the socket still takes in is held back.
     fn flowing(&self) -> bool {
         !self.busy && !self.reply_backlog && !self.data.as_ref().is_some_and(|data| {
             data.unstuffer.is_some() && data.writer.needs_drain()
@@ -655,25 +671,36 @@ impl Connection {
     /// One read's worth of what the client sent. `held_back` is set for a
     /// read that waited for the connection to take it.
     fn on_chunk(&mut self, chunk: Bytes, held_back: bool, buffer: &mut [u8]) {
-        self.touch();
+        if !held_back {
+            self.touch();
+        }
         if self.in_data() {
             self.feed_data(chunk);
         } else {
             self.pending.extend_from_slice(&chunk);
             self.pump();
         }
-        // Bun hands over what piled up while it was not reading in one go:
-        // a FIN behind it is acted on before anything that waited on the
-        // data continues. Read as it arrives, the data is finished with first.
-        if held_back && self.upgrading.is_none() && !self.closed && self.lookahead.is_none() && !self.eof {
-            let mut cx = noop_context();
-            let mut read = ReadBuf::new(buffer);
-            match Pin::new(&mut self.io).poll_read(&mut cx, &mut read) {
-                Poll::Ready(Ok(())) if read.filled().is_empty() => self.on_end(),
-                Poll::Ready(Ok(())) => self.lookahead = Some((Bytes::copy_from_slice(read.filled()), false)),
-                Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => self.on_end(),
-                // The error is still there for the next read.
-                Poll::Ready(Err(_)) | Poll::Pending => {}
+        // Bun hands over what piled up while the socket was paused in one
+        // go: a FIN behind the last of it is acted on before anything that
+        // waited on the data continues. Read as it arrives, the data is
+        // finished with first.
+        if held_back && self.held_back.is_empty() && self.upgrading.is_none() && !self.closed && !self.eof {
+            if self.fin_held_back {
+                self.on_end();
+            } else if self.held_back_room > 0 {
+                // What reached the socket during the pause may not have been read yet.
+                let mut read = ReadBuf::new(buffer);
+                match Pin::new(&mut self.io).poll_read(&mut noop_context(), &mut read) {
+                    Poll::Ready(Ok(())) if read.filled().is_empty() => self.on_end(),
+                    Poll::Ready(Ok(())) => {
+                        self.touch();
+                        self.held_back_room = self.held_back_room.saturating_sub(read.filled().len());
+                        self.held_back.push_back(Bytes::copy_from_slice(read.filled()));
+                    }
+                    Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => self.on_end(),
+                    // The error is still there for the next read.
+                    Poll::Ready(Err(_)) | Poll::Pending => {}
+                }
             }
         }
         self.settle();
@@ -682,11 +709,16 @@ impl Connection {
         }
     }
 
-    /// The client's FIN, on its own.
-    fn on_eof(&mut self) {
-        self.on_end();
-        self.settle();
-        self.on_close();
+    /// The client's FIN has been read.
+    fn on_fin(&mut self) {
+        if self.held_back.is_empty() {
+            self.on_end();
+            self.settle();
+            self.on_close();
+        } else {
+            // It waits behind the data it followed.
+            self.fin_held_back = true;
+        }
     }
 
     /// The client will send nothing more. A socket that is not half-open
