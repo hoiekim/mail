@@ -23,7 +23,7 @@ import { bareMessageId, storedIdForms } from "./threading";
 import { validateMailData, MailValidationError } from "./validation";
 import { sendAlarm } from "../alarm";
 import { logger } from "../logger";
-import { defaultDomain, ownedDomainNames } from "../domains";
+import { defaultDomain, isInServedZone, ownedDomainNames } from "../domains";
 
 export class MailSendingError extends Error {
   constructor(message: string) {
@@ -137,12 +137,14 @@ export const sendSystemMail = async (mailToSend: MailDataToSend) => {
  * Logs and alarms a failed send, and words it for the person who sent it.
  *
  * Mailgun answers 404 for a sending domain it doesn't have. Any user can
- * verify a domain and send from it before the operator has added it to
- * Mailgun, so that refusal is the sender's to act on, not a fault: it is
- * logged at warn and never alarms.
+ * verify a domain outside the served zone and send from it before the
+ * operator has added it to Mailgun, so that refusal is the sender's to act
+ * on: it is logged at warn and never alarms. A 404 for the zone or a name
+ * under it (every account's own domain, and every system mail) means the
+ * operator's own Mailgun setup is broken, so it alarms like any other fault.
  */
 const sendingFailure = (error: unknown, domain: string): MailSendingError => {
-  if ((error as { status?: number } | null)?.status === 404) {
+  if ((error as { status?: number } | null)?.status === 404 && !isInServedZone(domain)) {
     logger.warn("Mailgun has no sending domain for this send", { domain }, error);
     return new MailSendingError(
       `This server can't send from ${domain} yet. Ask its operator to add the domain to Mailgun.`

@@ -59,7 +59,7 @@ const mockListDomainAccess = spyOn(domainRepo, "listDomainAccess").mockResolvedV
   { ...ownedAccess("example.net"), role: "viewer", ownerId: "someone-else" },
 ]);
 
-const { sendMail } = await import("./send");
+const { sendMail, sendSystemMail } = await import("./send");
 const { MailValidationError } = await import("./validation");
 
 // `mock.module` is process-global with no unmock API — hand the real modules
@@ -164,6 +164,38 @@ describe("sendMail — a sending domain Mailgun doesn't have", () => {
         "This server can't send from example.org yet. Ask its operator to add the domain to Mailgun."
       );
       expect(alarm).not.toHaveBeenCalled();
+    } finally {
+      alarm.mockRestore();
+    }
+  });
+
+  it("alarms a 404 for a domain under the served zone: that is the operator's setup", async () => {
+    const alarm = spyOn(alarmModule, "sendAlarm").mockResolvedValue(undefined as never);
+    const previousZone = process.env.EMAIL_DOMAIN;
+    process.env.EMAIL_DOMAIN = "example.com";
+    mockSendMailgunMail.mockRejectedValueOnce(
+      Object.assign(new Error("Domain not found: example.com"), { status: 404 })
+    );
+    try {
+      const send = sendMail(USER, new MailDataToSend({ ...MAIL, senderDomain: "example.com" }));
+      await expect(send).rejects.toThrow("Failed to send email. Please try again.");
+      expect(alarm).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousZone === undefined) delete process.env.EMAIL_DOMAIN;
+      else process.env.EMAIL_DOMAIN = previousZone;
+      alarm.mockRestore();
+    }
+  });
+
+  it("alarms a 404 on system mail, which always sends from the zone", async () => {
+    const alarm = spyOn(alarmModule, "sendAlarm").mockResolvedValue(undefined as never);
+    mockSendMailgunMail.mockRejectedValueOnce(
+      Object.assign(new Error("Domain not found"), { status: 404 })
+    );
+    try {
+      const send = sendSystemMail(new MailDataToSend({ ...MAIL, sender: "no-reply" }));
+      await expect(send).rejects.toThrow("Failed to send email. Please try again.");
+      expect(alarm).toHaveBeenCalledTimes(1);
     } finally {
       alarm.mockRestore();
     }
