@@ -23,7 +23,7 @@ bytes = "1"
 
 # HTTP server and client
 hyper = { version = "1", features = ["http1", "server"] }
-hyper-util = { version = "0.1", features = ["tokio", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "server-graceful"] }
 http = "1"
 http-body = "1"
 http-body-util = "0.1"

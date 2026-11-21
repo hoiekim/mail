@@ -8,6 +8,7 @@
 pub mod alarm;
 pub mod auth_client;
 pub mod env;
+pub mod http;
 pub mod imap;
 pub mod js;
 pub mod logger;
@@ -15,6 +16,9 @@ pub mod mails;
 pub mod mime;
 pub mod models;
 pub mod postgres;
+pub mod proxy_protocol;
+pub mod push;
+pub mod push_validation;
 pub mod read_only;
 pub mod smtp;
 pub mod spam;

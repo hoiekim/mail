@@ -35,6 +35,20 @@ pub fn utf16_truncate(s: &str, end: usize) -> String {
     utf16_slice(s, 0, end)
 }
 
+fn is_js_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0b}' | '\u{0c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    )
+}
+
+/// `string.trim()`: JavaScript's whitespace set, which includes the byte
+/// order mark and excludes U+0085.
+pub fn trim(s: &str) -> &str {
+    s.trim_matches(is_js_whitespace)
+}
+
 /// `Date.now()`.
 pub fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
@@ -493,5 +507,275 @@ mod tests {
         assert_eq!(number_from_str("0x10"), 16.0);
         assert_eq!(number_to_string(3.0), "3");
         assert_eq!(number_to_string(0.5), "0.5");
+    }
+}
+
+/// `JSON.parse(text)`, or `None` where it throws.
+///
+/// `serde_json` alone is stricter than JavaScript in ways a client can reach:
+/// it refuses a number too large for a double (JavaScript reads `Infinity`),
+/// an escaped lone surrogate, and nesting past 128 levels. This parser takes
+/// what JavaScript takes. An integral number is stored as an integer so it
+/// prints without a fraction, as JavaScript prints it; a number outside the
+/// double range, which JSON cannot carry, is stored as `null`. Nesting is
+/// capped far above anything a client sends, to keep stack use bounded.
+pub fn json_parse(text: &str) -> Option<serde_json::Value> {
+    let mut parser = JsonParser { bytes: text.as_bytes(), at: 0 };
+    parser.skip_whitespace();
+    let value = parser.value(0)?;
+    parser.skip_whitespace();
+    (parser.at == parser.bytes.len()).then_some(value)
+}
+
+const JSON_MAX_DEPTH: usize = 4096;
+
+struct JsonParser<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl JsonParser<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.at).copied()
+    }
+
+    fn skip_whitespace(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            self.at += 1;
+        }
+    }
+
+    fn literal(&mut self, word: &str, value: serde_json::Value) -> Option<serde_json::Value> {
+        if self.bytes[self.at..].starts_with(word.as_bytes()) {
+            self.at += word.len();
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    fn value(&mut self, depth: usize) -> Option<serde_json::Value> {
+        use serde_json::Value;
+        if depth > JSON_MAX_DEPTH {
+            return None;
+        }
+        match self.peek()? {
+            b'{' => {
+                self.at += 1;
+                let mut map = serde_json::Map::new();
+                self.skip_whitespace();
+                if self.peek()? == b'}' {
+                    self.at += 1;
+                    return Some(Value::Object(map));
+                }
+                loop {
+                    self.skip_whitespace();
+                    if self.peek()? != b'"' {
+                        return None;
+                    }
+                    let key = self.string()?;
+                    self.skip_whitespace();
+                    if self.peek()? != b':' {
+                        return None;
+                    }
+                    self.at += 1;
+                    self.skip_whitespace();
+                    let value = self.value(depth + 1)?;
+                    map.insert(key, value);
+                    self.skip_whitespace();
+                    match self.peek()? {
+                        b',' => self.at += 1,
+                        b'}' => {
+                            self.at += 1;
+                            return Some(Value::Object(map));
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            b'[' => {
+                self.at += 1;
+                let mut items = Vec::new();
+                self.skip_whitespace();
+                if self.peek()? == b']' {
+                    self.at += 1;
+                    return Some(Value::Array(items));
+                }
+                loop {
+                    self.skip_whitespace();
+                    items.push(self.value(depth + 1)?);
+                    self.skip_whitespace();
+                    match self.peek()? {
+                        b',' => self.at += 1,
+                        b']' => {
+                            self.at += 1;
+                            return Some(Value::Array(items));
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            b'"' => self.string().map(Value::String),
+            b't' => self.literal("true", Value::Bool(true)),
+            b'f' => self.literal("false", Value::Bool(false)),
+            b'n' => self.literal("null", Value::Null),
+            b'-' | b'0'..=b'9' => self.number(),
+            _ => None,
+        }
+    }
+
+    fn number(&mut self) -> Option<serde_json::Value> {
+        let start = self.at;
+        if self.peek() == Some(b'-') {
+            self.at += 1;
+        }
+        match self.peek()? {
+            b'0' => self.at += 1,
+            b'1'..=b'9' => {
+                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    self.at += 1;
+                }
+            }
+            _ => return None,
+        }
+        if self.peek() == Some(b'.') {
+            self.at += 1;
+            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+                return None;
+            }
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.at += 1;
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.at += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.at += 1;
+            }
+            if !matches!(self.peek(), Some(b'0'..=b'9')) {
+                return None;
+            }
+            while matches!(self.peek(), Some(b'0'..=b'9')) {
+                self.at += 1;
+            }
+        }
+        let text = std::str::from_utf8(&self.bytes[start..self.at]).ok()?;
+        let value: f64 = text.parse().ok()?;
+        if !value.is_finite() {
+            return Some(serde_json::Value::Null);
+        }
+        if value == value.trunc() && value.abs() <= 9_007_199_254_740_992.0 {
+            return Some(serde_json::Value::from(value as i64));
+        }
+        serde_json::Number::from_f64(value).map(serde_json::Value::Number)
+    }
+
+    fn hex4(&mut self) -> Option<u32> {
+        let digits = self.bytes.get(self.at..self.at + 4)?;
+        let text = std::str::from_utf8(digits).ok()?;
+        if !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        self.at += 4;
+        u32::from_str_radix(text, 16).ok()
+    }
+
+    fn string(&mut self) -> Option<String> {
+        self.at += 1;
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            let byte = self.peek()?;
+            self.at += 1;
+            match byte {
+                b'"' => return String::from_utf8(out).ok(),
+                0..=0x1f => return None,
+                b'\\' => {
+                    let escape = self.peek()?;
+                    self.at += 1;
+                    let ch = match escape {
+                        b'"' => '"',
+                        b'\\' => '\\',
+                        b'/' => '/',
+                        b'b' => '\u{8}',
+                        b'f' => '\u{c}',
+                        b'n' => '\n',
+                        b'r' => '\r',
+                        b't' => '\t',
+                        b'u' => {
+                            let unit = self.hex4()?;
+                            match unit {
+                                0xD800..=0xDBFF => {
+                                    // A high surrogate pairs with a following low one.
+                                    let rewind = self.at;
+                                    let low = if self.bytes[self.at..].starts_with(b"\\u") {
+                                        self.at += 2;
+                                        self.hex4()
+                                    } else {
+                                        None
+                                    };
+                                    match low {
+                                        Some(low @ 0xDC00..=0xDFFF) => {
+                                            let code = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                                            char::from_u32(code).unwrap_or('\u{fffd}')
+                                        }
+                                        _ => {
+                                            self.at = rewind;
+                                            '\u{fffd}'
+                                        }
+                                    }
+                                }
+                                0xDC00..=0xDFFF => '\u{fffd}',
+                                unit => char::from_u32(unit).unwrap_or('\u{fffd}'),
+                            }
+                        }
+                        _ => return None,
+                    };
+                    let mut buffer = [0u8; 4];
+                    out.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
+                }
+                byte => out.push(byte),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::json_parse;
+    use serde_json::json;
+
+    #[test]
+    fn parses_what_javascript_parses() {
+        assert_eq!(json_parse(r#"{"a":[1,2.5,"x",true,null]}"#), Some(json!({"a": [1, 2.5, "x", true, null]})));
+        assert_eq!(json_parse(" [ ] "), Some(json!([])));
+        assert_eq!(json_parse("1.0"), Some(json!(1)));
+        assert_eq!(json_parse("1e3"), Some(json!(1000)));
+        assert_eq!(json_parse(r#"{"a":1e400}"#), Some(json!({"a": null})));
+        assert_eq!(json_parse(r#"{"a":"\ud800"}"#), Some(json!({"a": "\u{fffd}"})));
+        assert_eq!(json_parse(r#""😀""#), Some(json!("😀")));
+        assert_eq!(json_parse(r#"{"a":1,"b":2,"a":3}"#).unwrap().to_string(), r#"{"a":3,"b":2}"#);
+    }
+
+    #[test]
+    fn nesting_far_beyond_serde_jsons_default_limit() {
+        // The server runs with 16 MiB stacks; a test thread has 2 MiB.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let deep = format!("{}{}", "[".repeat(3000), "]".repeat(3000));
+                assert!(json_parse(&deep).is_some());
+                let too_deep = format!("{}{}", "[".repeat(5000), "]".repeat(5000));
+                assert!(json_parse(&too_deep).is_none());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn refuses_what_javascript_refuses() {
+        for bad in ["", "{", r#"{"a":}"#, "[1,]", "{'a':1}", "01", "1.", "+1", "NaN", "tru", r#""\x""#, "[1] x", "\"a\nb\"", r#"{"a":1,}"#, ".5", "-"] {
+            assert_eq!(json_parse(bad), None, "{bad:?}");
+        }
     }
 }
