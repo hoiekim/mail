@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { createUser, startServer, type TestServer } from "../harness";
+import { createUser, type TestServer } from "../harness";
 import { proxyLine, type SmtpClient } from "../harness/smtp";
 import {
   MAX_MESSAGE_BYTES,
+  bootAll,
   closeClients,
   mailByMessageId,
   mailsByMessageId,
@@ -22,15 +23,15 @@ let proxied: TestServer;
 let unconfigured: TestServer;
 
 beforeAll(async () => {
-  [server, proxied, unconfigured] = await Promise.all([
-    startServer({ tls: true, env: { ADMIN_RO_PASSWORD: "read-only-password-e2e" } }),
-    startServer({ env: { PROXY_PROTOCOL: "true" } }),
-    startServer({ env: { EMAIL_DOMAIN: undefined } }),
-  ]);
+  [server, proxied, unconfigured] = (await bootAll(
+    { tls: true, env: { ADMIN_RO_PASSWORD: "read-only-password-e2e" } },
+    { env: { PROXY_PROTOCOL: "true" } },
+    { env: { EMAIL_DOMAIN: undefined } }
+  )) as [TestServer, TestServer, TestServer];
   await createUser(server, "alice");
   await createUser(server, "bob");
   await createUser(proxied, "alice");
-}, 90_000);
+}, 180_000);
 
 afterEach(closeClients);
 
@@ -411,11 +412,13 @@ describe("unknown local recipients", () => {
       expect((await smtp.send(`RCPT TO:<x@probe${i}.mail.test>`)).raw).toBe(NO_MAILBOX);
     }
     const started = Date.now();
-    expect((await smtp.send("RCPT TO:<x@probe11.mail.test>")).raw).toBe(TOO_MANY_PROBES);
+    for (let i = 11; i <= 15; i++) {
+      expect((await smtp.send(`RCPT TO:<x@probe${i}.mail.test>`)).raw).toBe(TOO_MANY_PROBES);
+    }
+    // No lookup and no half-second wait once the budget is spent.
+    expect(Date.now() - started).toBeLessThan(2000);
     expect((await smtp.send("RCPT TO:<x@alice.mail.test>")).raw).toBe(TOO_MANY_PROBES);
     expect((await smtp.send("RCPT TO:<hello@mail.test>")).raw).toBe(TOO_MANY_PROBES);
-    // No lookup and no delay once the budget is spent.
-    expect(Date.now() - started).toBeLessThan(400);
     // Foreign recipients are not this host's to judge and still pass.
     expect((await smtp.send("RCPT TO:<someone@remote.example>")).raw).toBe(ACCEPTED);
 

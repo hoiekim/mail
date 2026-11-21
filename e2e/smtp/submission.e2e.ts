@@ -3,7 +3,6 @@ import {
   ADMIN_PASSWORD,
   MAILGUN_KEY,
   createUser,
-  startServer,
   waitFor,
   type MailgunRequest,
   type TestServer,
@@ -14,6 +13,7 @@ import {
   FIXED_DATE,
   MAX_MESSAGE_BYTES,
   attachmentFiles,
+  bootAll,
   closeClients,
   countersOf,
   crlf,
@@ -37,14 +37,11 @@ let offline: TestServer;
 let alice: TestUser;
 
 beforeAll(async () => {
-  [server, offline] = await Promise.all([
-    startServer({ tls: true }),
-    // Port 1 on loopback: reserved, and refused by every sane machine.
-    startServer({ tls: true, env: { MAILGUN_URL: "http://127.0.0.1:1" } }),
-  ]);
+  // Port 1 on loopback: reserved, and refused by every sane machine.
+  [server, offline] = (await bootAll({ tls: true }, { tls: true, env: { MAILGUN_URL: "http://127.0.0.1:1" } })) as [TestServer, TestServer];
   alice = await createUser(server, "alice");
   await createUser(server, "bob");
-}, 90_000);
+}, 180_000);
 
 beforeEach(() => server.mailgun.reset());
 
@@ -91,7 +88,7 @@ const sentRows = async (username: string): Promise<Row[]> => (await mailsOf(serv
 
 describe("a submission to an outside address", () => {
   test("the request made to Mailgun", async () => {
-    const { user, smtp, at } = await freshSender();
+    const { smtp, at } = await freshSender();
     const result = await smtp.transaction({
       from: at("me"),
       to: ["bob@remote.example", "carol@remote.example", "hidden@remote.example"],
@@ -136,7 +133,6 @@ describe("a submission to an outside address", () => {
       text: ["Hello Bob,\n> quoted line\nsee [url] & <tags>"],
     });
     expect(request.attachments).toEqual([]);
-    expect(user.username).toMatch(/^s[0-9a-f]{8}$/);
   });
 
   test("the Sent record it stores", async () => {

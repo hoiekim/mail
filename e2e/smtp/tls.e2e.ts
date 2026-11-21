@@ -2,9 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import crypto from "crypto";
 import fs from "fs";
 import net from "net";
-import { startServer, waitFor, type TestServer } from "../harness";
+import { waitFor, type TestServer } from "../harness";
 import { SmtpClient } from "../harness/smtp";
-import { HOST, closeClients, ehloReply, mailByMessageId, messageId, open, plain, raws, session } from "./support";
+import { HOST, bootAll, closeClients, ehloReply, mailByMessageId, messageId, open, plain, raws, session } from "./support";
 
 // `server` has a certificate, so all three listeners are up. `unreadable` is
 // configured with certificate paths that do not exist.
@@ -15,11 +15,11 @@ const MISSING_CERT = "/nonexistent/e2e-cert.pem";
 const MISSING_KEY = "/nonexistent/e2e-key.pem";
 
 beforeAll(async () => {
-  [server, unreadable] = await Promise.all([
-    startServer({ tls: true }),
-    startServer({ env: { SSL_CERTIFICATE: MISSING_CERT, SSL_CERTIFICATE_KEY: MISSING_KEY } }),
-  ]);
-}, 90_000);
+  [server, unreadable] = (await bootAll({ tls: true }, { env: { SSL_CERTIFICATE: MISSING_CERT, SSL_CERTIFICATE_KEY: MISSING_KEY } })) as [
+    TestServer,
+    TestServer,
+  ];
+}, 180_000);
 
 afterEach(closeClients);
 

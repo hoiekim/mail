@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { startServer, type TestServer } from "../harness";
-import { FIXED_DATE, Mailer, attachmentBytes, crlf, octets, type Row } from "./support";
+import type { TestServer } from "../harness";
+import { FIXED_DATE, Mailer, attachmentBytes, boot, crlf, octets, type Row } from "./support";
 
 // What the text and html columns hold for each shape of message body.
 let server: TestServer;
 let mailer: Mailer;
 
 beforeAll(async () => {
-  server = await startServer();
+  server = await boot();
   mailer = new Mailer(server);
-}, 90_000);
+}, 180_000);
 
 afterAll(async () => {
   mailer?.close();
@@ -81,6 +81,124 @@ describe("a single text part", () => {
 
   test("a body of blank lines only is kept", async () => {
     expect(body(await mailer.store(single(["Content-Type: text/plain"], "", "", "")))).toEqual({ text: "\n\n\n", html: "\n\n\n" });
+  });
+});
+
+describe("the text derived from HTML", () => {
+  const html = [
+    "<!DOCTYPE html>",
+    '<html lang="en"><head><meta charset="utf-8"><title>Ignored title</title><style>body { color: red; }</style></head>',
+    "<body>",
+    "<!-- a comment -->",
+    "<h1>Main heading</h1>",
+    "<h2>Sub heading</h2>",
+    "<p>First paragraph with <b>bold</b>, <i>italic</i>, <u>underline</u> and a<br>line break.</p>",
+    '<p>A <a href="https://example.com/path?a=1&amp;b=2">named link</a>, a bare one <a href="https://example.org/">https://example.org/</a> and <a href="mailto:someone@remote.example">mail</a>.</p>',
+    "<p>Entities: &amp; &lt; &gt; &quot; &nbsp;| &copy; &euro; &#8364; &#x1F600; &unknown;</p>",
+    "<ul><li>First item</li><li>Second item<ul><li>Nested item</li></ul></li></ul>",
+    "<ol><li>One</li><li>Two</li></ol>",
+    "<blockquote>A quoted paragraph.<br>Second quoted line.</blockquote>",
+    "<pre>  preformatted\n    text  </pre>",
+    "<table><tr><th>Name</th><th>Qty</th></tr><tr><td>Apples</td><td>3</td></tr><tr><td>Pears</td><td>12</td></tr></table>",
+    "<hr>",
+    '<p><img src="https://example.com/logo.png" alt="Company logo"> <img src="https://example.com/spacer.gif"></p>',
+    "<div>Division one</div><div>Division two</div>",
+    `<p>${"A long line of words that should run past the eighty column limit to show how wrapping works here. ".repeat(2).trim()}</p>`,
+    '<script>alert("ignored")</script>',
+    '<p style="display:none">Hidden by style</p>',
+    "<p>Last   paragraph   with    spaces\n and a newline.</p>",
+    "</body></html>",
+  ].join("\r\n");
+
+  test("a message that is one HTML part: headings, links with their targets, lists, quotes, wrapping at 80 columns", async () => {
+    const mail = await mailer.store(single(["Content-Type: text/html; charset=utf-8"], html));
+    expect(mail.html).toBe(`${html.replace(/\r\n/g, "\n")}\n`);
+    // Not rendered: table cells run together, and an element hidden by its style is still text.
+    expect(mail.text).toBe(
+      [
+        "MAIN HEADING",
+        "",
+        "",
+        "SUB HEADING",
+        "",
+        "First paragraph with bold, italic, underline and a",
+        "line break.",
+        "",
+        "A named link [https://example.com/path?a=1&b=2], a bare one https://example.org/",
+        "[https://example.org/] and mail [someone@remote.example].",
+        "",
+        // The non-breaking space stays one (U+00A0).
+        'Entities: & < > "  | © € € 😀 &unknown;',
+        "",
+        " * First item",
+        " * Second item",
+        "   * Nested item",
+        "",
+        " 1. One",
+        " 2. Two",
+        "",
+        "> A quoted paragraph.",
+        "> Second quoted line.",
+        "",
+        "  preformatted",
+        "    text  ",
+        "",
+        "NameQtyApples3Pears12",
+        "",
+        "-".repeat(80),
+        "",
+        "Company logo [https://example.com/logo.png] [https://example.com/spacer.gif]",
+        "",
+        "Division one",
+        "Division two",
+        "",
+        "A long line of words that should run past the eighty column limit to show how",
+        "wrapping works here. A long line of words that should run past the eighty column",
+        "limit to show how wrapping works here.",
+        "",
+        "Hidden by style",
+        "",
+        "Last paragraph with spaces and a newline.",
+      ].join("\n")
+    );
+  });
+
+  test("an HTML part inside a multipart with no text part: a terser rendering, with URLs masked", async () => {
+    // The parser leaves the text empty here; it is filled in when the row is
+    // written, by a different routine: no link targets, blank lines squeezed
+    // out, runs of spaces collapsed, and anything that looks like a URL
+    // replaced by "[url]".
+    const mail = await mailer.store(multipart("alternative", "alt", "--alt", "Content-Type: text/html; charset=utf-8", "", html, "--alt--"));
+    expect(mail.html).toBe(html.replace(/\r\n/g, "\n"));
+    expect(mail.text).toBe(
+      [
+        "MAIN HEADING",
+        "SUB HEADING",
+        "First paragraph with bold, italic, underline and a",
+        "line break.",
+        // NOTE: the mask stops before the URL's last character, leaving a stray "/".
+        "A named link, a bare one [url]/ and mail.",
+        'Entities: & < > " | © € € 😀 &unknown;',
+        " * First item",
+        "* Second item",
+        "* Nested item",
+        " 1. One",
+        "2. Two",
+        "> A quoted paragraph.",
+        "> Second quoted line.",
+        " preformatted",
+        "text",
+        "NameQtyApples3Pears12",
+        "-".repeat(80),
+        "Division one",
+        "Division two",
+        "A long line of words that should run past the eighty column limit to show how",
+        "wrapping works here. A long line of words that should run past the eighty column",
+        "limit to show how wrapping works here.",
+        "Hidden by style",
+        "Last paragraph with spaces and a newline.",
+      ].join("\n")
+    );
   });
 });
 

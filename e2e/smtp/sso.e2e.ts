@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { ADMIN_PASSWORD, createUser, startServer, type TestServer, type TestUser } from "../harness";
+import { ADMIN_PASSWORD, createUser, type TestServer, type TestUser } from "../harness";
 import { proxyLine } from "../harness/smtp";
-import { closeClients, crlf, ehloReply, open, uniqueName, type Listener } from "./support";
+import { bootAll, closeClients, crlf, ehloReply, open, uniqueName, type Listener } from "./support";
 
 // SMTP AUTH while single sign-on is on: the password a client presents is an
 // app password, which the identity provider is asked about (token
@@ -18,10 +18,11 @@ interface IntrospectionCall {
 const startProvider = () => {
   const calls: IntrospectionCall[] = [];
   const answers = new Map<string, () => Response>();
+  let issuer = "";
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    fetch: async (req) => {
+    fetch: async (req): Promise<Response> => {
       const { pathname } = new URL(req.url);
       if (pathname === "/.well-known/openid-configuration") {
         return Response.json({
@@ -40,7 +41,7 @@ const startProvider = () => {
       return new Response("not found", { status: 404 });
     },
   });
-  const issuer = `http://127.0.0.1:${server.port}`;
+  issuer = `http://127.0.0.1:${server.port}`;
   return {
     issuer,
     calls,
@@ -61,11 +62,8 @@ let withLocal: TestServer;
 beforeAll(async () => {
   provider = startProvider();
   const env = { PROXY_PROTOCOL: "true", AUTH_ISSUER: provider.issuer, AUTH_CLIENT_ID: CLIENT_ID, AUTH_CLIENT_SECRET: CLIENT_SECRET };
-  [ssoOnly, withLocal] = await Promise.all([
-    startServer({ tls: true, env }),
-    startServer({ tls: true, env: { ...env, AUTH_LOCAL_LOGIN: "true" } }),
-  ]);
-}, 90_000);
+  [ssoOnly, withLocal] = (await bootAll({ tls: true, env }, { tls: true, env: { ...env, AUTH_LOCAL_LOGIN: "true" } })) as [TestServer, TestServer];
+}, 180_000);
 
 beforeEach(() => {
   provider.calls.length = 0;

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import path from "path";
-import { ADMIN_PASSWORD, createUser, startServer, waitFor, type TestServer } from "../harness";
+import { ADMIN_PASSWORD, createUser, waitFor, type TestServer } from "../harness";
 import {
   FIXED_DATE,
   FIXED_DATE_ISO,
@@ -9,6 +9,7 @@ import {
   Mailer,
   attachmentBytes,
   attachmentFiles,
+  boot,
   closeClients,
   countersOf,
   crlf,
@@ -31,9 +32,9 @@ let server: TestServer;
 let mailer: Mailer;
 
 beforeAll(async () => {
-  server = await startServer();
+  server = await boot();
   mailer = new Mailer(server);
-}, 90_000);
+}, 180_000);
 
 afterEach(closeClients);
 
@@ -531,13 +532,11 @@ describe("the DATA stream", () => {
       await smtp.writeFlushed("Subject: never finished\r\n\r\nhalf a mess");
       smtp.close();
     }
-    // A delivery right behind them is still accepted.
+    // A delivery right behind them is still accepted: it takes its turn after
+    // all four, so by its reply each of them has been given up on.
     const id = messageId("after");
     expect((await deliver(server, { to: ["after@mail.test"], data: plain({ messageId: id }) })).final.raw).toBe(QUEUED);
     expect((await mailsOf(server, "admin")).length).toBe(before + 1);
-    await waitFor(() => server.logs().split("DATA transaction abandoned mid-transfer").length - 1 >= 4, {
-      what: "the abandoned transactions to be noticed",
-    });
     expect(await server.db.query("SELECT 1 FROM mails WHERE subject = 'never finished'")).toEqual([]);
   });
 

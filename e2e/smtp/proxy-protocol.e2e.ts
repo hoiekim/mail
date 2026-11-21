@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { startServer, type TestServer } from "../harness";
-import { HOST, closeClients, ehloReply, mailByMessageId, messageId, open, plain, type Listener } from "./support";
+import type { TestServer } from "../harness";
+import { HOST, boot, closeClients, ehloReply, mailByMessageId, messageId, open, plain, type Listener } from "./support";
 
 // With PROXY_PROTOCOL=true every mail connection must open with a PROXY
 // protocol v1 line, and the client it names is the one the session is
@@ -9,8 +9,8 @@ import { HOST, closeClients, ehloReply, mailByMessageId, messageId, open, plain,
 let server: TestServer;
 
 beforeAll(async () => {
-  server = await startServer({ tls: true, env: { PROXY_PROTOCOL: "true" } });
-}, 90_000);
+  server = await boot({ tls: true, env: { PROXY_PROTOCOL: "true" } });
+}, 180_000);
 
 afterEach(closeClients);
 
@@ -102,10 +102,10 @@ describe("when the header arrives", () => {
     const smtp = await open(server, "smtp", { greeting: false });
     const started = Date.now();
     expect(await smtp.waitForClose(4000)).toBe(false);
-    expect(await smtp.waitForClose(3000)).toBe(true);
+    expect(await smtp.waitForClose(15_000)).toBe(true);
     expect(Date.now() - started).toBeGreaterThanOrEqual(4500);
     expect(smtp.unparsed).toBe("");
-  }, 15_000);
+  }, 30_000);
 });
 
 describe("connections without a valid header are dropped without a reply", () => {

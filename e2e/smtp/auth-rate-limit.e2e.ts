@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import net from "net";
-import { ADMIN_PASSWORD, createUser, startServer, type TestServer, type TestUser } from "../harness";
+import { ADMIN_PASSWORD, createUser, type TestServer, type TestUser } from "../harness";
 import { proxyLine } from "../harness/smtp";
-import { closeClients, open, type Listener } from "./support";
+import { boot, closeClients, open, type Listener } from "./support";
 
 // The limiter counts failed sign-ins per client address: ten in fifteen
 // minutes, each one answered half a second late. Behind the PROXY protocol the
@@ -12,10 +12,10 @@ let server: TestServer;
 let alice: TestUser;
 
 beforeAll(async () => {
-  server = await startServer({ tls: true, env: { PROXY_PROTOCOL: "true" } });
+  server = await boot({ tls: true, env: { PROXY_PROTOCOL: "true" } });
   alice = await createUser(server, "alice");
   await createUser(server, "bob");
-}, 90_000);
+}, 180_000);
 
 afterEach(closeClients);
 
@@ -54,7 +54,10 @@ describe("failed sign-ins from one address", () => {
     expect((await second.authPlain("alice", alice.password)).raw).toBe(LOCKED);
     expect((await second.authPlain("admin", ADMIN_PASSWORD)).raw).toBe(LOCKED);
     expect((await second.authPlain("never-tried-before", "x")).raw).toBe(LOCKED);
-    expect(Date.now() - started).toBeLessThan(400);
+    expect((await second.authPlain("alice", "wrong")).raw).toBe(LOCKED);
+    expect((await second.authPlain("bob", "wrong")).raw).toBe(LOCKED);
+    // Five refusals with the half-second wait would take two and a half seconds.
+    expect(Date.now() - started).toBeLessThan(2000);
     // AUTH LOGIN is turned away only once it has collected both answers.
     expect((await second.send("AUTH LOGIN")).raw).toBe("334 VXNlcm5hbWU6");
     expect((await second.send(Buffer.from("alice").toString("base64"))).raw).toBe("334 UGFzc3dvcmQ6");

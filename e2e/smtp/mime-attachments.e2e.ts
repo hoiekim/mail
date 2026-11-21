@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
-import { startServer, waitFor, type TestServer } from "../harness";
-import { FIXED_DATE, Mailer, attachmentBytes, crlf, incomingLeftovers, octets, sha256, type Row } from "./support";
+import { waitFor, type TestServer } from "../harness";
+import { FIXED_DATE, Mailer, attachmentBytes, boot, crlf, incomingLeftovers, octets, sha256, type Row } from "./support";
 
 // Which parts of a message become attachments, what the row says about them,
 // and what ends up in the files.
@@ -9,9 +9,9 @@ let server: TestServer;
 let mailer: Mailer;
 
 beforeAll(async () => {
-  server = await startServer();
+  server = await boot();
   mailer = new Mailer(server);
-}, 90_000);
+}, 180_000);
 
 afterAll(async () => {
   mailer?.close();

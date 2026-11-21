@@ -1,14 +1,14 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { startServer, waitFor, type TestServer } from "../harness";
+import { waitFor, type TestServer } from "../harness";
 import { SmtpClient } from "../harness/smtp";
-import { HOST, MAX_MESSAGE_BYTES, closeClients, crlf, ehloReply, mailByMessageId, messageId, open, plain, raws, session } from "./support";
+import { HOST, MAX_MESSAGE_BYTES, boot, closeClients, crlf, ehloReply, mailByMessageId, messageId, open, plain, raws, session } from "./support";
 
 // The port-25 listener of a server with no certificate: the plainest posture.
 let server: TestServer;
 
 beforeAll(async () => {
-  server = await startServer();
-}, 90_000);
+  server = await boot();
+}, 180_000);
 
 afterEach(closeClients);
 

@@ -7,7 +7,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { TestServer } from "../harness";
+import { startServer, type ServerOptions, type TestServer } from "../harness";
 import { SmtpClient, type SmtpConnectOptions, type SmtpReply } from "../harness/smtp";
 
 /** The name the server greets with: the machine's host name, which the tests share. */
@@ -17,6 +17,37 @@ export const HOST = os.hostname();
 export const MAX_MESSAGE_BYTES = 36_700_160;
 
 export type Listener = "smtp" | "smtps" | "submission";
+
+/**
+ * `startServer`, tried again when a listener could not bind. The harness
+ * picks ports by probing for free ones, and another process (or another
+ * server starting at the same moment) can take one before the server binds
+ * it; the server then never becomes healthy.
+ */
+export const boot = async (options: ServerOptions = {}): Promise<TestServer> => {
+  let failure: unknown;
+  for (const startupTimeoutMs of [20_000, 30_000, 60_000]) {
+    try {
+      return await startServer({ startupTimeoutMs, ...options });
+    } catch (error) {
+      failure = error;
+      if (!/EADDRINUSE|was not healthy/.test(String(error))) break;
+    }
+  }
+  throw failure;
+};
+
+/** Boots one server per option set, one after the other so their port probes cannot collide. */
+export const bootAll = async (...optionSets: ServerOptions[]): Promise<TestServer[]> => {
+  const servers: TestServer[] = [];
+  try {
+    for (const options of optionSets) servers.push(await boot(options));
+  } catch (error) {
+    await Promise.all(servers.map((server) => server.stop().catch(() => undefined)));
+    throw error;
+  }
+  return servers;
+};
 
 const clients = new Set<SmtpClient>();
 

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { createUser, startServer, type TestServer, type TestUser } from "../harness";
+import { createUser, type TestServer, type TestUser } from "../harness";
 import { proxyLine } from "../harness/smtp";
-import { FIXED_DATE, FIXED_DATE_ISO, Mailer, closeClients, crlf, deliver, mailByMessageId, mappingsOf, messageId, session, uniqueName, type Row } from "./support";
+import { FIXED_DATE, FIXED_DATE_ISO, Mailer, bootAll, closeClients, crlf, deliver, mailByMessageId, mappingsOf, messageId, session, uniqueName, type Row } from "./support";
 
 // The spam check every inbound message goes through before it is stored:
 // the sender allowlist, the content rules, and the per-user classifier. The
@@ -12,9 +12,9 @@ let proxied: TestServer;
 let mailer: Mailer;
 
 beforeAll(async () => {
-  [server, proxied] = await Promise.all([startServer(), startServer({ env: { PROXY_PROTOCOL: "true" } })]);
+  [server, proxied] = (await bootAll({}, { env: { PROXY_PROTOCOL: "true" } })) as [TestServer, TestServer];
   mailer = new Mailer(server);
-}, 90_000);
+}, 180_000);
 
 afterEach(closeClients);
 

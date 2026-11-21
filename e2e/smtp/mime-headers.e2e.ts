@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { startServer, type TestServer } from "../harness";
-import { FIXED_DATE, Mailer, crlf, octets, type Row } from "./support";
+import type { TestServer } from "../harness";
+import { FIXED_DATE, Mailer, boot, crlf, octets, type Row } from "./support";
 
 // How the headers of a delivered message end up in the mails row: subject,
 // address lists, date, Message-ID and the threading headers.
@@ -8,9 +8,9 @@ let server: TestServer;
 let mailer: Mailer;
 
 beforeAll(async () => {
-  server = await startServer();
+  server = await boot();
   mailer = new Mailer(server);
-}, 90_000);
+}, 180_000);
 
 afterAll(async () => {
   mailer?.close();
@@ -102,6 +102,15 @@ describe("Subject", () => {
     expect(await subjectOf(octets("Subject: ", Buffer.from("Grüße ✓ 日本")))).toBe("Grüße ✓ 日本");
     // Latin-1 octets are not valid UTF-8 and become replacement characters.
     expect(await subjectOf(octets("Subject: caf\xe9 cr\xe8me"))).toBe("caf� cr�me");
+  });
+
+  test("characters outside the basic plane survive, encoded or raw", async () => {
+    expect(await subjectOf(`Subject: ${b("😀 ok 𝒳")}`)).toBe("😀 ok 𝒳");
+    expect(await subjectOf(octets("Subject: ", Buffer.from("family 👨‍👩‍👧 end")))).toBe("family 👨‍👩‍👧 end");
+    const mail = await mailer.store(
+      octets("From: sender@remote.example\r\nSubject: emoji\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n", Buffer.from("body 😀 𝒳 👨‍👩‍👧 end\r\n"))
+    );
+    expect(mail.text).toBe("body 😀 𝒳 👨‍👩‍👧 end\n");
   });
 
   test("a folded subject is unfolded with one space per fold", async () => {

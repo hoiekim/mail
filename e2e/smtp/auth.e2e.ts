@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { ADMIN_PASSWORD, createUser, startServer, type TestServer, type TestUser } from "../harness";
+import { ADMIN_PASSWORD, createUser, type TestServer, type TestUser } from "../harness";
 import { b64, plainToken, proxyLine, type SmtpClient } from "../harness/smtp";
-import { closeClients, ehloReply, open, session, uniqueName, type Listener } from "./support";
+import { bootAll, closeClients, ehloReply, open, session, uniqueName, type Listener } from "./support";
 
 // Failed AUTH attempts are counted per client address, so the main server
 // here sits behind the PROXY protocol and every test names its own address.
@@ -13,13 +13,10 @@ let alice: TestUser;
 const RO_PASSWORD = "read-only-password-e2e";
 
 beforeAll(async () => {
-  [server, bare] = await Promise.all([
-    startServer({ tls: true, env: { PROXY_PROTOCOL: "true", ADMIN_RO_PASSWORD: RO_PASSWORD } }),
-    startServer(),
-  ]);
+  [server, bare] = (await bootAll({ tls: true, env: { PROXY_PROTOCOL: "true", ADMIN_RO_PASSWORD: RO_PASSWORD } }, {})) as [TestServer, TestServer];
   alice = await createUser(server, "alice");
   await createUser(bare, "alice");
-}, 90_000);
+}, 180_000);
 
 afterEach(closeClients);
 
