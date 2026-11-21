@@ -984,24 +984,55 @@ impl TextBuilder {
     }
 }
 
+/// The value of the digits of a hexadecimal, octal or binary literal: the
+/// exact number rounded once to the nearest double, however long it is.
+fn radix_literal(digits: &str, bits_per_digit: u32) -> Option<f64> {
+    if digits.is_empty() {
+        return None;
+    }
+    // The leading 64 bits, how many bits follow them, and whether any of those is set.
+    let mut leading: u64 = 0;
+    let mut following: i32 = 0;
+    let mut sticky = false;
+    for c in digits.chars() {
+        let digit = c.to_digit(1 << bits_per_digit)?;
+        for bit in (0..bits_per_digit).rev().map(|at| digit >> at & 1) {
+            if leading >> 63 == 0 {
+                leading = leading << 1 | bit as u64;
+            } else {
+                following = following.saturating_add(1);
+                sticky |= bit == 1;
+            }
+        }
+    }
+    let significant = 64 - leading.leading_zeros();
+    if significant <= 53 {
+        return Some(leading as f64);
+    }
+    // Round to 53 bits, ties to even.
+    let shift = significant - 53;
+    let half = 1u64 << (shift - 1);
+    let remainder = leading & ((1u64 << shift) - 1);
+    let mut rounded = leading >> shift;
+    if remainder > half || (remainder == half && (sticky || rounded & 1 == 1)) {
+        rounded += 1;
+    }
+    Some(rounded as f64 * 2f64.powi(following.saturating_add(shift as i32)))
+}
+
 /// `Number(value)` for a string.
 fn string_to_number(value: &str) -> f64 {
     let value = jsstr::trim(value);
     if value.is_empty() {
         return 0.0;
     }
-    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
-        let digits = match value.get(..2) {
-            Some(start) if start.eq_ignore_ascii_case(prefix) => &value[2..],
-            _ => continue,
-        };
-        if digits.is_empty() {
-            return f64::NAN;
+    for (prefix, bits_per_digit) in [("0x", 4), ("0o", 3), ("0b", 1)] {
+        match value.get(..2) {
+            Some(start) if start.eq_ignore_ascii_case(prefix) => {
+                return radix_literal(&value[2..], bits_per_digit).unwrap_or(f64::NAN);
+            }
+            _ => {}
         }
-        return digits
-            .chars()
-            .try_fold(0.0, |sum, c| Some(sum * radix as f64 + c.to_digit(radix)? as f64))
-            .unwrap_or(f64::NAN);
     }
     let unsigned = value.strip_prefix(['+', '-']).unwrap_or(value);
     if unsigned == "Infinity" {
@@ -1029,6 +1060,95 @@ fn string_to_number(value: &str) -> f64 {
     value.parse().unwrap_or(f64::NAN)
 }
 
+/// A positive decimal as its digits and where the point falls: `0.digits × 10^point`.
+#[derive(Clone, PartialEq, Debug)]
+struct Decimal {
+    digits: String,
+    point: i32,
+}
+
+impl Decimal {
+    fn new(digits: &str, point: i32) -> Decimal {
+        let significant = digits.trim_start_matches('0');
+        let point = point - (digits.len() - significant.len()) as i32;
+        Decimal {
+            digits: significant.trim_end_matches('0').to_string(),
+            point,
+        }
+    }
+
+    /// The exact value of a finite positive double.
+    fn exact(value: f64) -> Decimal {
+        // 1100 digits after the point hold any double exactly.
+        let written = format!("{value:.1100}");
+        let (whole, fraction) = written.split_once('.').unwrap_or((&written, ""));
+        Decimal::new(&format!("{whole}{fraction}"), whole.len() as i32)
+    }
+
+    fn cmp(&self, other: &Decimal) -> std::cmp::Ordering {
+        match (self.digits.is_empty(), other.digits.is_empty()) {
+            (true, true) => return std::cmp::Ordering::Equal,
+            (true, false) => return std::cmp::Ordering::Less,
+            (false, true) => return std::cmp::Ordering::Greater,
+            _ => {}
+        }
+        // With no leading zeros, the larger point is the larger number, and
+        // equal points compare digit by digit.
+        self.point
+            .cmp(&other.point)
+            .then_with(|| self.digits.cmp(&other.digits))
+    }
+}
+
+/// The digits of `String(value)` for a positive finite number and where the
+/// decimal point falls among them: the fewest digits that read back as
+/// `value`, of those the closest to it, and of two equally close the even one.
+fn shortest_digits(value: f64) -> (String, i32) {
+    // The fewest digits, though on a tie not always the even ones.
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let digits = mantissa.replace('.', "");
+    let point = exponent.parse::<i32>().unwrap_or(0) + 1;
+
+    // Its neighbours with as many digits may read back as the value too.
+    let reads_back = |candidate: &str| format!("0.{candidate}e{point}").parse::<f64>() == Ok(value);
+    let neighbour = |step: i8| -> Option<String> {
+        let mut neighbour: Vec<u8> = digits.bytes().collect();
+        for digit in neighbour.iter_mut().rev() {
+            match (step, *digit) {
+                (1, b'9') => *digit = b'0',
+                (-1, b'0') => *digit = b'9',
+                _ => {
+                    *digit = (*digit as i8 + step) as u8;
+                    let neighbour = String::from_utf8(neighbour).ok()?;
+                    // One that lost or gained a digit is not a neighbour.
+                    return (!neighbour.starts_with('0')).then_some(neighbour);
+                }
+            }
+        }
+        None
+    };
+    let mut best = digits.clone();
+    let exact = Decimal::exact(value);
+    for other in [neighbour(-1), neighbour(1)]
+        .into_iter()
+        .flatten()
+        .filter(|other| reads_back(other))
+    {
+        let (low, high) = if other < best { (&other, &best) } else { (&best, &other) };
+        // Halfway between the two: the lower one with a 5 after it.
+        let halfway = Decimal::new(&format!("{low}5"), point);
+        let low_is_even = low.as_bytes()[low.len() - 1] % 2 == 0;
+        best = match exact.cmp(&halfway) {
+            std::cmp::Ordering::Less => low.clone(),
+            std::cmp::Ordering::Greater => high.clone(),
+            std::cmp::Ordering::Equal if low_is_even => low.clone(),
+            std::cmp::Ordering::Equal => high.clone(),
+        };
+    }
+    (best, point)
+}
+
 /// `String(value)` for a number.
 fn number_to_string(value: f64) -> String {
     if value.is_nan() {
@@ -1041,13 +1161,8 @@ fn number_to_string(value: f64) -> String {
         return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
     }
     let sign = if value < 0.0 { "-" } else { "" };
-    // The shortest digits that read back as the same number, and where the
-    // decimal point falls among them.
-    let scientific = format!("{:e}", value.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let digits = mantissa.replace('.', "");
+    let (digits, point) = shortest_digits(value.abs());
     let count = digits.len() as i32;
-    let point = exponent.parse::<i32>().unwrap_or(0) + 1;
     if count <= point && point <= 21 {
         format!("{sign}{digits}{}", "0".repeat((point - count) as usize))
     } else if 0 < point && point <= 21 {
@@ -1695,6 +1810,22 @@ mod tests {
     fn numbers_convert_as_in_javascript() {
         assert_eq!(string_to_number(" 12 "), 12.0);
         assert_eq!(string_to_number("0x1F"), 31.0);
+        assert_eq!(string_to_number("0o7705173430276017417"), 142047800249032460.0);
+        assert_eq!(string_to_number("0x20000000000001"), 9007199254740992.0);
+        assert_eq!(string_to_number("0x20000000000003"), 9007199254740996.0);
+        assert_eq!(string_to_number("0x1fffffffffffff4"), 144115188075855860.0);
+        assert_eq!(string_to_number("0x200000000000010000001"), 2.417851639229259e24);
+        assert_eq!(
+            string_to_number(&format!("0b1{}11", "0".repeat(52))),
+            18014398509481988.0
+        );
+        assert_eq!(
+            string_to_number(&format!("0x{}", "f".repeat(255))),
+            1.1235582092889474e307
+        );
+        assert_eq!(string_to_number(&format!("0x{}", "f".repeat(256))), f64::INFINITY);
+        assert!(string_to_number("0x").is_nan());
+        assert!(string_to_number("0b12").is_nan());
         assert!(string_to_number("1_0").is_nan());
         assert!(string_to_number("inf").is_nan());
         assert_eq!(string_to_number("1e400"), f64::INFINITY);
@@ -1708,6 +1839,10 @@ mod tests {
         );
         assert_eq!(number_to_string(-0.0), "0");
         assert_eq!(number_to_string(-2.5), "-2.5");
+        // Two shortest forms equally close: the even one.
+        assert_eq!(number_to_string(893514022863146.25), "893514022863146.2");
+        assert_eq!(number_to_string(5e-324), "5e-324");
+        assert_eq!(number_to_string(1.7976931348623157e308), "1.7976931348623157e+308");
     }
 
     #[test]

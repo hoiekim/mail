@@ -902,7 +902,11 @@ const htmlInputs = (rng: Random): string[] => {
     "<ol start=\"+5\"><li>a</li></ol>", "<ol start=\"-.5e1\"><li>a</li></ol>", "<ol start=\"0X1f\"><li>a</li></ol>", "<ol start=\"+0x1\"><li>a</li></ol>", "<ol start=\"Infinity\"><li>a</li></ol>",
     "<ol start=\"-Infinity\"><li>a</li></ol>", "<ol start=\"infinity\"><li>a</li></ol>", "<ol start=\"NaN\"><li>a</li></ol>", "<ol start=\"1e\"><li>a</li></ol>", "<ol start=\"e1\"><li>a</li></ol>",
     "<ol start=\"1.2.3\"><li>a</li></ol>", "<ol start=\"0.1\"><li>a</li><li>b</li><li>c</li></ol>", "<ol start=\"9007199254740992\"><li>a</li><li>b</li></ol>", "<ol start=\"1e20\"><li>a</li></ol>",
-    "<ol start=\"123456.789\"><li>a</li></ol>", "<ol start=\"0.00000012345\"><li>a</li></ol>", "<ol type=\"I\" start=\"1994\"><li>a</li><li>b</li></ol>", "<ol type=\"i\" start=\"8\"><li>a</li><li>b</li></ol>",
+    "<ol start=\"123456.789\"><li>a</li></ol>", "<ol start=\"0o7705173430276017417\" type=\"A\"><li>a</li><li>b</li></ol>", "<ol start=\"0x20000000000001\"><li>a</li></ol>",
+    "<ol start=\"0x20000000000003\"><li>a</li></ol>", "<ol start=\"0x1fffffffffffff4\"><li>a</li></ol>", "<ol start=\"0x200000000000010000001\"><li>a</li></ol>",
+    "<ol start=\"893514022863146.2\"><li>a</li><li>b</li></ol>", "<ol start=\"893514022863146.25\"><li>a</li></ol>", "<ol start=\"1125899906842625.25\"><li>a</li></ol>",
+    "<ol start=\"1125899906842625.75\"><li>a</li></ol>", "<ol start=\"562949953421313.75\" type=\"I\"><li>a</li></ol>", "<ol start=\"4.35\"><li>a</li><li>b</li></ol>",
+    `<ol start="0b1${"0".repeat(52)}1"><li>a</li></ol>`, `<ol start="0b1${"0".repeat(52)}11"><li>a</li></ol>`, `<ol start="0x${"f".repeat(255)}" type="a"><li>a</li></ol>`, `<ol start="0x${"f".repeat(256)}"><li>a</li></ol>`, "<ol start=\"0.00000012345\"><li>a</li></ol>", "<ol type=\"I\" start=\"1994\"><li>a</li><li>b</li></ol>", "<ol type=\"i\" start=\"8\"><li>a</li><li>b</li></ol>",
     "a&nbsp;b&nbsp;&nbsp;c", "a\u00a0b \u00a0 c", "a\u200bb \u200b c", "a\u3000b", "a\u000bb\u000cc", "\u200b", "<p>\u200b</p>x", "a &amp;amp; b", "<p>&#60;script&#62;</p>",
     ...ENTITY_PIECES.map((piece) => `<p>a ${piece} b${piece}c</p>`),
     ...Array.from({ length: 700 }, () => node(1 + rng.int(5))),
@@ -910,7 +914,9 @@ const htmlInputs = (rng: Random): string[] => {
     ...Array.from({ length: 150 }, () => `<h${1 + rng.int(6)}>${rng.several(["ß", "ŉ", "ǰ", "ΐ", "ﬁ", "ﬃ", "i\u0307", "ı", "ǆ", "ǅ", "ς", "σ", "ᾳ", "ᾀ", "ա", "և", "ǉ", "a", "é", " ", " ", "😀", "한"], 1, 10)}</h1>`),
     ...Array.from({ length: 300 }, () => {
       const digits = () => rng.several("0123456789".split(""), 1, rng.pick([1, 3, 8, 17, 25]));
-      const start = rng.pick([digits, () => `${digits()}.${digits()}`, () => `.${digits()}`, () => `${digits()}e${rng.pick(["", "+", "-"])}${rng.int(330)}`, () => `${rng.pick(["-", "+", " ", ""])}${digits()}${rng.pick(["", " ", ".", "e", "x"])}`, () => `0x${rng.several("0123456789abcdefABCDEFg".split(""), 1, 14)}`, () => `0${rng.pick(["b", "o", "B", "O"])}${digits()}`])();
+      const start = rng.pick([digits, () => `${digits()}.${digits()}`, () => `.${digits()}`, () => `${digits()}e${rng.pick(["", "+", "-"])}${rng.int(330)}`, () => `${rng.pick(["-", "+", " ", ""])}${digits()}${rng.pick(["", " ", ".", "e", "x"])}`,
+        // A quarter past a large integer lies exactly between two shortest ways to write it.
+        () => `${2 ** 49 + rng.int(2 ** 30) * 2 ** 19 + rng.int(2 ** 19)}.${rng.pick(["25", "75", "2", "3", "7", "8", "125", "5"])}`, () => `0x${rng.several("0123456789abcdefABCDEFg".split(""), 1, rng.pick([6, 14, 20, 40]))}`, () => `0${rng.pick(["b", "B"])}${rng.several(["0", "1", "1", "0", "2"], 1, rng.pick([8, 53, 60, 90]))}`, () => `0${rng.pick(["o", "O"])}${rng.several("012345678".split(""), 1, rng.pick([6, 18, 24, 40]))}`])();
       // A lettered list starting at Infinity never finishes in the TypeScript.
       const types = Number(start) === Infinity ? ["", ' type="i"', ' type="I"'] : ["", ' type="a"', ' type="A"', ' type="i"', ' type="I"', ' type="1"'];
       return `<ol start="${start}"${rng.pick(types)}><li>a</li><li>b</li></ol>`;

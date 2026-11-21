@@ -2204,7 +2204,7 @@ pub fn date_parse(text: &str) -> Option<i64> {
     let mut has_read_number = !day.components.is_empty();
     while token != DateToken::End {
         match token {
-            DateToken::Number { value: n, length } => {
+            DateToken::Number { value: n, .. } => {
                 has_read_number = true;
                 if scanner.skip_symbol(':') {
                     if scanner.skip_symbol(':') {
@@ -2249,7 +2249,6 @@ pub fn date_parse(text: &str) -> Option<i64> {
                     }
                     scanner.skip_symbol('-');
                 }
-                let _ = length;
             }
             DateToken::Keyword { keyword, .. } => match keyword {
                 Keyword::AmPm(offset) if !time.components.is_empty() => time.hour_offset = Some(offset),
