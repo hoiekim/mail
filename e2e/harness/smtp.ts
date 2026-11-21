@@ -19,8 +19,11 @@ export interface SmtpReply {
 export interface SmtpConnectOptions {
   port: number;
   host?: string;
-  /** Implicit TLS: the handshake runs before the greeting (the 465 role). */
-  tls?: boolean;
+  /**
+   * Implicit TLS: the handshake runs before the greeting (the 465 role). Pass
+   * options instead of `true` to pin the handshake, such as `{ maxVersion: "TLSv1.2" }`.
+   */
+  tls?: boolean | tls.ConnectionOptions;
   /**
    * A PROXY protocol v1 line (without its CRLF) written before anything else,
    * the TLS handshake included: `"PROXY TCP4 10.1.2.3 10.0.0.1 40000 25"`.
@@ -137,8 +140,14 @@ export class SmtpClient {
     if (options.proxy !== undefined) raw.write(`${options.proxy}\r\n`);
 
     const client = new SmtpClient(raw, timeoutMs);
-    if (options.tls) await client.upgrade();
-    else client.attach(raw);
+    if (options.tls) {
+      try {
+        await client.upgrade(options.tls === true ? {} : options.tls);
+      } catch (error) {
+        raw.destroy();
+        throw error;
+      }
+    } else client.attach(raw);
     if (options.greeting !== false) client.greeting = await client.read();
     return client;
   }
@@ -331,24 +340,24 @@ export class SmtpClient {
   }
 
   /** Sends `STARTTLS` and, on `220`, runs the handshake. Returns STARTTLS's reply. */
-  async startTls(): Promise<SmtpReply> {
+  async startTls(options: tls.ConnectionOptions = {}): Promise<SmtpReply> {
     const reply = await this.send("STARTTLS");
-    if (reply.code === 220) await this.upgrade();
+    if (reply.code === 220) await this.upgrade(options);
     return reply;
   }
 
   /**
    * Runs a TLS handshake over the connection as it stands, accepting any
    * certificate. For a test that writes `STARTTLS` itself, to pipeline
-   * something behind it.
+   * something behind it. Rejects if the handshake fails.
    */
-  async upgrade(): Promise<void> {
+  async upgrade(options: tls.ConnectionOptions = {}): Promise<void> {
     const plain = this.socket;
     plain.removeAllListeners("data");
     plain.removeAllListeners("close");
     plain.removeAllListeners("end");
     this.buffer = "";
-    const secure = tls.connect({ socket: plain, rejectUnauthorized: false });
+    const secure = tls.connect({ socket: plain, rejectUnauthorized: false, ...options });
     secure.on("error", () => {});
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
