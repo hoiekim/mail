@@ -101,7 +101,8 @@ export const deliver = async (
   const messageId = message.messageId ?? `<fixture-${n}-${process.pid}@remote.example>`;
   const data = rfc822({
     from: "Sender <sender@remote.example>",
-    date: new Date(Date.UTC(2026, 0, 1, 12, 0, n % 60)),
+    // One minute apart, so a later delivery always carries a later Date.
+    date: new Date(Date.UTC(2026, 0, 1, 12, 0, 0) + n * 60_000),
     ...message,
     messageId,
   });
@@ -145,6 +146,22 @@ export const responseCode = (result: CommandResult, code: string): number | unde
     if (match) return Number(match[1]);
   }
   return undefined;
+};
+
+/**
+ * Sends one mail through the HTTP API as `user`, which is how a row lands in
+ * the sent views (`Sent Messages`, `Sent Messages/accounts/<sender>`).
+ * `sender` is the local part the mail is sent from.
+ */
+export const sendOverHttp = async (
+  server: TestServer,
+  user: { username: string; password: string },
+  mail: { sender: string; to: string; subject: string; html: string; senderFullName?: string; cc?: string }
+): Promise<void> => {
+  const http = server.client();
+  await http.login(user.username, user.password);
+  const { body, text } = await http.post("/api/mails/send", { senderFullName: "", ...mail });
+  if (body?.status !== "success") throw new Error(`Sending a test mail over HTTP failed: ${text}`);
 };
 
 /** Closes every client, ignoring the ones already gone. */
