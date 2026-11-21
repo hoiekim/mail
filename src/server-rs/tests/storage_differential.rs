@@ -38,8 +38,9 @@ use mail_server::postgres::repositories::mails::counters::{
     get_next_modseq, get_uid_next, sync_mailbox_pivot, write_mailbox_uid, UidScope,
 };
 use mail_server::postgres::repositories::mails::mapping_decisions::{MappingScope, MappingWrite};
-use mail_server::postgres::repositories::mails::model::MailModel;
+use mail_server::postgres::repositories::mails::model::{mails_table, MailModel};
 use mail_server::postgres::repositories::mails::set_flags_query::build_set_mail_flags_queries;
+use mail_server::postgres::repositories::mails::table::SelectFilter;
 use mail_server::postgres::schema::schema;
 use mail_server::postgres::{pool, DbError, Param};
 
@@ -395,6 +396,19 @@ impl Harness {
             "getMailById" => optional(get_mail_by_id(user_id(), mail_id()).await?, MailModel::to_json),
             "getMailByMessageId" => {
                 optional(get_mail_by_message_id(user_id(), text(args, "message_id")).await?, MailModel::to_json)
+            }
+            "findMailByAttachment" => {
+                let holding = json!([{ "content": { "data": text(args, "attachment_id") } }]);
+                let row = mails_table()
+                    .query_one(
+                        &[("user_id", SelectFilter::from(user_id())), ("attachments", SelectFilter::Contains(holding))],
+                        None,
+                    )
+                    .await?;
+                match row {
+                    Some(row) => MailModel::from_record(&row).map_err(anyhow::Error::from)?.to_json(),
+                    None => Value::Null,
+                }
             }
             "updateRfc822Size" => {
                 update_rfc822_size(user_id(), mail_id(), integer(args, "rfc822_size")).await?;

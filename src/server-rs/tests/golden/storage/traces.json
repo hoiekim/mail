@@ -427,6 +427,181 @@
    }
   },
   {
+   "name": "table.queryOne by a contained document",
+   "fn": "table.queryOne",
+   "args": {
+    "table": "mails",
+    "filters": {
+     "user_id": "11111111-1111-4111-8111-111111111111",
+     "attachments": [
+      {
+       "content": {
+        "data": "attachment-id"
+       }
+      }
+     ]
+    },
+    "columns": null
+   },
+   "responses": [
+    {
+     "rows": [
+      {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "user_id": "11111111-1111-4111-8111-111111111111",
+       "message_id": "<test@example.com>",
+       "subject": "Hello",
+       "date": "2024-01-02T03:04:05.000Z",
+       "html": "<p>hi</p>",
+       "text": "hi",
+       "from_address": [
+        {
+         "address": "sender@example.com",
+         "name": "Sender"
+        }
+       ],
+       "from_text": "Sender <sender@example.com>",
+       "to_address": null,
+       "to_text": null,
+       "cc_address": null,
+       "cc_text": null,
+       "bcc_address": null,
+       "bcc_text": null,
+       "reply_to_address": null,
+       "reply_to_text": null,
+       "envelope_from": null,
+       "envelope_to": null,
+       "attachments": [
+        {
+         "content": {
+          "data": "attachment-id"
+         },
+         "filename": "a.pdf"
+        }
+       ],
+       "read": false,
+       "saved": false,
+       "sent": false,
+       "deleted": false,
+       "draft": false,
+       "answered": false,
+       "expunged": false,
+       "insight": null,
+       "uid_domain": 5,
+       "modseq": 9,
+       "spam_score": 0,
+       "spam_reasons": null,
+       "is_spam": false,
+       "rfc822_size": null,
+       "text_line_count": null,
+       "html_line_count": null,
+       "in_reply_to": null,
+       "reference_ids": null,
+       "updated": "2024-01-02T03:04:05.000Z",
+       "search_vector": null
+      }
+     ]
+    }
+   ],
+   "trace": [
+    {
+     "sql": "SELECT * FROM mails WHERE user_id = $1 AND attachments @> $2::jsonb LIMIT $3",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "[{\"content\":{\"data\":\"attachment-id\"}}]",
+      1
+     ]
+    }
+   ],
+   "result": {
+    "ok": {
+     "mail_id": "22222222-2222-4222-8222-222222222222",
+     "user_id": "11111111-1111-4111-8111-111111111111",
+     "message_id": "<test@example.com>",
+     "subject": "Hello",
+     "date": "2024-01-02T03:04:05.000Z",
+     "html": "<p>hi</p>",
+     "text": "hi",
+     "from_address": [
+      {
+       "address": "sender@example.com",
+       "name": "Sender"
+      }
+     ],
+     "from_text": "Sender <sender@example.com>",
+     "to_address": null,
+     "to_text": null,
+     "cc_address": null,
+     "cc_text": null,
+     "bcc_address": null,
+     "bcc_text": null,
+     "reply_to_address": null,
+     "reply_to_text": null,
+     "envelope_from": null,
+     "envelope_to": null,
+     "attachments": [
+      {
+       "content": {
+        "data": "attachment-id"
+       },
+       "filename": "a.pdf"
+      }
+     ],
+     "read": false,
+     "saved": false,
+     "sent": false,
+     "deleted": false,
+     "draft": false,
+     "answered": false,
+     "expunged": false,
+     "insight": null,
+     "uid_domain": 5,
+     "modseq": 9,
+     "spam_score": 0,
+     "spam_reasons": null,
+     "is_spam": false,
+     "rfc822_size": null,
+     "text_line_count": null,
+     "html_line_count": null,
+     "in_reply_to": null,
+     "reference_ids": null
+    }
+   }
+  },
+  {
+   "name": "table.query by a contained object and a NULL",
+   "fn": "table.query",
+   "args": {
+    "table": "mails",
+    "filters": {
+     "insight": {
+      "tags": [
+       "work"
+      ]
+     },
+     "in_reply_to": null,
+     "user_id": "11111111-1111-4111-8111-111111111111"
+    }
+   },
+   "responses": [
+    {
+     "rows": []
+    }
+   ],
+   "trace": [
+    {
+     "sql": "SELECT * FROM mails WHERE insight @> $1::jsonb AND in_reply_to IS NULL AND user_id = $2",
+     "values": [
+      "{\"tags\":[\"work\"]}",
+      "11111111-1111-4111-8111-111111111111"
+     ]
+    }
+   ],
+   "result": {
+    "ok": []
+   }
+  },
+  {
    "name": "table.queryOne miss",
    "fn": "table.queryOne",
    "args": {

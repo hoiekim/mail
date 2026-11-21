@@ -498,6 +498,10 @@ step("getMailByMessageId", { user_id: U2, message_id: "<fanout@example.com>" }, 
 step("getMailByMessageId", { user_id: U1, message_id: "<self@example.com>" }, "read.self");
 step("getMailByMessageId", { user_id: U1, message_id: "<nobody@example.com>" }, "read.missing");
 step("getMailByMessageId", { user_id: U1, message_id: "<dup-mailbox-uid@example.com>" }, "read.dupmailbox");
+// The attachment route finds the mail an attachment belongs to by containment.
+step("findMailByAttachment", { user_id: U1, attachment_id: ATTACHMENT_ON_DISK }, "read.by-attachment");
+step("findMailByAttachment", { user_id: U2, attachment_id: ATTACHMENT_ON_DISK }, "read.by-attachment.other-user");
+step("findMailByAttachment", { user_id: U1, attachment_id: "no-such-attachment" }, "read.by-attachment.missing");
 
 // --- flags and their mod-sequences ---------------------------------------------------
 
@@ -779,6 +783,7 @@ process.on("unhandledRejection", abandon);
 
 // The repositories read `POSTGRES_*` when they are first imported.
 const { pool } = await import("../../../../server/lib/postgres/client");
+const { mailsTable } = await import("../../../../server/lib/postgres/models");
 const core = await import("../../../../server/lib/postgres/repositories/mails/core");
 const counters = await import("../../../../server/lib/postgres/repositories/mails/counters");
 const { buildSetMailFlagsQueries } = await import("../../../../server/lib/postgres/repositories/mails/set-flags-query");
@@ -941,6 +946,13 @@ const ops: Record<string, (a: Args) => Promise<unknown>> = {
   getMailById: async (a) => (await core.getMailById(a.user_id as string, a.mail_id as string))?.toJSON(),
   getMailByMessageId: async (a) =>
     (await core.getMailByMessageId(a.user_id as string, a.message_id as string))?.toJSON(),
+  findMailByAttachment: async (a) =>
+    (
+      await mailsTable.queryOne({
+        user_id: a.user_id as string,
+        attachments: [{ content: { data: a.attachment_id as string } }],
+      })
+    )?.toJSON(),
   updateRfc822Size: (a) => core.updateRfc822Size(a.user_id as string, a.mail_id as string, a.rfc822_size as number),
   markMailRead: (a) => core.markMailRead(a.user_id as string, a.mail_id as string),
   markMailSaved: (a) => core.markMailSaved(a.user_id as string, a.mail_id as string, a.saved as boolean),

@@ -1196,36 +1196,155 @@
   },
   {
    "step": 122,
+   "op": "findMailByAttachment",
+   "as": "read.by-attachment",
+   "ok": {
+    "mail_id": "mail(a0000000-0000-4000-8000-000000000001 <full@example.com>)",
+    "user_id": "a0000000-0000-4000-8000-000000000001",
+    "message_id": "<full@example.com>",
+    "subject": "Quarterly report — ünïcode ✓",
+    "date": "2024-03-04T05:06:07.000Z",
+    "html": "<p>Hello <b>world</b> 😀</p>",
+    "text": "Hello world 😀",
+    "from_address": [
+     {
+      "name": "Sender Name",
+      "address": "sender@example.com"
+     }
+    ],
+    "from_text": "Sender Name <sender@example.com>",
+    "to_address": [
+     {
+      "name": "",
+      "address": "admin@example.com"
+     },
+     {
+      "name": "Other",
+      "address": "other@example.org"
+     }
+    ],
+    "to_text": "admin@example.com, Other <other@example.org>",
+    "cc_address": [
+     {
+      "address": "cc@example.com"
+     }
+    ],
+    "cc_text": "cc@example.com",
+    "bcc_address": [
+     {
+      "address": "bcc@example.com"
+     }
+    ],
+    "bcc_text": "bcc@example.com",
+    "reply_to_address": [
+     {
+      "name": "Reply",
+      "address": "reply@example.com"
+     }
+    ],
+    "reply_to_text": "Reply <reply@example.com>",
+    "envelope_from": [
+     {
+      "address": "bounce@example.com"
+     }
+    ],
+    "envelope_to": [
+     {
+      "address": "admin@example.com"
+     }
+    ],
+    "attachments": [
+     {
+      "size": 1234,
+      "content": {
+       "data": "scenario-attachment-on-disk"
+      },
+      "filename": "report.pdf",
+      "contentType": "application/pdf"
+     },
+     {
+      "size": 10,
+      "content": {
+       "data": "missing-on-disk"
+      },
+      "filename": "pic \"1\".png",
+      "contentType": "image/png"
+     }
+    ],
+    "read": false,
+    "saved": false,
+    "sent": false,
+    "deleted": false,
+    "draft": false,
+    "answered": false,
+    "expunged": false,
+    "insight": {
+     "tags": [
+      "work",
+      "q1"
+     ],
+     "score": 7,
+     "summary": "A report"
+    },
+    "uid_domain": 1,
+    "modseq": 1,
+    "spam_score": 3,
+    "spam_reasons": [],
+    "is_spam": false,
+    "rfc822_size": 2973,
+    "text_line_count": null,
+    "html_line_count": null,
+    "in_reply_to": "<parent@example.com>",
+    "reference_ids": [
+     "<root@example.com>",
+     "<parent@example.com>"
+    ]
+   }
+  },
+  {
+   "step": 123,
+   "op": "findMailByAttachment",
+   "as": "read.by-attachment.other-user",
+   "ok": null
+  },
+  {
+   "step": 124,
+   "op": "findMailByAttachment",
+   "as": "read.by-attachment.missing",
+   "ok": null
+  },
+  {
+   "step": 125,
    "op": "markMailRead",
    "as": "flag.read.first",
    "ok": true
   },
   {
-   "step": 123,
+   "step": 126,
    "op": "markMailRead",
    "as": "flag.read.again",
    "ok": true
   },
   {
-   "step": 124,
+   "step": 127,
    "op": "markMailRead",
    "as": "flag.read.already",
    "ok": true
   },
   {
-   "step": 125,
+   "step": 128,
    "op": "markMailRead",
    "as": "flag.read.other-user",
    "ok": false
   },
   {
-   "step": 126,
+   "step": 129,
    "op": "markMailRead",
    "as": "flag.read.unknown",
    "ok": false
   },
   {
-   "step": 127,
+   "step": 130,
    "op": "markMailRead",
    "as": "flag.read.bad-id",
    "threw": {
@@ -1235,73 +1354,73 @@
    }
   },
   {
-   "step": 128,
+   "step": 131,
    "op": "getHighestModseq",
    "as": "flag.read.modseq",
    "ok": 28
   },
   {
-   "step": 129,
+   "step": 132,
    "op": "markMailSaved",
    "as": "flag.save.first",
    "ok": true
   },
   {
-   "step": 130,
+   "step": 133,
    "op": "markMailSaved",
    "as": "flag.save.again",
    "ok": true
   },
   {
-   "step": 131,
+   "step": 134,
    "op": "markMailSaved",
    "as": "flag.save.second-mail",
    "ok": true
   },
   {
-   "step": 132,
+   "step": 135,
    "op": "markMailSaved",
    "as": "flag.unsave",
    "ok": true
   },
   {
-   "step": 133,
+   "step": 136,
    "op": "markMailSaved",
    "as": "flag.unsave.again",
    "ok": true
   },
   {
-   "step": 134,
+   "step": 137,
    "op": "markMailSaved",
    "as": "flag.resave",
    "ok": true
   },
   {
-   "step": 135,
+   "step": 138,
    "op": "markMailSaved",
    "as": "flag.save.sent",
    "ok": true
   },
   {
-   "step": 136,
+   "step": 139,
    "op": "markMailSaved",
    "as": "flag.save.other-user",
    "ok": false
   },
   {
-   "step": 137,
+   "step": 140,
    "op": "markMailSaved",
    "as": "flag.save.unknown",
    "ok": false
   },
   {
-   "step": 138,
+   "step": 141,
    "op": "getUidNext",
    "as": "flag.save.starred-next",
    "ok": 9
   },
   {
-   "step": 139,
+   "step": 142,
    "op": "markMailSpam",
    "as": "flag.spam.first",
    "ok": {
@@ -1310,7 +1429,7 @@
    }
   },
   {
-   "step": 140,
+   "step": 143,
    "op": "markMailSpam",
    "as": "flag.spam.again",
    "ok": {
@@ -1319,7 +1438,7 @@
    }
   },
   {
-   "step": 141,
+   "step": 144,
    "op": "markMailSpam",
    "as": "flag.unspam",
    "ok": {
@@ -1328,7 +1447,7 @@
    }
   },
   {
-   "step": 142,
+   "step": 145,
    "op": "markMailSpam",
    "as": "flag.spam.other-user",
    "ok": {
@@ -1337,7 +1456,7 @@
    }
   },
   {
-   "step": 143,
+   "step": 146,
    "op": "markMailSpam",
    "as": "flag.spam.unknown",
    "ok": {
@@ -1346,7 +1465,7 @@
    }
   },
   {
-   "step": 144,
+   "step": 147,
    "op": "markMailSpam",
    "as": "flag.spam.bad-id",
    "threw": {
@@ -1356,19 +1475,19 @@
    }
   },
   {
-   "step": 145,
+   "step": 148,
    "op": "getHighestModseq",
    "as": "flag.spam.junk-modseq",
    "ok": 36
   },
   {
-   "step": 146,
+   "step": 149,
    "op": "getHighestModseq",
    "as": "flag.spam.box-modseq",
    "ok": 36
   },
   {
-   "step": 147,
+   "step": 150,
    "op": "setFlags",
    "as": "store.deleted.range",
    "ok": {
@@ -1429,7 +1548,7 @@
    }
   },
   {
-   "step": 148,
+   "step": 151,
    "op": "setFlags",
    "as": "store.flagged.seq",
    "ok": {
@@ -1460,7 +1579,7 @@
    }
   },
   {
-   "step": 149,
+   "step": 152,
    "op": "setFlags",
    "as": "store.replace",
    "ok": {
@@ -1481,7 +1600,7 @@
    }
   },
   {
-   "step": 150,
+   "step": 153,
    "op": "setFlags",
    "as": "store.conditional",
    "ok": {
@@ -1575,7 +1694,7 @@
    }
   },
   {
-   "step": 151,
+   "step": 154,
    "op": "setFlags",
    "as": "store.conditional.zero",
    "ok": {
@@ -1598,7 +1717,7 @@
    }
   },
   {
-   "step": 152,
+   "step": 155,
    "op": "setFlags",
    "as": "store.junk",
    "ok": {
@@ -1629,7 +1748,7 @@
    }
   },
   {
-   "step": 153,
+   "step": 156,
    "op": "setFlags",
    "as": "store.drafts.seq",
    "ok": {
@@ -1650,7 +1769,7 @@
    }
   },
   {
-   "step": 154,
+   "step": 157,
    "op": "setFlags",
    "as": "store.archive.seq",
    "ok": {
@@ -1681,7 +1800,7 @@
    }
   },
   {
-   "step": 155,
+   "step": 158,
    "op": "setFlags",
    "as": "store.sent",
    "ok": {
@@ -1712,7 +1831,7 @@
    }
   },
   {
-   "step": 156,
+   "step": 159,
    "op": "setFlags",
    "as": "store.sent.box.seq",
    "ok": {
@@ -1733,7 +1852,7 @@
    }
   },
   {
-   "step": 157,
+   "step": 160,
    "op": "setFlags",
    "as": "store.noop",
    "ok": {
@@ -1762,7 +1881,7 @@
    }
   },
   {
-   "step": 158,
+   "step": 161,
    "op": "setFlags",
    "as": "store.nomatch",
    "ok": {
@@ -1772,19 +1891,19 @@
    }
   },
   {
-   "step": 159,
+   "step": 162,
    "op": "updateRfc822Size",
    "as": "size.update",
    "ok": null
   },
   {
-   "step": 160,
+   "step": 163,
    "op": "updateRfc822Size",
    "as": "size.other-user",
    "ok": null
   },
   {
-   "step": 161,
+   "step": 164,
    "op": "getMailById",
    "as": "size.read",
    "ok": {
@@ -1829,139 +1948,139 @@
    }
   },
   {
-   "step": 162,
+   "step": 165,
    "op": "getUidNext",
    "as": "after-flags.next.domain",
    "ok": 19
   },
   {
-   "step": 163,
+   "step": 166,
    "op": "getUidNext",
    "as": "after-flags.next.domain.sent",
    "ok": 3
   },
   {
-   "step": 164,
+   "step": 167,
    "op": "getUidNext",
    "as": "after-flags.next.admin",
    "ok": 7
   },
   {
-   "step": 165,
+   "step": 168,
    "op": "getUidNext",
    "as": "after-flags.next.admin.sent",
    "ok": 3
   },
   {
-   "step": 166,
+   "step": 169,
    "op": "getUidNext",
    "as": "after-flags.next.sales",
    "ok": 4
   },
   {
-   "step": 167,
+   "step": 170,
    "op": "getUidNext",
    "as": "after-flags.next.archive",
    "ok": 4
   },
   {
-   "step": 168,
+   "step": 171,
    "op": "getUidNext",
    "as": "after-flags.next.starred",
    "ok": 11
   },
   {
-   "step": 169,
+   "step": 172,
    "op": "getUidNext",
    "as": "after-flags.next.trash",
    "ok": 10
   },
   {
-   "step": 170,
+   "step": 173,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.domain.received",
    "ok": 46
   },
   {
-   "step": 171,
+   "step": 174,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.domain.sent",
    "ok": 48
   },
   {
-   "step": 172,
+   "step": 175,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.Junk.received",
    "ok": 46
   },
   {
-   "step": 173,
+   "step": 176,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.Drafts.received",
    "ok": 46
   },
   {
-   "step": 174,
+   "step": 177,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.INBOX/accounts/admin.received",
    "ok": 44
   },
   {
-   "step": 175,
+   "step": 178,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.INBOX/accounts/sales.received",
    "ok": 42
   },
   {
-   "step": 176,
+   "step": 179,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.Sent Messages/accounts/admin.sent",
    "ok": 48
   },
   {
-   "step": 177,
+   "step": 180,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.Archive.received",
    "ok": 46
   },
   {
-   "step": 178,
+   "step": 181,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.Starred.received",
    "ok": 46
   },
   {
-   "step": 179,
+   "step": 182,
    "op": "getHighestModseq",
    "as": "after-flags.modseq.Trash.received",
    "ok": 40
   },
   {
-   "step": 180,
+   "step": 183,
    "op": "syncMailboxPivot",
    "as": "pivot.trash.add",
    "ok": null
   },
   {
-   "step": 181,
+   "step": 184,
    "op": "syncMailboxPivot",
    "as": "pivot.trash.again",
    "ok": null
   },
   {
-   "step": 182,
+   "step": 185,
    "op": "syncMailboxPivot",
    "as": "pivot.trash.remove",
    "ok": null
   },
   {
-   "step": 183,
+   "step": 186,
    "op": "syncMailboxPivot",
    "as": "pivot.trash.remove.again",
    "ok": null
   },
   {
-   "step": 184,
+   "step": 187,
    "op": "syncMailboxPivot",
    "as": "pivot.unknown-mail",
    "threw": {
@@ -1971,19 +2090,19 @@
    }
   },
   {
-   "step": 185,
+   "step": 188,
    "op": "writeMailboxUid",
    "as": "map.write",
    "ok": 50
   },
   {
-   "step": 186,
+   "step": 189,
    "op": "writeMailboxUid",
    "as": "map.write.again",
    "ok": 50
   },
   {
-   "step": 187,
+   "step": 190,
    "op": "writeMailboxUid",
    "as": "map.write.taken",
    "threw": {
@@ -1993,7 +2112,7 @@
    }
   },
   {
-   "step": 188,
+   "step": 191,
    "op": "writeMailboxUid",
    "as": "map.write.unknown-mail",
    "threw": {
@@ -2003,25 +2122,25 @@
    }
   },
   {
-   "step": 189,
+   "step": 192,
    "op": "deleteMailboxUid",
    "as": "map.delete",
    "ok": null
   },
   {
-   "step": 190,
+   "step": 193,
    "op": "deleteMailboxUid",
    "as": "map.delete.again",
    "ok": null
   },
   {
-   "step": 191,
+   "step": 194,
    "op": "recordMappings",
    "as": "map.record.domain-taken",
    "ok": 70
   },
   {
-   "step": 192,
+   "step": 195,
    "op": "recordMappings",
    "as": "map.record.mailbox-taken",
    "threw": {
@@ -2031,43 +2150,43 @@
    }
   },
   {
-   "step": 193,
+   "step": 196,
    "op": "syncMappedPivotsForRow",
    "as": "pivot.row.skip-starred",
    "ok": null
   },
   {
-   "step": 194,
+   "step": 197,
    "op": "syncMappedPivotsForRow",
    "as": "pivot.row.clear",
    "ok": null
   },
   {
-   "step": 195,
+   "step": 198,
    "op": "deleteMail",
    "as": "delete.other-user",
    "ok": false
   },
   {
-   "step": 196,
+   "step": 199,
    "op": "deleteMail",
    "as": "delete.first",
    "ok": true
   },
   {
-   "step": 197,
+   "step": 200,
    "op": "deleteMail",
    "as": "delete.again",
    "ok": false
   },
   {
-   "step": 198,
+   "step": 201,
    "op": "deleteMail",
    "as": "delete.highest",
    "ok": true
   },
   {
-   "step": 199,
+   "step": 202,
    "op": "deleteMail",
    "as": "delete.bad-id",
    "threw": {
@@ -2077,139 +2196,118 @@
    }
   },
   {
-   "step": 200,
+   "step": 203,
    "op": "getMailById",
    "as": "delete.read",
    "ok": null
   },
   {
-   "step": 201,
+   "step": 204,
    "op": "getUidNext",
    "as": "after-delete.next.domain",
    "ok": 19
   },
   {
-   "step": 202,
+   "step": 205,
    "op": "getUidNext",
    "as": "after-delete.next.domain.sent",
    "ok": 3
   },
   {
-   "step": 203,
+   "step": 206,
    "op": "getUidNext",
    "as": "after-delete.next.admin",
    "ok": 7
   },
   {
-   "step": 204,
+   "step": 207,
    "op": "getUidNext",
    "as": "after-delete.next.admin.sent",
    "ok": 3
   },
   {
-   "step": 205,
+   "step": 208,
    "op": "getUidNext",
    "as": "after-delete.next.sales",
    "ok": 4
   },
   {
-   "step": 206,
+   "step": 209,
    "op": "getUidNext",
    "as": "after-delete.next.archive",
    "ok": 4
   },
   {
-   "step": 207,
+   "step": 210,
    "op": "getUidNext",
    "as": "after-delete.next.starred",
    "ok": 11
   },
   {
-   "step": 208,
+   "step": 211,
    "op": "getUidNext",
    "as": "after-delete.next.trash",
    "ok": 14
   },
   {
-   "step": 209,
+   "step": 212,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.domain.received",
    "ok": 46
   },
   {
-   "step": 210,
+   "step": 213,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.domain.sent",
    "ok": 48
   },
   {
-   "step": 211,
+   "step": 214,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.Junk.received",
    "ok": 46
   },
   {
-   "step": 212,
+   "step": 215,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.Drafts.received",
    "ok": 46
   },
   {
-   "step": 213,
+   "step": 216,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.INBOX/accounts/admin.received",
    "ok": 44
   },
   {
-   "step": 214,
+   "step": 217,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.INBOX/accounts/sales.received",
    "ok": 42
   },
   {
-   "step": 215,
+   "step": 218,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.Sent Messages/accounts/admin.sent",
    "ok": 48
   },
   {
-   "step": 216,
+   "step": 219,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.Archive.received",
    "ok": 46
   },
   {
-   "step": 217,
+   "step": 220,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.Starred.received",
    "ok": 46
   },
   {
-   "step": 218,
+   "step": 221,
    "op": "getHighestModseq",
    "as": "after-delete.modseq.Trash.received",
    "ok": 40
-  },
-  {
-   "step": 219,
-   "op": "sql",
-   "ok": {
-    "rowCount": 1
-   }
-  },
-  {
-   "step": 220,
-   "op": "sql",
-   "ok": {
-    "rowCount": 1
-   }
-  },
-  {
-   "step": 221,
-   "op": "sql",
-   "ok": {
-    "rowCount": 1
-   }
   },
   {
    "step": 222,
@@ -2241,174 +2339,195 @@
   },
   {
    "step": 226,
+   "op": "sql",
+   "ok": {
+    "rowCount": 1
+   }
+  },
+  {
+   "step": 227,
+   "op": "sql",
+   "ok": {
+    "rowCount": 1
+   }
+  },
+  {
+   "step": 228,
+   "op": "sql",
+   "ok": {
+    "rowCount": 1
+   }
+  },
+  {
+   "step": 229,
    "op": "getUidNext",
    "as": "legacy.peek.domain",
    "ok": 42
   },
   {
-   "step": 227,
+   "step": 230,
    "op": "getUidNext",
    "as": "legacy.peek.domain.sent",
    "ok": 8
   },
   {
-   "step": 228,
+   "step": 231,
    "op": "getUidNext",
    "as": "legacy.peek.account",
    "ok": 16
   },
   {
-   "step": 229,
+   "step": 232,
    "op": "getUidNext",
    "as": "legacy.peek.account.sent",
    "ok": 16
   },
   {
-   "step": 230,
+   "step": 233,
    "op": "getUidNext",
    "as": "legacy.peek.account.new",
    "ok": 1
   },
   {
-   "step": 231,
+   "step": 234,
    "op": "getUidNext",
    "as": "legacy.peek.starred",
    "ok": 4
   },
   {
-   "step": 232,
+   "step": 235,
    "op": "getUidNext",
    "as": "legacy.peek.trash",
    "ok": 1
   },
   {
-   "step": 233,
+   "step": 236,
    "op": "getHighestModseq",
    "as": "legacy.peek.modseq",
    "ok": 6
   },
   {
-   "step": 234,
+   "step": 237,
    "op": "getHighestModseq",
    "as": "legacy.peek.modseq.sent",
    "ok": 3
   },
   {
-   "step": 235,
+   "step": 238,
    "op": "getHighestModseq",
    "as": "legacy.peek.modseq.box",
    "ok": 1
   },
   {
-   "step": 236,
+   "step": 239,
    "op": "getDomainUidNext",
    "as": "legacy.domain",
    "ok": 42
   },
   {
-   "step": 237,
+   "step": 240,
    "op": "getDomainUidNext",
    "as": "legacy.domain.sent",
    "ok": 8
   },
   {
-   "step": 238,
+   "step": 241,
    "op": "getAccountUidNext",
    "as": "legacy.account",
    "ok": 16
   },
   {
-   "step": 239,
+   "step": 242,
    "op": "getAccountUidNext",
    "as": "legacy.account.sent",
    "ok": 16
   },
   {
-   "step": 240,
+   "step": 243,
    "op": "getMailboxUidNext",
    "as": "legacy.starred",
    "ok": 4
   },
   {
-   "step": 241,
+   "step": 244,
    "op": "getNextModseq",
    "as": "legacy.modseq.reserve",
    "ok": 7
   },
   {
-   "step": 242,
+   "step": 245,
    "op": "markMailSaved",
    "as": "legacy.save",
    "ok": true
   },
   {
-   "step": 243,
+   "step": 246,
    "op": "markMailRead",
    "as": "legacy.read",
    "ok": true
   },
   {
-   "step": 244,
+   "step": 247,
    "op": "getUidNext",
    "as": "legacy.after.domain",
    "ok": 43
   },
   {
-   "step": 245,
+   "step": 248,
    "op": "getUidNext",
    "as": "legacy.after.domain.sent",
    "ok": 9
   },
   {
-   "step": 246,
+   "step": 249,
    "op": "getUidNext",
    "as": "legacy.after.account",
    "ok": 17
   },
   {
-   "step": 247,
+   "step": 250,
    "op": "getUidNext",
    "as": "legacy.after.account.sent",
    "ok": 17
   },
   {
-   "step": 248,
+   "step": 251,
    "op": "getUidNext",
    "as": "legacy.after.account.new",
    "ok": 1
   },
   {
-   "step": 249,
+   "step": 252,
    "op": "getUidNext",
    "as": "legacy.after.starred",
    "ok": 6
   },
   {
-   "step": 250,
+   "step": 253,
    "op": "getUidNext",
    "as": "legacy.after.trash",
    "ok": 1
   },
   {
-   "step": 251,
+   "step": 254,
    "op": "getHighestModseq",
    "as": "legacy.after.modseq",
    "ok": 9
   },
   {
-   "step": 252,
+   "step": 255,
    "op": "getHighestModseq",
    "as": "legacy.after.modseq.sent",
    "ok": 3
   },
   {
-   "step": 253,
+   "step": 256,
    "op": "getHighestModseq",
    "as": "legacy.after.modseq.box",
    "ok": 9
   },
   {
-   "step": 254,
+   "step": 257,
    "op": "concurrentReservations",
    "as": "conc.domain",
    "ok": [
@@ -2427,7 +2546,7 @@
    ]
   },
   {
-   "step": 255,
+   "step": 258,
    "op": "concurrentReservations",
    "as": "conc.account",
    "ok": [
@@ -2446,7 +2565,7 @@
    ]
   },
   {
-   "step": 256,
+   "step": 259,
    "op": "concurrentReservations",
    "as": "conc.mailbox",
    "ok": [
@@ -2465,7 +2584,7 @@
    ]
   },
   {
-   "step": 257,
+   "step": 260,
    "op": "concurrentReservations",
    "as": "conc.modseq",
    "ok": [
@@ -2484,7 +2603,7 @@
    ]
   },
   {
-   "step": 258,
+   "step": 261,
    "op": "concurrentSaves",
    "as": "conc.saves",
    "ok": {
@@ -2532,13 +2651,13 @@
    }
   },
   {
-   "step": 259,
+   "step": 262,
    "op": "getDomainUidNext",
    "as": "race.d",
    "ok": 22
   },
   {
-   "step": 260,
+   "step": 263,
    "op": "concurrentDuplicates",
    "as": "conc.duplicates",
    "ok": {
@@ -2555,31 +2674,31 @@
    }
   },
   {
-   "step": 261,
+   "step": 264,
    "op": "getUidNext",
    "as": "conc.next.domain",
    "ok": 23
   },
   {
-   "step": 262,
+   "step": 265,
    "op": "getUidNext",
    "as": "conc.next.account",
    "ok": 28
   },
   {
-   "step": 263,
+   "step": 266,
    "op": "getUidNext",
    "as": "conc.next.starred",
    "ok": 21
   },
   {
-   "step": 264,
+   "step": 267,
    "op": "getNextModseq",
    "as": "conc.next.modseq",
    "ok": 30
   },
   {
-   "step": 265,
+   "step": 268,
    "op": "createMailbox",
    "as": "box.projects",
    "ok": {
@@ -2598,7 +2717,7 @@
    }
   },
   {
-   "step": 266,
+   "step": 269,
    "op": "createMailbox",
    "as": "box.projects.case",
    "ok": {
@@ -2606,7 +2725,7 @@
    }
   },
   {
-   "step": 267,
+   "step": 270,
    "op": "createMailbox",
    "as": "box.projects.upper",
    "ok": {
@@ -2614,7 +2733,7 @@
    }
   },
   {
-   "step": 268,
+   "step": 271,
    "op": "createMailbox",
    "as": "box.receipts",
    "ok": {
@@ -2633,7 +2752,7 @@
    }
   },
   {
-   "step": 269,
+   "step": 272,
    "op": "createMailbox",
    "as": "box.receipts.old",
    "ok": {
@@ -2652,7 +2771,7 @@
    }
   },
   {
-   "step": 270,
+   "step": 273,
    "op": "createMailbox",
    "as": "box.etoile",
    "ok": {
@@ -2671,7 +2790,7 @@
    }
   },
   {
-   "step": 271,
+   "step": 274,
    "op": "createMailbox",
    "as": "box.etoile.plain",
    "ok": {
@@ -2690,7 +2809,7 @@
    }
   },
   {
-   "step": 272,
+   "step": 275,
    "op": "createMailbox",
    "as": "box.japanese",
    "ok": {
@@ -2709,7 +2828,7 @@
    }
   },
   {
-   "step": 273,
+   "step": 276,
    "op": "createMailbox",
    "as": "box.underscore",
    "ok": {
@@ -2728,7 +2847,7 @@
    }
   },
   {
-   "step": 274,
+   "step": 277,
    "op": "createMailbox",
    "as": "box.ten",
    "ok": {
@@ -2747,7 +2866,7 @@
    }
   },
   {
-   "step": 275,
+   "step": 278,
    "op": "createMailbox",
    "as": "box.nine",
    "ok": {
@@ -2766,7 +2885,7 @@
    }
   },
   {
-   "step": 276,
+   "step": 279,
    "op": "createMailbox",
    "as": "box.team",
    "ok": {
@@ -2785,7 +2904,7 @@
    }
   },
   {
-   "step": 277,
+   "step": 280,
    "op": "createMailbox",
    "as": "box.child",
    "ok": {
@@ -2804,7 +2923,7 @@
    }
   },
   {
-   "step": 278,
+   "step": 281,
    "op": "createMailbox",
    "as": "box.child.beta",
    "ok": {
@@ -2823,7 +2942,7 @@
    }
   },
   {
-   "step": 279,
+   "step": 282,
    "op": "createMailbox",
    "as": "box.bad-parent",
    "threw": {
@@ -2833,7 +2952,7 @@
    }
   },
   {
-   "step": 280,
+   "step": 283,
    "op": "createMailbox",
    "as": "box.bob.projects",
    "ok": {
@@ -2852,7 +2971,7 @@
    }
   },
   {
-   "step": 281,
+   "step": 284,
    "op": "createMailbox",
    "as": "box.no-user",
    "threw": {
@@ -2862,7 +2981,7 @@
    }
   },
   {
-   "step": 282,
+   "step": 285,
    "op": "createMailbox",
    "as": "box.too-long",
    "threw": {
@@ -2872,7 +2991,7 @@
    }
   },
   {
-   "step": 283,
+   "step": 286,
    "op": "getMailboxesByUser",
    "as": "box.list",
    "ok": [
@@ -3022,13 +3141,13 @@
    ]
   },
   {
-   "step": 284,
+   "step": 287,
    "op": "getMailboxesByUser",
    "as": "box.list.empty",
    "ok": []
   },
   {
-   "step": 285,
+   "step": 288,
    "op": "getMailboxByName",
    "as": "box.byname",
    "ok": {
@@ -3044,7 +3163,7 @@
    }
   },
   {
-   "step": 286,
+   "step": 289,
    "op": "getMailboxByName",
    "as": "box.byname.accent",
    "ok": {
@@ -3060,19 +3179,19 @@
    }
   },
   {
-   "step": 287,
+   "step": 290,
    "op": "getMailboxByName",
    "as": "box.byname.missing",
    "ok": null
   },
   {
-   "step": 288,
+   "step": 291,
    "op": "getMailboxByName",
    "as": "box.byname.other-user",
    "ok": null
   },
   {
-   "step": 289,
+   "step": 292,
    "op": "getMailboxByAddress",
    "as": "box.byaddress",
    "ok": {
@@ -3088,133 +3207,133 @@
    }
   },
   {
-   "step": 290,
+   "step": 293,
    "op": "getMailboxByAddress",
    "as": "box.byaddress.case",
    "ok": null
   },
   {
-   "step": 291,
+   "step": 294,
    "op": "getMailboxByAddress",
    "as": "box.byaddress.other-user",
    "ok": null
   },
   {
-   "step": 292,
+   "step": 295,
    "op": "renameMailbox",
    "as": "box.rename",
    "ok": "renamed"
   },
   {
-   "step": 293,
+   "step": 296,
    "op": "renameMailbox",
    "as": "box.rename.again",
    "ok": "renamed"
   },
   {
-   "step": 294,
+   "step": 297,
    "op": "renameMailbox",
    "as": "box.rename.taken",
    "ok": "name_taken"
   },
   {
-   "step": 295,
+   "step": 298,
    "op": "renameMailbox",
    "as": "box.rename.same-name",
    "ok": "name_taken"
   },
   {
-   "step": 296,
+   "step": 299,
    "op": "renameMailbox",
    "as": "box.rename.missing",
    "ok": "not_found"
   },
   {
-   "step": 297,
+   "step": 300,
    "op": "renameMailbox",
    "as": "box.rename.protected",
    "ok": "protected"
   },
   {
-   "step": 298,
+   "step": 301,
    "op": "renameMailbox",
    "as": "box.rename.other-user",
    "ok": "not_found"
   },
   {
-   "step": 299,
+   "step": 302,
    "op": "setMailboxSubscribed",
    "as": "box.unsubscribe",
    "ok": true
   },
   {
-   "step": 300,
+   "step": 303,
    "op": "setMailboxSubscribed",
    "as": "box.unsubscribe.again",
    "ok": true
   },
   {
-   "step": 301,
+   "step": 304,
    "op": "setMailboxSubscribed",
    "as": "box.unsubscribe.child",
    "ok": true
   },
   {
-   "step": 302,
+   "step": 305,
    "op": "setMailboxSubscribed",
    "as": "box.subscribe",
    "ok": true
   },
   {
-   "step": 303,
+   "step": 306,
    "op": "setMailboxSubscribed",
    "as": "box.subscribe.missing",
    "ok": false
   },
   {
-   "step": 304,
+   "step": 307,
    "op": "deleteMailboxByName",
    "as": "box.delete.protected",
    "ok": "protected"
   },
   {
-   "step": 305,
+   "step": 308,
    "op": "deleteMailboxByName",
    "as": "box.delete.missing",
    "ok": "not_found"
   },
   {
-   "step": 306,
+   "step": 309,
    "op": "deleteMailboxByName",
    "as": "box.delete",
    "ok": "deleted"
   },
   {
-   "step": 307,
+   "step": 310,
    "op": "deleteMailboxByName",
    "as": "box.delete.again",
    "ok": "not_found"
   },
   {
-   "step": 308,
+   "step": 311,
    "op": "deleteMailboxByName",
    "as": "box.delete.other-user",
    "ok": "not_found"
   },
   {
-   "step": 309,
+   "step": 312,
    "op": "deleteMailboxByName",
    "as": "box.delete.parent",
    "ok": "deleted"
   },
   {
-   "step": 310,
+   "step": 313,
    "op": "getMailboxByName",
    "as": "box.delete.child-gone",
    "ok": null
   },
   {
-   "step": 311,
+   "step": 314,
    "op": "getMailboxesByUser",
    "as": "box.list.after",
    "ok": [
@@ -3320,14 +3439,14 @@
    ]
   },
   {
-   "step": 312,
+   "step": 315,
    "op": "sql",
    "ok": {
     "rowCount": 998
    }
   },
   {
-   "step": 313,
+   "step": 316,
    "op": "createMailbox",
    "as": "limit.999",
    "ok": {
@@ -3346,7 +3465,7 @@
    }
   },
   {
-   "step": 314,
+   "step": 317,
    "op": "createMailbox",
    "as": "limit.1000",
    "ok": {
@@ -3365,7 +3484,7 @@
    }
   },
   {
-   "step": 315,
+   "step": 318,
    "op": "createMailbox",
    "as": "limit.refused",
    "ok": {
@@ -3373,7 +3492,7 @@
    }
   },
   {
-   "step": 316,
+   "step": 319,
    "op": "createMailbox",
    "as": "limit.exists",
    "ok": {
@@ -3381,7 +3500,7 @@
    }
   },
   {
-   "step": 317,
+   "step": 320,
    "op": "createMailbox",
    "as": "limit.other-user",
    "ok": {
@@ -3400,13 +3519,13 @@
    }
   },
   {
-   "step": 318,
+   "step": 321,
    "op": "deleteMailboxByName",
    "as": "limit.make-room",
    "ok": "deleted"
   },
   {
-   "step": 319,
+   "step": 322,
    "op": "createMailbox",
    "as": "limit.room",
    "ok": {
@@ -3425,7 +3544,7 @@
    }
   },
   {
-   "step": 320,
+   "step": 323,
    "op": "createMailbox",
    "as": "limit.refused.again",
    "ok": {

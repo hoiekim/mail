@@ -755,6 +755,8 @@ await run("table.count with no row", "table.count", { table: "mailboxes", filter
 await run("table.queryOne whole row", "table.queryOne", { table: "mails", filters: { mail_id: MAIL, user_id: USER }, columns: null }, [rows(mailRow())]);
 await run("table.queryOne projected", "table.queryOne", { table: "mails", filters: { mail_id: MAIL, user_id: USER }, columns: ["read", "saved"] }, [rows({ read: true, saved: false })]);
 await run("table.queryOne unknown column", "table.queryOne", { table: "mails", filters: { mail_id: MAIL }, columns: ["read", "nope", "also_nope"] }, []);
+await run("table.queryOne by a contained document", "table.queryOne", { table: "mails", filters: { user_id: USER, attachments: [{ content: { data: "attachment-id" } }] }, columns: null }, [rows(mailRow({ attachments: [{ content: { data: "attachment-id" }, filename: "a.pdf" }] }))]);
+await run("table.query by a contained object and a NULL", "table.query", { table: "mails", filters: { insight: { tags: ["work"] }, in_reply_to: null, user_id: USER } }, [none()]);
 await run("table.queryOne miss", "table.queryOne", { table: "mailboxes", filters: { user_id: USER, address: "a@x" }, columns: null }, [none()]);
 await run("table.insert stamps updated on mails", "table.insert", { table: "mails", data: { mail_id: MAIL, user_id: USER, read: false, uid_domain: 3, from_text: null }, returning: ["mail_id"] }, [rows({ mail_id: MAIL })]);
 await run("table.insert leaves mailboxes unstamped", "table.insert", { table: "mailboxes", data: { user_id: USER, name: "Archive", subscribed: true, uid_validity: 1 }, returning: ["*"] }, [rows(mailboxRow())]);

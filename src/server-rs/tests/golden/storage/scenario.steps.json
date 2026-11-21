@@ -1681,6 +1681,30 @@
    "as": "read.dupmailbox"
   },
   {
+   "op": "findMailByAttachment",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000001",
+    "attachment_id": "scenario-attachment-on-disk"
+   },
+   "as": "read.by-attachment"
+  },
+  {
+   "op": "findMailByAttachment",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000002",
+    "attachment_id": "scenario-attachment-on-disk"
+   },
+   "as": "read.by-attachment.other-user"
+  },
+  {
+   "op": "findMailByAttachment",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000001",
+    "attachment_id": "no-such-attachment"
+   },
+   "as": "read.by-attachment.missing"
+  },
+  {
    "op": "markMailRead",
    "args": {
     "user_id": "a0000000-0000-4000-8000-000000000001",

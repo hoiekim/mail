@@ -18,7 +18,7 @@ use icu_collator::{Collator, CollatorBorrowed};
 use serde_json::{json, Value};
 
 use super::mails::model::{validate_object, validate_record, FieldType, ModelValidationError};
-use super::mails::table::{run_query, Filter, PreparedQuery, Record, SetValue, Table};
+use super::mails::table::{run_query, Filter, PreparedQuery, Record, SelectFilter, SetValue, Table};
 use crate::params;
 use crate::postgres::{Param, Row};
 
@@ -159,7 +159,7 @@ pub fn locale_compare(a: &str, b: &str) -> Ordering {
 
 /// Every mailbox row of a user, system and user-created, sorted by name.
 pub async fn get_mailboxes_by_user(user_id: &str) -> Result<Vec<MailboxModel>> {
-    let rows = mailboxes_table().query(&[(MAILBOX_USER_ID, Param::from(user_id))]).await?;
+    let rows = mailboxes_table().query(&[(MAILBOX_USER_ID, SelectFilter::from(user_id))]).await?;
     let mut mailboxes = rows.iter().map(MailboxModel::from_record).collect::<Result<Vec<_>, _>>()?;
     mailboxes.sort_by(|a, b| locale_compare(&a.name, &b.name));
     Ok(mailboxes)
@@ -185,7 +185,7 @@ pub async fn get_mailbox_by_name(user_id: &str, name: &str) -> Result<Option<Mai
 /// their accounts.
 pub async fn get_mailbox_by_address(user_id: &str, address: &str) -> Result<Option<MailboxModel>> {
     let row = mailboxes_table()
-        .query_one(&[(MAILBOX_USER_ID, Param::from(user_id)), (MAILBOX_ADDRESS, Param::from(address))], None)
+        .query_one(&[(MAILBOX_USER_ID, SelectFilter::from(user_id)), (MAILBOX_ADDRESS, SelectFilter::from(address))], None)
         .await?;
     Ok(row.as_ref().map(MailboxModel::from_record).transpose()?)
 }
@@ -223,7 +223,7 @@ pub async fn create_mailbox(input: &CreateMailboxInput) -> Result<CreateMailboxR
         return Ok(CreateMailboxResult::Exists);
     }
 
-    let stored = mailboxes_table().count(&[(MAILBOX_USER_ID, Param::from(&input.user_id))]).await?;
+    let stored = mailboxes_table().count(&[(MAILBOX_USER_ID, SelectFilter::from(&input.user_id))]).await?;
     if stored >= MAILBOX_COUNT_MAX {
         return Ok(CreateMailboxResult::AtLimit);
     }

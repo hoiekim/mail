@@ -23,7 +23,7 @@ use super::pivot_decisions::{decide_mapped_pivots, STARRED_MAILBOX, TRASH_MAILBO
 use super::rfc822_size::{compute_full_message_size, MailForSize, ATTACHMENT_FOLDER_OVERRIDE};
 use super::set_flags_query::build_set_mail_flags_queries;
 use super::table::script::with_script;
-use super::table::{CompareOp, Filter, PreparedQuery, Record, Rows, SetValue, Table};
+use super::table::{CompareOp, Filter, PreparedQuery, Record, Rows, SelectFilter, SetValue, Table};
 use super::views::*;
 use crate::js;
 use crate::postgres::repositories::mailboxes::*;
@@ -474,8 +474,21 @@ fn is_marker(value: &Value, marker: &str) -> bool {
     value.get(marker) == Some(&Value::Bool(true))
 }
 
-fn select_filters(filters: &Value) -> Vec<(&str, Param)> {
-    filters.as_object().unwrap().iter().map(|(column, value)| (column.as_str(), param(value))).collect()
+/// A SELECT's filters: a document is matched by containment, anything else
+/// by equality.
+fn select_filters(filters: &Value) -> Vec<(&str, SelectFilter)> {
+    filters
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(column, value)| {
+            let filter = match value {
+                Value::Array(_) | Value::Object(_) => SelectFilter::Contains(value.clone()),
+                scalar => SelectFilter::Equals(param(scalar)),
+            };
+            (column.as_str(), filter)
+        })
+        .collect()
 }
 
 fn mutation_filters(filters: &Value) -> Vec<(&str, Filter)> {
@@ -518,7 +531,7 @@ fn mutation_filters(filters: &Value) -> Vec<(&str, Filter)> {
 }
 
 fn insert_values(data: &Value) -> Vec<(&str, Param)> {
-    select_filters(data)
+    data.as_object().unwrap().iter().map(|(column, value)| (column.as_str(), param(value))).collect()
 }
 
 fn set_values(data: &Value) -> Vec<(&str, SetValue)> {

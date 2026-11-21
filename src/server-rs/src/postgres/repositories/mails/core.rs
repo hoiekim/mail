@@ -30,7 +30,7 @@ use super::model::{
     mails_table, MailModel, ENVELOPE_TO, MAIL_ID, MESSAGE_ID, MODSEQ, READ, RFC822_SIZE, SAVED, UPDATED, USER_ID,
 };
 use super::rfc822_size::{compute_full_message_size, MailForSize};
-use super::table::{run_query, Filter, Record, SetValue};
+use super::table::{run_query, Filter, Record, SelectFilter, SetValue};
 use crate::postgres::{DbError, DbResult, Param};
 use crate::{js, logger};
 
@@ -518,7 +518,7 @@ pub async fn save_mail(input: &SaveMailInput) -> Result<Option<SavedMail>> {
 /// The user's mail with this Message-ID, the row a duplicate delivery
 /// conflicts with.
 pub async fn get_mail_by_message_id(user_id: &str, message_id: &str) -> Result<Option<MailModel>> {
-    let rows = mails_table().query(&[(USER_ID, Param::from(user_id)), (MESSAGE_ID, Param::from(message_id))]).await?;
+    let rows = mails_table().query(&[(USER_ID, SelectFilter::from(user_id)), (MESSAGE_ID, SelectFilter::from(message_id))]).await?;
     let models = rows.iter().map(MailModel::from_record).collect::<Result<Vec<_>, _>>()?;
     Ok(models.into_iter().next())
 }
@@ -526,7 +526,7 @@ pub async fn get_mail_by_message_id(user_id: &str, message_id: &str) -> Result<O
 /// The user's mail with this id. A database fault is an error, never "not
 /// found".
 pub async fn get_mail_by_id(user_id: &str, mail_id: &str) -> Result<Option<MailModel>> {
-    let row = mails_table().query_one(&[(MAIL_ID, Param::from(mail_id)), (USER_ID, Param::from(user_id))], None).await?;
+    let row = mails_table().query_one(&[(MAIL_ID, SelectFilter::from(mail_id)), (USER_ID, SelectFilter::from(user_id))], None).await?;
     Ok(row.as_ref().map(MailModel::from_record).transpose()?)
 }
 
@@ -556,7 +556,7 @@ fn flag(record: &Record, column: &str) -> bool {
 /// mail that is already read is a success that reserves no mod-sequence.
 pub async fn mark_mail_read(user_id: &str, mail_id: &str) -> DbResult<bool> {
     let table = mails_table();
-    let one_mail = [(MAIL_ID, Param::from(mail_id)), (USER_ID, Param::from(user_id))];
+    let one_mail = [(MAIL_ID, SelectFilter::from(mail_id)), (USER_ID, SelectFilter::from(user_id))];
     // Probe the current flag before reserving a mod-sequence: the reservation
     // takes the per-user counter lock and burns a value, so a re-mark must
     // not reserve. The probe projects only the flag; the full row would
@@ -591,7 +591,7 @@ pub async fn mark_mail_read(user_id: &str, mail_id: &str) -> DbResult<bool> {
 /// `false` only when the user has no such mail.
 pub async fn mark_mail_saved(user_id: &str, mail_id: &str, saved: bool) -> DbResult<bool> {
     let table = mails_table();
-    let one_mail = [(MAIL_ID, Param::from(mail_id)), (USER_ID, Param::from(user_id))];
+    let one_mail = [(MAIL_ID, SelectFilter::from(mail_id)), (USER_ID, SelectFilter::from(user_id))];
     // Same probe-before-reservation shape as `mark_mail_read`: a re-save of a
     // mail that already holds the requested value reserves nothing and still
     // runs the pivot sync for the existing mail.

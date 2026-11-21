@@ -219,22 +219,42 @@ pub fn build_filter_clauses(filters: &[(&str, Filter)], start_index: usize) -> D
     Ok(PreparedQuery { sql: clauses.join(" AND "), values })
 }
 
-/// `SELECT <columns> FROM <table> [WHERE …] [LIMIT $n]`. A NULL filter value
-/// reads as `column IS NULL`; any other as `column = $n`.
+/// One predicate of a SELECT.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectFilter {
+    /// `column = $n`; a NULL value reads as `column IS NULL`.
+    Equals(Param),
+    /// `column @> $n::jsonb`: the JSONB column contains this document. This
+    /// is how a mail is found by one of its attachments.
+    Contains(Value),
+}
+
+impl<T: Into<Param>> From<T> for SelectFilter {
+    fn from(value: T) -> SelectFilter {
+        SelectFilter::Equals(value.into())
+    }
+}
+
+/// `SELECT <columns> FROM <table> [WHERE …] [LIMIT $n]`.
 pub fn build_select_with_filters(
     table: &str,
     columns: Option<&[&str]>,
-    filters: &[(&str, Param)],
+    filters: &[(&str, SelectFilter)],
     limit: Option<i64>,
 ) -> PreparedQuery {
     let mut conditions: Vec<String> = Vec::new();
     let mut values: Vec<Param> = Vec::new();
-    for (column, value) in filters {
-        if *value == Param::Null {
-            conditions.push(format!("{column} IS NULL"));
-        } else {
-            values.push(value.clone());
-            conditions.push(format!("{column} = ${}", values.len()));
+    for (column, filter) in filters {
+        match filter {
+            SelectFilter::Equals(Param::Null) => conditions.push(format!("{column} IS NULL")),
+            SelectFilter::Equals(value) => {
+                values.push(value.clone());
+                conditions.push(format!("{column} = ${}", values.len()));
+            }
+            SelectFilter::Contains(document) => {
+                values.push(Param::json(document));
+                conditions.push(format!("{column} @> ${}::jsonb", values.len()));
+            }
         }
     }
     let column_list = match columns {
@@ -343,22 +363,22 @@ impl Table {
     pub fn prepare_select(
         &self,
         columns: Option<&[&str]>,
-        filters: &[(&str, Param)],
+        filters: &[(&str, SelectFilter)],
         limit: Option<i64>,
     ) -> PreparedQuery {
         build_select_with_filters(self.name, columns, filters, limit)
     }
 
     /// Every row matching the filters.
-    pub async fn query(&self, filters: &[(&str, Param)]) -> DbResult<Vec<Record>> {
+    pub async fn query(&self, filters: &[(&str, SelectFilter)]) -> DbResult<Vec<Record>> {
         Ok(run_query(&self.prepare_select(None, filters, None)).await?.rows)
     }
 
-    pub fn prepare_count(&self, filters: &[(&str, Param)]) -> PreparedQuery {
+    pub fn prepare_count(&self, filters: &[(&str, SelectFilter)]) -> PreparedQuery {
         build_select_with_filters(self.name, Some(&["COUNT(*)::int AS count"]), filters, None)
     }
 
-    pub async fn count(&self, filters: &[(&str, Param)]) -> DbResult<i64> {
+    pub async fn count(&self, filters: &[(&str, SelectFilter)]) -> DbResult<i64> {
         let result = run_query(&self.prepare_count(filters)).await?;
         Ok(result.rows.first().and_then(|row| row.get("count")).and_then(Value::as_i64).unwrap_or(0))
     }
@@ -367,7 +387,7 @@ impl Table {
     /// fails here instead of as a Postgres error at run time.
     pub fn prepare_query_one(
         &self,
-        filters: &[(&str, Param)],
+        filters: &[(&str, SelectFilter)],
         columns: Option<&[&str]>,
     ) -> DbResult<PreparedQuery> {
         if let Some(columns) = columns {
@@ -387,7 +407,7 @@ impl Table {
     /// The first row matching the filters, whole or projected to `columns`.
     pub async fn query_one(
         &self,
-        filters: &[(&str, Param)],
+        filters: &[(&str, SelectFilter)],
         columns: Option<&[&str]>,
     ) -> DbResult<Option<Record>> {
         let query = self.prepare_query_one(filters, columns)?;
