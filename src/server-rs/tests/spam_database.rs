@@ -319,7 +319,7 @@ fn a_word_the_column_cannot_hold_fails_the_whole_document() {
         train_classifier(&user, &words(&["before"]), true).await.unwrap();
 
         let exactly = "a".repeat(100);
-        train_classifier(&user, &[exactly.clone()], true).await.unwrap();
+        train_classifier(&user, std::slice::from_ref(&exactly), true).await.unwrap();
 
         let too_long = "b".repeat(101);
         let error = train_classifier(&user, &["kept".to_string(), too_long], true).await.unwrap_err();

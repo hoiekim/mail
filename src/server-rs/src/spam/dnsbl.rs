@@ -282,11 +282,7 @@ impl Latency {
     /// Which stretch of a period a moment falls in; never zero, so an unused
     /// bucket matches none.
     fn slot(period: u64, now_secs: u64) -> u64 {
-        if period == 0 {
-            1
-        } else {
-            now_secs / period + 1
-        }
+        now_secs.checked_div(period).map_or(1, |stretch| stretch + 1)
     }
 
     fn record(&mut self, now_secs: u64, elapsed: Duration) {
@@ -369,11 +365,15 @@ impl NameServer {
     }
 }
 
+/// What a question comes to: the addresses, or why there are none.
+type Outcome = Result<Vec<String>, DnsLookupError>;
+
 /// What one sending to one name server came to.
 enum Reply {
     /// The server answered, with addresses or with a code. `keep_for` is how
-    /// long the answer may be reused.
-    Answered { outcome: Result<Vec<String>, DnsLookupError>, keep_for: Option<Duration> },
+    /// long the answer may be reused; `timed` whether it says how fast the
+    /// server is, which only an answer or a missing name does.
+    Answered { outcome: Outcome, keep_for: Option<Duration>, timed: bool },
     /// Nothing came back in time, or the server could not be reached.
     Unanswered(DnsLookupError),
 }
@@ -381,7 +381,8 @@ enum Reply {
 struct Resolver {
     servers: Vec<NameServer>,
     default_timeout_ms: u64,
-    cache: Mutex<HashMap<String, (Instant, Result<Vec<String>, DnsLookupError>)>>,
+    /// Answers still good, by lowercased name, each with the moment it stops being so.
+    cache: Mutex<HashMap<String, (Instant, Outcome)>>,
     started: Instant,
 }
 
@@ -390,11 +391,11 @@ impl Resolver {
         self.started.elapsed().as_secs()
     }
 
-    fn cache(&self) -> MutexGuard<'_, HashMap<String, (Instant, Result<Vec<String>, DnsLookupError>)>> {
+    fn cache(&self) -> MutexGuard<'_, HashMap<String, (Instant, Outcome)>> {
         self.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn remembered(&self, key: &str) -> Option<Result<Vec<String>, DnsLookupError>> {
+    fn remembered(&self, key: &str) -> Option<Outcome> {
         let mut cache = self.cache();
         match cache.get(key) {
             Some((until, outcome)) if *until > Instant::now() => Some(outcome.clone()),
@@ -406,7 +407,7 @@ impl Resolver {
         }
     }
 
-    fn remember(&self, key: &str, outcome: &Result<Vec<String>, DnsLookupError>, keep_for: Duration) {
+    fn remember(&self, key: &str, outcome: &Outcome, keep_for: Duration) {
         if keep_for.is_zero() {
             return;
         }
@@ -449,7 +450,7 @@ impl Resolver {
                 } else {
                     Ok(addresses)
                 };
-                Reply::Answered { outcome, keep_for }
+                Reply::Answered { outcome, keep_for, timed: true }
             }
             Ok(Err(error)) => match error.kind() {
                 ResolveErrorKind::NoRecordsFound { response_code, negative_ttl, .. } => {
@@ -462,7 +463,8 @@ impl Resolver {
                     };
                     let code = response_code_name(*response_code);
                     let outcome = Err(DnsLookupError::new(Some(code), format!("queryA {code} {name}")));
-                    Reply::Answered { outcome, keep_for }
+                    let timed = matches!(response_code, ResponseCode::NXDomain | ResponseCode::NoError);
+                    Reply::Answered { outcome, keep_for, timed }
                 }
                 _ => Reply::Unanswered(DnsLookupError::new(transport_code(&error), error.to_string())),
             },
@@ -470,12 +472,9 @@ impl Resolver {
 
         let mut state = server.state();
         match &reply {
-            Reply::Answered { outcome, .. } => {
+            Reply::Answered { timed, .. } => {
                 state.consecutive_failures = 0;
-                // Only an answer or a missing name says how fast the server is.
-                let timed = matches!(outcome, Ok(_))
-                    || matches!(outcome, Err(error) if matches!(error.code.as_deref(), Some("ENOTFOUND" | "ENODATA")));
-                if timed {
+                if *timed {
                     state.latency.record(self.now_secs(), sent.elapsed());
                 }
             }
@@ -502,7 +501,7 @@ impl Resolver {
         let Some(index) = (0..self.servers.len()).find(|index| due(&self.servers[*index].state())) else {
             return;
         };
-        if rand::random::<u16>() % RETRY_CHANCE != 0 {
+        if !rand::random::<u16>().is_multiple_of(RETRY_CHANCE) {
             return;
         }
         self.servers[index].state().probe_pending = true;
@@ -515,12 +514,7 @@ impl Resolver {
     }
 
     /// Asks the name servers until one answers or every sending is used up.
-    async fn ask(
-        self: Arc<Self>,
-        query: Name,
-        name: String,
-        key: String,
-    ) -> Result<Vec<String>, DnsLookupError> {
+    async fn ask(self: Arc<Self>, query: Name, name: String, key: String) -> Outcome {
         let mut last = DnsLookupError::new(Some("ETIMEOUT"), format!("queryA ETIMEOUT {name}"));
         for sending in 0..TRIES * self.servers.len() {
             let index = self.choose();
@@ -530,7 +524,7 @@ impl Resolver {
             let passes = (sending / self.servers.len()) as u32;
             let wait = self.servers[index].wait(self.default_timeout_ms, passes, self.now_secs());
             match self.send(index, &query, &name, wait).await {
-                Reply::Answered { outcome, keep_for } => {
+                Reply::Answered { outcome, keep_for, .. } => {
                     if let Some(keep_for) = keep_for {
                         self.remember(&key, &outcome, keep_for);
                     }
@@ -591,7 +585,7 @@ fn configured_timeout_ms() -> u64 {
     let seconds = from_file
         .chain(from_env.split_whitespace().map(str::to_string))
         .filter_map(|option| option.strip_prefix("timeout:").and_then(|value| value.parse::<u64>().ok()))
-        .last();
+        .next_back();
     match seconds {
         Some(seconds) if seconds > 0 => seconds.min(30) * 1000,
         _ => DEFAULT_TIMEOUT_MS,
@@ -1416,7 +1410,7 @@ mod tests {
     fn the_resolv_conf_timeout_is_read_in_seconds() {
         // Whatever this machine's resolv.conf says, it is a whole number of seconds.
         let timeout = configured_timeout_ms();
-        assert!(timeout >= 1000 && timeout % 1000 == 0, "{timeout}");
+        assert!(timeout >= 1000 && timeout.is_multiple_of(1000), "{timeout}");
     }
 
     /// A DNS server on a loopback UDP port that answers every A query from
