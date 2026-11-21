@@ -529,6 +529,78 @@ async fn closes_a_live_authenticated_connection_when_its_credential_rotates() {
     unregister_smtp_server(&started.server);
 }
 
+// ── The client's FIN ───────────────────────────────────────────────────────
+
+/// Greets, then sends `commands` and the client's FIN in one segment, so the
+/// server finds both when it reads. Everything the server answered to them,
+/// up to its own FIN.
+async fn send_with_the_fin(port: u16, commands: &str) -> String {
+    use std::os::fd::AsRawFd;
+
+    let mut socket = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 4096];
+    for (send, expect) in [("", "220 mx.test ESMTP\r\n"), ("EHLO c\r\n", "250 SIZE 1048576\r\n")] {
+        socket.write_all(send.as_bytes()).await.unwrap();
+        while !seen.ends_with(expect.as_bytes()) {
+            let read = socket.read(&mut chunk).await.unwrap();
+            assert!(read > 0, "the server hung up early");
+            seen.extend_from_slice(&chunk[..read]);
+        }
+    }
+    seen.clear();
+
+    let on: libc::c_int = 1;
+    // SAFETY: the descriptor is this open socket's, and the option value is
+    // a c_int that outlives the call.
+    let failed = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_CORK,
+            std::ptr::from_ref(&on).cast(),
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    } != 0;
+    assert!(!failed, "TCP_CORK could not be set");
+    socket.write_all(commands.as_bytes()).await.unwrap();
+    // The FIN leaves with the corked data.
+    socket.shutdown().await.unwrap();
+    socket.read_to_end(&mut seen).await.unwrap();
+    String::from_utf8(seen).unwrap()
+}
+
+#[tokio::test]
+async fn answers_every_command_of_a_client_whose_fin_arrives_with_them() {
+    let started = start().await;
+    let session = format!("MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\n{MESSAGE}.\r\nNOOP\r\nQUIT\r\n");
+    assert_eq!(
+        send_with_the_fin(started.port, &session).await,
+        "250 Accepted\r\n250 Accepted\r\n354 End data with <CR><LF>.<CR><LF>\r\n250 OK: message queued\r\n250 OK\r\n221 Bye\r\n"
+    );
+    let delivery = started.delivery(0);
+    assert!(delivery.ended);
+    assert_eq!(delivery.data, MESSAGE.as_bytes());
+}
+
+#[tokio::test]
+async fn says_nothing_more_once_the_fin_is_reached_while_a_hook_is_still_running() {
+    let gate = Arc::new(Notify::new());
+    let handler = TestHandler { on_data: OnData::Gate(gate.clone()), ..Default::default() };
+    let started = start_with(handler, |_| {}).await;
+    let session = format!("MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\n{MESSAGE}.\r\nNOOP\r\nQUIT\r\n");
+    // The message is read in full, but the hook has not answered when the
+    // client's FIN is reached.
+    assert_eq!(
+        send_with_the_fin(started.port, &session).await,
+        "250 Accepted\r\n250 Accepted\r\n354 End data with <CR><LF>.<CR><LF>\r\n"
+    );
+    gate.notify_one();
+    let delivery = started.delivery(0);
+    assert!(delivery.ended);
+    assert_eq!(delivery.data, MESSAGE.as_bytes());
+}
+
 // ── SMTP reply backpressure ────────────────────────────────────────────────
 
 /// Counts the reply lines arriving on `socket` until it closes or `stop` is told.

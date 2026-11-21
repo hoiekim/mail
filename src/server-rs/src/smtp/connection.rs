@@ -20,7 +20,9 @@
 //! - The client's FIN is acted on as soon as it is the next thing in the
 //!   socket, even while a hook is running: the connection is over, the
 //!   hook's answer goes nowhere, and lines not yet handled are dropped. The
-//!   hook itself still runs to its end.
+//!   hook itself still runs to its end. A FIN that arrived, behind more
+//!   commands, while the socket was not being read is acted on right after
+//!   the first of those commands that calls a hook.
 
 use std::any::Any;
 use std::future::Future;
@@ -385,8 +387,9 @@ pub(crate) struct Connection {
     /// A hook answered on the spot; the command loop picks up after it.
     resume_pending: bool,
     pending: BytesMut,
-    /// Read off the socket while the connection could not take it.
-    lookahead: Option<Bytes>,
+    /// Read off the socket while the connection could not take it, or (the
+    /// flag unset) read ahead of its turn.
+    lookahead: Option<(Bytes, bool)>,
     next_line: Option<NextLine>,
     unrecognized: u32,
     transaction_count: u64,
@@ -485,8 +488,8 @@ impl Connection {
                 continue;
             }
             if self.flowing() {
-                if let Some(chunk) = self.lookahead.take() {
-                    self.on_chunk(chunk, &mut buffer);
+                if let Some((chunk, held_back)) = self.lookahead.take() {
+                    self.on_chunk(chunk, held_back, &mut buffer);
                     continue;
                 }
             }
@@ -595,9 +598,9 @@ impl Connection {
             IoEvent::Read(Ok(read)) => {
                 let chunk = Bytes::copy_from_slice(&buffer[..read]);
                 if self.flowing() {
-                    self.on_chunk(chunk, buffer);
+                    self.on_chunk(chunk, false, buffer);
                 } else {
-                    self.lookahead = Some(chunk);
+                    self.lookahead = Some((chunk, true));
                 }
             }
             IoEvent::Read(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => self.on_eof(),
@@ -649,8 +652,9 @@ impl Connection {
         self.data.as_ref().is_some_and(|data| data.unstuffer.is_some())
     }
 
-    /// One read's worth of what the client sent.
-    fn on_chunk(&mut self, chunk: Bytes, buffer: &mut [u8]) {
+    /// One read's worth of what the client sent. `held_back` is set for a
+    /// read that waited for the connection to take it.
+    fn on_chunk(&mut self, chunk: Bytes, held_back: bool, buffer: &mut [u8]) {
         self.touch();
         if self.in_data() {
             self.feed_data(chunk);
@@ -658,14 +662,15 @@ impl Connection {
             self.pending.extend_from_slice(&chunk);
             self.pump();
         }
-        // A FIN directly behind the data is acted on before anything that
-        // was waiting on the data continues.
-        if self.upgrading.is_none() && !self.closed && self.lookahead.is_none() && !self.eof {
+        // Bun hands over what piled up while it was not reading in one go:
+        // a FIN behind it is acted on before anything that waited on the
+        // data continues. Read as it arrives, the data is finished with first.
+        if held_back && self.upgrading.is_none() && !self.closed && self.lookahead.is_none() && !self.eof {
             let mut cx = noop_context();
             let mut read = ReadBuf::new(buffer);
             match Pin::new(&mut self.io).poll_read(&mut cx, &mut read) {
                 Poll::Ready(Ok(())) if read.filled().is_empty() => self.on_end(),
-                Poll::Ready(Ok(())) => self.lookahead = Some(Bytes::copy_from_slice(read.filled())),
+                Poll::Ready(Ok(())) => self.lookahead = Some((Bytes::copy_from_slice(read.filled()), false)),
                 Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => self.on_end(),
                 // The error is still there for the next read.
                 Poll::Ready(Err(_)) | Poll::Pending => {}

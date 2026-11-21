@@ -1284,6 +1284,48 @@ export const conversations: Conversation[] = [
     reply(),
     closed()
   ]),
+  conversation("the client half-closes right behind a whole session", [
+    hello(),
+    send(`MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\n${MESSAGE}.\r\nNOOP\r\nQUIT\r\n`),
+    end(),
+    { replies: 6 },
+    closed()
+  ]),
+  conversation("the client half-closes right behind commands that call hooks", [
+    hello(),
+    send("NOOP\r\nMAIL FROM:<a@x.org>\r\nNOOP\r\nRCPT TO:<b@y.org>\r\nRCPT TO:<nobody@y.org>\r\nRSET\r\n"),
+    end(),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    closed()
+  ]),
+  conversation("the client half-closes right behind a session with a slow hook", [
+    hello(),
+    send(`MAIL FROM:<a@x.org>\r\nRCPT TO:<slow@y.org>\r\nDATA\r\n${MESSAGE}.\r\nQUIT\r\n`),
+    end(),
+    reply(),
+    closed(),
+    wait(350)
+  ]),
+  conversation("the client half-closes right behind a message, slow DATA hook", [
+    inData("slowdata@x.org"),
+    send(`${MESSAGE}.\r\nQUIT\r\n`),
+    end(),
+    closed(),
+    wait(350)
+  ]),
+  conversation("the client half-closes right behind a refused DATA", [
+    inData("relay@x.org"),
+    send(`${MESSAGE}.\r\nNOOP\r\n`),
+    end(),
+    reply(),
+    reply(),
+    closed()
+  ]),
   conversation("the client half-closes during a slow hook", [
     hello(),
     send("MAIL FROM:<slow@x.org>\r\n"),

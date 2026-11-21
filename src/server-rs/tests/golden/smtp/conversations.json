@@ -6462,6 +6462,188 @@
   "calls": []
  },
  {
+  "name": "the client half-closes right behind a whole session",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\nSubject: hi\r\n\r\nbody\r\n.\r\nNOOP\r\nQUIT\r\n"},
+   {"end":true},
+   {"replies":6},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   null,
+   "6 replies sha256:926c9db0db5672964e52049cb8f1d42c519c60808395d853c7eb3c7c5adc173e",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null},"data":"Subject: hi\r\n\r\nbody\r\n","ended":true}
+  ]
+ },
+ {
+  "name": "the client half-closes right behind commands that call hooks",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"NOOP\r\nMAIL FROM:<a@x.org>\r\nNOOP\r\nRCPT TO:<b@y.org>\r\nRCPT TO:<nobody@y.org>\r\nRSET\r\n"},
+   {"end":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   null,
+   "250 OK",
+   "250 Accepted",
+   "250 OK",
+   "250 Accepted",
+   "550 5.1.1 Error: no such mailbox here",
+   "250 Flushed",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"nobody@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ]
+ },
+ {
+  "name": "the client half-closes right behind a session with a slow hook",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<a@x.org>\r\nRCPT TO:<slow@y.org>\r\nDATA\r\nSubject: hi\r\n\r\nbody\r\n.\r\nQUIT\r\n"},
+   {"end":true},
+   {"reply":true},
+   {"closed":true},
+   {"wait":350}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   null,
+   "250 Accepted",
+   "closed",
+   null
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"slow@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ]
+ },
+ {
+  "name": "the client half-closes right behind a message, slow DATA hook",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<slowdata@x.org>\r\n"},
+   {"reply":true},
+   {"send":"RCPT TO:<b@y.org>\r\n"},
+   {"reply":true},
+   {"send":"DATA\r\n"},
+   {"reply":true},
+   {"send":"Subject: hi\r\n\r\nbody\r\n.\r\nQUIT\r\n"},
+   {"end":true},
+   {"closed":true},
+   {"wait":350}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "250 Accepted",
+   null,
+   "250 Accepted",
+   null,
+   "354 End data with <CR><LF>.<CR><LF>",
+   null,
+   null,
+   "closed",
+   null
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"slowdata@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"slowdata@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"slowdata@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null},"data":"Subject: hi\r\n\r\nbody\r\n","ended":true}
+  ]
+ },
+ {
+  "name": "the client half-closes right behind a refused DATA",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<relay@x.org>\r\n"},
+   {"reply":true},
+   {"send":"RCPT TO:<b@y.org>\r\n"},
+   {"reply":true},
+   {"send":"DATA\r\n"},
+   {"reply":true},
+   {"send":"Subject: hi\r\n\r\nbody\r\n.\r\nNOOP\r\n"},
+   {"end":true},
+   {"reply":true},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "250 Accepted",
+   null,
+   "250 Accepted",
+   null,
+   "354 End data with <CR><LF>.<CR><LF>",
+   null,
+   null,
+   "550 Error: relay access denied",
+   "250 OK",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"relay@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"relay@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"relay@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null},"data":null,"ended":null}
+  ]
+ },
+ {
   "name": "the client half-closes during a slow hook",
   "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
   "steps": [
