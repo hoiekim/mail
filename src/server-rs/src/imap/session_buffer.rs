@@ -46,6 +46,18 @@ fn find_crlf_in(bytes: &[u8], from: usize) -> Option<usize> {
     bytes[from..].windows(2).position(|pair| pair == [CR, LF]).map(|at| at + from)
 }
 
+/// What a buffer has cost so far. The buffer exists to bound these, so its
+/// tests assert them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BufferCost {
+    /// Times held octets were copied into a new block.
+    pub copies: u64,
+    /// Octets those copies moved.
+    pub copied_bytes: u64,
+    /// Held segments the terminator search stepped onto.
+    pub segment_steps: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct SessionBuffer {
     /// Contiguous block; its unread octets start at `cursor`.
@@ -64,6 +76,7 @@ pub struct SessionBuffer {
     /// entry at a time, `O(#segments)` per arriving segment.
     scan_index: usize,
     scan_base: usize,
+    cost: BufferCost,
 }
 
 impl SessionBuffer {
@@ -80,6 +93,16 @@ impl SessionBuffer {
         self.len() == 0
     }
 
+    /// The copying and walking done since the buffer was created.
+    pub fn cost(&self) -> BufferCost {
+        self.cost
+    }
+
+    /// Size of the contiguous block being held, read octets included.
+    pub fn retained_block_len(&self) -> usize {
+        self.block.len()
+    }
+
     pub fn push(&mut self, segment: impl Into<Bytes>) {
         let segment: Bytes = segment.into();
         if segment.is_empty() {
@@ -93,7 +116,7 @@ impl SessionBuffer {
     }
 
     pub fn clear(&mut self) {
-        *self = SessionBuffer::default();
+        *self = SessionBuffer { cost: self.cost, ..SessionBuffer::default() };
     }
 
     /// Index of the first CRLF among the unread octets, relative to the first
@@ -167,6 +190,7 @@ impl SessionBuffer {
         if self.cursor * 2 >= self.block.len() {
             self.block = self.rebuild(false);
             self.cursor = 0;
+            self.count_copy(self.block.len());
         }
     }
 
@@ -196,6 +220,7 @@ impl SessionBuffer {
         while index < self.segments.len() {
             stopped_at = index;
             stopped_base = base;
+            self.cost.segment_steps += 1;
             let segment = &self.segments[index];
             let end = base + segment.len();
             if end <= from {
@@ -228,6 +253,7 @@ impl SessionBuffer {
         for segment in &run {
             merged.extend_from_slice(segment);
         }
+        self.count_copy(merged.len());
         self.segments.push_back(merged.freeze());
         self.merged_runs = self.segments.len();
         // The entries the run collapsed into are gone, so a resume point
@@ -243,11 +269,17 @@ impl SessionBuffer {
         }
         self.block = self.rebuild(true);
         self.cursor = 0;
+        self.count_copy(self.block.len());
         self.segments.clear();
         self.segment_bytes = 0;
         self.merged_runs = 0;
         self.scan_index = 0;
         self.scan_base = self.block.len();
+    }
+
+    fn count_copy(&mut self, bytes: usize) {
+        self.cost.copies += 1;
+        self.cost.copied_bytes += bytes as u64;
     }
 
     /// The unread octets, followed by the held segments when `with_segments`,
