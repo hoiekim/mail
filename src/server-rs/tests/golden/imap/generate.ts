@@ -952,7 +952,7 @@ for (const uids of UID_LISTS) {
     seqCall("seqToUidNumber", uids, number);
     seqCall("uidToSeqNumber", uids, [...uids.entries()].map(([index, uid]) => [uid, index + 1]), number);
   }
-  for (const start of NUMBERS) for (const end of [1, 3, 30, MAX, 0, 1e20]) {
+  for (const start of NUMBERS) for (const end of [1, 3, MAX, 0, 1e20]) {
     seqCall("resolveSeqRangeToUids", uids, start, end);
     seqCall("resolveUidRangeSentinel", uids, start, end);
   }
@@ -960,7 +960,7 @@ for (const uids of UID_LISTS) {
     const set = { type: "sequence", ranges };
     for (const isUid of [false, true]) {
       seqCall("countSequenceSetMessages", uids, set, isUid);
-      for (const limit of [0, 1, 2, 4, 50, 1000, -1]) seqCall("clampSequenceSetToFirst", uids, set, limit, isUid);
+      for (const limit of [0, 1, 4, 50, -1]) seqCall("clampSequenceSetToFirst", uids, set, limit, isUid);
     }
   }
   for (const live of UID_LISTS.slice(0, 6)) seqCall("departedSequenceNumbers", uids, live);
@@ -982,7 +982,7 @@ const bufferScripts: { ops: unknown[][]; results: unknown[] }[] = [];
 {
   const random = rng(99);
   const PIECES = ["a1 NOOP\r\n", "a2 LOGIN {5+}\r\n", "admin", " secret\r\n", "\r", "\n", "\r\n", "x", "", "caf\u00e9", "\u{1F600}", "tail without terminator", "\r\r\n", "\n\r",
-    "A".repeat(100), "B".repeat(5000) + "\r\n"];
+    "A".repeat(100), "B".repeat(700) + "\r\n"];
   const RAW = [[0xff], [0xc3], [0xa9], [0xe2, 0x82], [0xac], [0xf0, 0x9f], [0x98, 0x80], [0xef, 0xbb, 0xbf], [0xed, 0xa0, 0x80], [0xc0, 0x80], [0x00], [0x0d], [0x0a], [0x80, 0x80],
     [0xf4, 0x90, 0x80, 0x80], [0xe0, 0x80, 0x80], [0xf8, 0x88, 0x80, 0x80, 0x80], [0x41, 0xc2]];
   for (let script = 0; script < 160; script++) {

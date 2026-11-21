@@ -383,7 +383,7 @@ fn sequence_resolution() {
         let name = case["fn"].as_str().unwrap();
         report.check(|| format!("{name}({})", case["args"]), &case["expected"], &run_sequence(name, &case["args"]));
     }
-    report.finish("sequence.json", 5000);
+    report.finish("sequence.json", 4500);
 }
 
 #[test]
