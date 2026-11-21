@@ -41,12 +41,11 @@ async fn start() -> anyhow::Result<()> {
     push::init_push()?;
     let http_server = http::initialize_http().await?;
     placeholder_listener("SMTP_PORT", 25, false).await?;
-    placeholder_listener("IMAP_PORT", 143, false).await?;
     if mail_server::tls::is_tls_available() {
         placeholder_listener("SMTPS_PORT", 465, true).await?;
         placeholder_listener("SMTP_SUBMISSION_PORT", 587, false).await?;
-        placeholder_listener("IMAP_TLS_PORT", 993, true).await?;
     }
+    let imap_servers = mail_server::imap::initialize_imap().await?;
     push::clean_subscriptions();
 
     // Index builds and the search-vector reindex scale with the size of
@@ -68,6 +67,17 @@ async fn start() -> anyhow::Result<()> {
 
     http_server.stop().await;
     println!("HTTP server closed");
+
+    // Notify IDLE clients and stop the heartbeat before closing sockets.
+    mail_server::imap::idle_manager::shutdown();
+    println!("IDLE sessions cleaned up");
+
+    // IMAP sends BYE to every session and tears it down.
+    if mail_server::imap::close_imap_servers(imap_servers).await {
+        println!("IMAP servers closed");
+    } else {
+        println!("IMAP servers did not drain in time; continuing shutdown");
+    }
 
     let _ = maintenance.await;
     println!("Boot maintenance stopped");
