@@ -6590,6 +6590,607 @@
   ]
  },
  {
+  "name": "the client half-closes over TLS while idle",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"send":"EHLO client.test\r\n"},
+   {"reply":true},
+   {"end":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "the client half-closes over TLS after QUIT",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"send":"QUIT\r\n"},
+   {"reply":true},
+   {"closed":true},
+   {"end":true}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   "221 Bye",
+   "closed",
+   null
+  ],
+  "calls": []
+ },
+ {
+  "name": "the client half-closes over TLS behind its commands",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"send":"EHLO client.test\r\nNOOP\r\nQUIT\r\n"},
+   {"wait":100},
+   {"end":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   null,
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   "250 OK",
+   "221 Bye",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "the client half-closes over TLS during a slow hook",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"send":"EHLO client.test\r\n"},
+   {"reply":true},
+   {"send":"MAIL FROM:<slow@x.org>\r\n"},
+   {"wait":100},
+   {"end":true},
+   {"closed":true},
+   {"wait":350}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   null,
+   null,
+   "closed",
+   null
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"slow@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":true,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ]
+ },
+ {
+  "name": "the client half-closes over TLS in the middle of a message",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"send":"EHLO client.test\r\n"},
+   {"reply":true},
+   {"send":"MAIL FROM:<a@x.org>\r\n"},
+   {"reply":true},
+   {"send":"RCPT TO:<b@y.org>\r\n"},
+   {"reply":true},
+   {"send":"DATA\r\n"},
+   {"reply":true},
+   {"send":"Subject: partial\r\n\r\nsome of the bo"},
+   {"wait":100},
+   {"end":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "250 Accepted",
+   null,
+   "250 Accepted",
+   null,
+   "354 End data with <CR><LF>.<CR><LF>",
+   null,
+   null,
+   null,
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":true,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":true,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":true,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null},"data":"Subject: partial\r\n\r\nsome of the bo","ended":false}
+  ]
+ },
+ {
+  "name": "the client half-closes after STARTTLS",
+  "server": {"secure":false,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"STARTTLS\r\n"},
+   {"reply":true},
+   {"tls":true},
+   {"send":"EHLO client.test\r\n"},
+   {"reply":true},
+   {"end":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250-STARTTLS\r\n250 SIZE 1048576",
+   null,
+   "220 Ready to start TLS",
+   "secure",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "STARTTLS and then nothing until the timeout",
+  "server": {"secure":false,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":300},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"STARTTLS\r\n"},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250-STARTTLS\r\n250 SIZE 1048576",
+   null,
+   "220 Ready to start TLS",
+   "closed"
+  ],
+  "calls": [],
+  "errors": []
+ },
+ {
+  "name": "a credential rotated after STARTTLS forgot the user",
+  "server": {"secure":false,"tls":true,"proxyProtocol":false,"allowInsecureAuth":true,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"AUTH PLAIN AGV2aWN0LXRscwBwYXNz\r\n"},
+   {"reply":true},
+   {"send":"STARTTLS\r\n"},
+   {"reply":true},
+   {"tls":true},
+   {"send":"NOOP\r\n"},
+   {"reply":true},
+   {"evict":"evict-tls"},
+   {"send":"NOOP\r\n"},
+   {"reply":true},
+   {"send":"EHLO client.test\r\n"},
+   {"reply":true},
+   {"send":"AUTH PLAIN AGV2aWN0LXRscwBwYXNz\r\n"},
+   {"reply":true},
+   {"evict":"evict-tls"},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250-STARTTLS\r\n250 SIZE 1048576",
+   null,
+   "235 Authentication successful",
+   null,
+   "220 Ready to start TLS",
+   "secure",
+   null,
+   "250 OK",
+   0,
+   null,
+   "250 OK",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "235 Authentication successful",
+   1,
+   "421 Credential changed, please re-authenticate",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onAuth","method":"PLAIN","username":"evict-tls","password":"pass","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onAuth","method":"PLAIN","username":"evict-tls","password":"pass","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":true,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":1}}
+  ]
+ },
+ {
+  "name": "a rotated credential over implicit TLS",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"send":"EHLO client.test\r\n"},
+   {"reply":true},
+   {"send":"AUTH LOGIN ZXZpY3QtaW1wbGljaXQ=\r\n"},
+   {"reply":true},
+   {"send":"cGFzcw==\r\n"},
+   {"reply":true},
+   {"evict":"evict-implicit"},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "334 UGFzc3dvcmQ6",
+   null,
+   "235 Authentication successful",
+   1,
+   "421 Credential changed, please re-authenticate",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onAuth","method":"LOGIN","username":"evict-implicit","password":"pass","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":true,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ]
+ },
+ {
+  "name": "shutdown over implicit TLS",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":300,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"tls":true},
+   {"reply":true},
+   {"server":"close"},
+   {"reply":true},
+   {"closed":true},
+   {"server":"closed","within":300}
+  ],
+  "observed": [
+   null,
+   "secure",
+   "220 mx.test ESMTP",
+   null,
+   "421 Server shutting down",
+   "closed",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "the idle timeout with half a line sent",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":300},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"NOOP"},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "421 Timeout - closing connection",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "the idle timeout before the greeting is read",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":150},
+  "steps": [
+   {"open":"c"},
+   {"reply":true},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   "421 Timeout - closing connection",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "QUIT twice in one write",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"QUIT\r\nQUIT\r\nNOOP\r\n"},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "221 Bye",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "commands behind an HTTP request line",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"GET / HTTP/1.1\r\nHost: x\r\nNOOP\r\n"},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "421 HTTP requests not allowed",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "commands behind the tenth unrecognized one",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"XYZ0\r\nXYZ1\r\nXYZ2\r\nXYZ3\r\nXYZ4\r\nXYZ5\r\nXYZ6\r\nXYZ7\r\nXYZ8\r\nXYZ9\r\nXYZ10\r\nXYZ11\r\nNOOP\r\n"},
+   {"replies":10},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "10 replies sha256:c912da73a030d3572208f88ebb281d7992b6acaf16ede9fd0cd7ba283ba1ba2c",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "an AUTH LOGIN exchange in one write",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":true,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"AUTH LOGIN\r\ndXNlcg==\r\ncGFzcw==\r\nMAIL FROM:<a@x.org>\r\nNOOP\r\n"},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "334 VXNlcm5hbWU6",
+   "334 UGFzc3dvcmQ6",
+   "235 Authentication successful",
+   "250 Accepted",
+   "250 OK"
+  ],
+  "calls": [
+   {"hook":"onAuth","method":"LOGIN","username":"user","password":"pass","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":"user","hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":3}}
+  ]
+ },
+ {
+  "name": "an AUTH PLAIN exchange in one write, cancelled",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":true,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"AUTH PLAIN\r\n*\r\nAUTH PLAIN\r\nAHNsb3cAeA==\r\nNOOP\r\nAUTH PLAIN\r\n"},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true},
+   {"silence":150},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "334 ",
+   "501 Authentication aborted",
+   "334 ",
+   "silence",
+   "235 Authentication successful",
+   "250 OK",
+   "503 Error: No identity changes permitted"
+  ],
+  "calls": [
+   {"hook":"onAuth","method":"PLAIN","username":"slow","password":"x","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ]
+ },
+ {
+  "name": "a 421 from a hook in the middle of a pipeline",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<a@x.org>\r\nRCPT TO:<gone@y.org>\r\nRCPT TO:<b@y.org>\r\nNOOP\r\n"},
+   {"reply":true},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "250 Accepted",
+   "421 4.4.2 Credential changed, please re-authenticate",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"gone@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ]
+ },
+ {
+  "name": "a line too long in the middle of a pipeline",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"NOOP\r\nNOOP xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\nMAIL FROM:<a@x.org>\r\nNOOP\r\n"},
+   {"reply":true},
+   {"reply":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "250 OK",
+   "421 Error: line too long",
+   "closed"
+  ],
+  "calls": []
+ },
+ {
+  "name": "DATA refused early, then the next transaction in the same write",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<relay@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\nSubject: hi\r\n\r\nbody\r\n.\r\nMAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\nSubject: hi\r\n\r\nbody\r\n.\r\nQUIT\r\n"},
+   {"replies":9},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "9 replies sha256:966cd52a26763813fa027474addb105b57ed52198374d9bd9186d46188eee711",
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"relay@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"relay@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"relay@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null},"data":null,"ended":null},
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":2,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":2,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":2,"passwordVersion":null},"data":"Subject: hi\r\n\r\nbody\r\n","ended":true}
+  ]
+ },
+ {
+  "name": "an empty message and the next command in one write",
+  "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<a@x.org>\r\n"},
+   {"reply":true},
+   {"send":"RCPT TO:<b@y.org>\r\n"},
+   {"reply":true},
+   {"send":"DATA\r\n.\r\nNOOP\r\n"},
+   {"reply":true},
+   {"reply":true},
+   {"reply":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250 SIZE 1048576",
+   null,
+   "250 Accepted",
+   null,
+   "250 Accepted",
+   null,
+   "354 End data with <CR><LF>.<CR><LF>",
+   "250 OK: message queued",
+   "250 OK"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onData","session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[{"address":"b@y.org","args":false}],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null},"data":"","ended":true}
+  ]
+ },
+ {
   "name": "twenty thousand commands in one write",
   "server": {"secure":false,"tls":false,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
   "steps": [

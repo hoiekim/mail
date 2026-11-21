@@ -108,6 +108,7 @@ const conversation = (name: string, steps: Steps, server?: ServerSpec, extra?: P
 const TLS: ServerSpec = { tls: true };
 const AUTH: ServerSpec = { allowInsecureAuth: true };
 const PROXY: ServerSpec = { proxyProtocol: true };
+const IMPLICIT: ServerSpec = { tls: true, secure: true };
 const PROXY_V4 = "PROXY TCP4 203.0.113.7 10.0.0.2 51000 25\r\n";
 
 export const conversations: Conversation[] = [
@@ -1319,6 +1320,151 @@ export const conversations: Conversation[] = [
     wait(100),
     destroy(),
     wait(350)
+  ]),
+
+  // ── The client's FIN, over TLS ──────────────────────────────────────────
+  conversation("the client half-closes over TLS while idle", [open(), startTls(), reply(), cmd(EHLO), end(), closed()], IMPLICIT),
+  conversation("the client half-closes over TLS after QUIT", [open(), startTls(), reply(), cmd("QUIT"), closed(), end()], IMPLICIT),
+  conversation("the client half-closes over TLS behind its commands", [
+    open(),
+    startTls(),
+    reply(),
+    send("EHLO client.test\r\nNOOP\r\nQUIT\r\n"),
+    wait(100),
+    end(),
+    reply(),
+    reply(),
+    reply(),
+    closed()
+  ], IMPLICIT),
+  conversation("the client half-closes over TLS during a slow hook", [
+    open(),
+    startTls(),
+    reply(),
+    cmd(EHLO),
+    send("MAIL FROM:<slow@x.org>\r\n"),
+    wait(100),
+    end(),
+    closed(),
+    wait(350)
+  ], IMPLICIT),
+  conversation("the client half-closes over TLS in the middle of a message", [
+    open(),
+    startTls(),
+    reply(),
+    cmd(EHLO),
+    cmd("MAIL FROM:<a@x.org>"),
+    cmd("RCPT TO:<b@y.org>"),
+    cmd("DATA"),
+    send("Subject: partial\r\n\r\nsome of the bo"),
+    wait(100),
+    end(),
+    closed()
+  ], IMPLICIT),
+  conversation("the client half-closes after STARTTLS", [hello(), cmd("STARTTLS"), startTls(), cmd(EHLO), end(), closed()], TLS),
+
+  // ── More of TLS, timeouts and eviction ──────────────────────────────────
+  conversation("STARTTLS and then nothing until the timeout", [hello(), cmd("STARTTLS"), closed()], {
+    tls: true,
+    socketTimeout: 300
+  }, { errors: true }),
+  conversation("a credential rotated after STARTTLS forgot the user", [
+    hello(),
+    cmd(`AUTH PLAIN ${plain("evict-tls", "pass")}`),
+    cmd("STARTTLS"),
+    startTls(),
+    // One exchange first: the client is done with the handshake a moment
+    // before the server is, and until then the server still knows the user.
+    cmd("NOOP"),
+    { evict: "evict-tls" },
+    cmd("NOOP"),
+    cmd(EHLO),
+    cmd(`AUTH PLAIN ${plain("evict-tls", "pass")}`),
+    { evict: "evict-tls" },
+    reply(),
+    closed()
+  ], { tls: true, allowInsecureAuth: true }),
+  conversation("a rotated credential over implicit TLS", [
+    open(),
+    startTls(),
+    reply(),
+    cmd(EHLO),
+    cmd(`AUTH LOGIN ${b64("evict-implicit")}`),
+    cmd(b64("pass")),
+    { evict: "evict-implicit" },
+    reply(),
+    closed()
+  ], IMPLICIT),
+  conversation("shutdown over implicit TLS", [
+    open(),
+    startTls(),
+    reply(),
+    { server: "close" },
+    reply(),
+    closed(),
+    { server: "closed", within: 300 }
+  ], { tls: true, secure: true, closeTimeout: 300 }),
+  conversation("the idle timeout with half a line sent", [greeted(), send("NOOP"), reply(), closed()], { socketTimeout: 300 }),
+  conversation("the idle timeout before the greeting is read", [open(), reply(), reply(), closed()], { socketTimeout: 150 }),
+
+  // ── More pipelining ─────────────────────────────────────────────────────
+  conversation("QUIT twice in one write", [hello(), send("QUIT\r\nQUIT\r\nNOOP\r\n"), reply(), closed()]),
+  conversation("commands behind an HTTP request line", [greeted(), send("GET / HTTP/1.1\r\nHost: x\r\nNOOP\r\n"), reply(), closed()]),
+  conversation("commands behind the tenth unrecognized one", [
+    greeted(),
+    send(Array.from({ length: 12 }, (_, i) => `XYZ${i}\r\n`).join("") + "NOOP\r\n"),
+    { replies: 10 },
+    closed()
+  ]),
+  conversation("an AUTH LOGIN exchange in one write", [
+    hello(),
+    send(`AUTH LOGIN\r\n${b64("user")}\r\n${b64("pass")}\r\nMAIL FROM:<a@x.org>\r\nNOOP\r\n`),
+    reply(),
+    reply(),
+    reply(),
+    reply(),
+    reply()
+  ], AUTH),
+  conversation("an AUTH PLAIN exchange in one write, cancelled", [
+    hello(),
+    send(`AUTH PLAIN\r\n*\r\nAUTH PLAIN\r\n${plain("slow", "x")}\r\nNOOP\r\nAUTH PLAIN\r\n`),
+    reply(),
+    reply(),
+    reply(),
+    silence(150),
+    reply(),
+    reply(),
+    reply()
+  ], AUTH),
+  conversation("a 421 from a hook in the middle of a pipeline", [
+    hello(),
+    send("MAIL FROM:<a@x.org>\r\nRCPT TO:<gone@y.org>\r\nRCPT TO:<b@y.org>\r\nNOOP\r\n"),
+    reply(),
+    reply(),
+    closed()
+  ]),
+  conversation("a line too long in the middle of a pipeline", [
+    hello(),
+    send(`NOOP\r\nNOOP ${"x".repeat(17000)}\r\nMAIL FROM:<a@x.org>\r\nNOOP\r\n`),
+    reply(),
+    reply(),
+    closed()
+  ]),
+  conversation("DATA refused early, then the next transaction in the same write", [
+    hello(),
+    send(
+      `MAIL FROM:<relay@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\n${MESSAGE}.\r\n` +
+        `MAIL FROM:<a@x.org>\r\nRCPT TO:<b@y.org>\r\nDATA\r\n${MESSAGE}.\r\nQUIT\r\n`
+    ),
+    { replies: 9 },
+    closed()
+  ]),
+  conversation("an empty message and the next command in one write", [
+    envelope(),
+    send("DATA\r\n.\r\nNOOP\r\n"),
+    reply(),
+    reply(),
+    reply()
   ]),
 
   // ── Floods ──────────────────────────────────────────────────────────────
