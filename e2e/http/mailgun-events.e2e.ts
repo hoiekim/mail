@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
-import { startServer, waitFor, type ApiResult, type TestServer } from "../harness";
+import { waitFor, type ApiResult, type TestServer } from "../harness";
+import { startServer } from "./core-helpers";
 import { JSON_TYPE, NOT_FOUND, eventId, mailgunSignature } from "./core-helpers";
 
 /** Made up for this run; it signs nothing outside it. */

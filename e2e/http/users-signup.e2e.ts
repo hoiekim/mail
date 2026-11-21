@@ -4,12 +4,12 @@ import {
   MAILGUN_KEY,
   adminUser,
   createUser,
-  startServer,
   waitFor,
   type MailgunRequest,
   type TestServer,
   type TestUser,
 } from "../harness";
+import { startServer } from "./core-helpers";
 import {
   INTERNAL_ERROR,
   INVALID_BODY,

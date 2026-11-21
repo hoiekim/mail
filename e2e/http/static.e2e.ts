@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { ADMIN_PASSWORD, CLIENT_DIR, rawHttp, startServer, type RawResponse, type TestServer } from "../harness";
+import { ADMIN_PASSWORD, CLIENT_DIR, rawHttp, type RawResponse, type TestServer } from "../harness";
+import { startServer } from "./core-helpers";
 import { TEXT_TYPE, expectedSecurityHeaders, rawRequest, securityHeadersOf, sessionIdOf, sessionIdOfValue, parseSetCookie } from "./core-helpers";
 
 /**

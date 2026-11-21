@@ -6,7 +6,48 @@
 import crypto from "crypto";
 import { SQL } from "bun";
 import { expect } from "bun:test";
-import { POSTGRES, waitFor, type ApiClient, type ApiResult, type TestServer } from "../harness";
+import {
+  POSTGRES,
+  startServer as startHarnessServer,
+  waitFor,
+  type ApiClient,
+  type ApiResult,
+  type ServerOptions,
+  type TestServer,
+} from "../harness";
+
+const PORT_TAKEN = /EADDRINUSE|address already in use/i;
+
+/**
+ * `startServer` of the harness, started again when the server could not bind
+ * one of its ports. The harness picks ports that are free at that moment and
+ * hands them to a process that binds them a little later; now and then
+ * something else (a stub, an outgoing connection of the test run itself) is
+ * given the same number in between. That is no fault of the server under
+ * test, so the boot is repeated — on fresh ports for a first start, on the
+ * same ones for a restart.
+ */
+export const startServer = async (options: ServerOptions = {}): Promise<TestServer> => {
+  let server: TestServer | undefined;
+  for (let attempt = 1; server === undefined; attempt++) {
+    try {
+      server = await startHarnessServer(options);
+    } catch (error) {
+      if (attempt >= 4 || !PORT_TAKEN.test(String(error))) throw error;
+    }
+  }
+  const restart = server.restart;
+  server.restart = async (env) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await restart(env);
+      } catch (error) {
+        if (attempt >= 4 || !PORT_TAKEN.test(String(error))) throw error;
+      }
+    }
+  };
+  return server;
+};
 
 export const CONTENT_SECURITY_POLICY =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +

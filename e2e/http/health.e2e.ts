@@ -2,14 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import {
-  ADMIN_PASSWORD,
-  generateCertificate,
-  rawHttp,
-  startServer,
-  waitFor,
-  type TestServer,
-} from "../harness";
+import { ADMIN_PASSWORD, generateCertificate, rawHttp, waitFor, type TestServer } from "../harness";
+import { startServer } from "./core-helpers";
 import {
   INTERNAL_ERROR,
   JSON_TYPE,

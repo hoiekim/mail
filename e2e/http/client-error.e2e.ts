@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { startServer, type Alarm, type ApiResult, type TestServer } from "../harness";
+import { type Alarm, type ApiResult, type TestServer } from "../harness";
+import { startServer } from "./core-helpers";
 import { JSON_TYPE, NOT_FOUND } from "./core-helpers";
 
 const TITLE = "🚨 Mail Server Error: Client JS Error";

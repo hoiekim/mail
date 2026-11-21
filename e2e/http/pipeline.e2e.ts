@@ -2,15 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import net from "net";
 import zlib from "zlib";
-import {
-  ADMIN_PASSWORD,
-  CLIENT_DIR,
-  rawHttp,
-  startServer,
-  type ApiClient,
-  type RawResponse,
-  type TestServer,
-} from "../harness";
+import { ADMIN_PASSWORD, CLIENT_DIR, rawHttp, type ApiClient, type RawResponse, type TestServer } from "../harness";
+import { startServer } from "./core-helpers";
 import fs from "fs";
 import path from "path";
 import {
