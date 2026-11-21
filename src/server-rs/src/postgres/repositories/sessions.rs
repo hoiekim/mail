@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::json;
 
-use crate::models::{RuntimeCookie, RuntimeSession, SameSite, SignedUser, SsoSession};
+use crate::models::{RuntimeCookie, RuntimeSession, SignedUser, SsoSession};
 use crate::postgres::repositories::users::find_user_model_by_id;
 use crate::postgres::{pool, DbError, Param, Row};
 use crate::{js, logger, params};
@@ -67,24 +67,16 @@ pub async fn search_session(session_id: &str) -> Result<Option<SessionModel>, Db
     Ok(result.rows.first().map(SessionModel::from_row))
 }
 
-/// `JSON.stringify` of the cookie's `sameSite`, the form the column stores.
-fn stored_same_site(same_site: &SameSite) -> Option<String> {
-    match same_site {
-        SameSite::Strict => Some("\"strict\"".into()),
-        SameSite::Lax => Some("\"lax\"".into()),
-        SameSite::None => Some("\"none\"".into()),
-        SameSite::True => Some("true".into()),
-        SameSite::Unset => None,
-    }
-}
-
-fn parse_same_site(stored: Option<&str>) -> SameSite {
-    match stored {
-        Some("\"strict\"") => SameSite::Strict,
-        Some("\"lax\"") => SameSite::Lax,
-        Some("\"none\"") => SameSite::None,
-        Some("true") => SameSite::True,
-        _ => SameSite::Unset,
+/// What a `cookie_secure` or `cookie_same_site` column holds: JSON text, read
+/// with `JSON.parse`. NULL and the empty string are no value at all. Text
+/// that is not JSON is a fault of the store, as it is to the Bun server,
+/// where the parse throws and the request carrying that session fails.
+fn parse_cookie_json(column: &str, stored: Option<&str>) -> Result<Option<serde_json::Value>, DbError> {
+    match stored.filter(|text| !text.is_empty()) {
+        None => Ok(None),
+        Some(text) => js::json_parse(text)
+            .map(Some)
+            .ok_or_else(|| DbError::new(format!("JSON Parse error: {column} holds {text:?}, which is not JSON"))),
     }
 }
 
@@ -118,8 +110,9 @@ pub async fn update_session(session_id: &str, session: &RuntimeSession) -> Resul
     optional("cookie_http_only", cookie.http_only.map(Param::from));
     optional("cookie_path", cookie.path.clone().map(Param::from));
     optional("cookie_domain", cookie.domain.clone().map(Param::from));
-    optional("cookie_secure", cookie.secure.map(|secure| Param::from(secure.to_string())));
-    optional("cookie_same_site", stored_same_site(&cookie.same_site).map(Param::from));
+    // `JSON.stringify` of whatever the value is, the form the columns store.
+    optional("cookie_secure", cookie.secure.as_ref().map(|secure| Param::from(js::json_stringify(secure))));
+    optional("cookie_same_site", cookie.same_site.as_ref().map(|value| Param::from(js::json_stringify(value))));
 
     let names: Vec<&str> = columns.iter().map(|(name, _)| *name).collect();
     let placeholders: Vec<String> = (1..=columns.len()).map(|i| format!("${i}")).collect();
@@ -251,12 +244,8 @@ impl PostgresSessionStore {
             http_only: model.cookie_http_only,
             path: model.cookie_path,
             domain: model.cookie_domain,
-            secure: match model.cookie_secure.as_deref() {
-                Some("true") => Some(true),
-                Some("false") => Some(false),
-                _ => None,
-            },
-            same_site: parse_same_site(model.cookie_same_site.as_deref()),
+            secure: parse_cookie_json("cookie_secure", model.cookie_secure.as_deref())?,
+            same_site: parse_cookie_json("cookie_same_site", model.cookie_same_site.as_deref())?,
         };
 
         let auth = match (model.auth_sid, model.auth_recheck_at) {

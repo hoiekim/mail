@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 
 use super::session::HttpSession;
 use super::upload::UploadedFiles;
+use crate::js::{self, NonFinite, PathKey};
 
 /// A failure the client caused, answered with `status` instead of a 500.
 #[derive(Debug, Clone)]
@@ -133,6 +134,9 @@ pub struct HttpRequest {
     pub raw: RawBody,
     /// Whether the request carries a body at all.
     pub has_body: bool,
+    /// Numbers of the JSON body that were outside the range of a double:
+    /// `null` in `body`, `Infinity` to the Bun server. See [`HttpRequest::body_number`].
+    pub non_finite: Vec<NonFinite>,
 }
 
 impl HttpRequest {
@@ -149,6 +153,27 @@ impl HttpRequest {
     /// The body when it is a JSON object, which is what every route expects.
     pub fn body_object(&self) -> Option<&Map<String, Value>> {
         self.body.as_object()
+    }
+
+    /// `String(value)` of the JSON number at `path` of the body, or `None`
+    /// when what is there is not a number. A number too large for a double
+    /// prints as `Infinity` or `-Infinity`, as it does in JavaScript.
+    ///
+    /// ```ignore
+    /// let line = req.body_number(&[PathKey::Key("lineno".into())]);
+    /// ```
+    pub fn body_number(&self, path: &[PathKey]) -> Option<String> {
+        if let Some(infinity) = js::non_finite_at(&self.non_finite, path) {
+            return Some(infinity.to_string());
+        }
+        let mut value = &self.body;
+        for step in path {
+            value = match step {
+                PathKey::Key(key) => value.as_object()?.get(key)?,
+                PathKey::Index(index) => value.as_array()?.get(*index)?,
+            };
+        }
+        js::json_number_to_string(value)
     }
 }
 
@@ -242,9 +267,13 @@ fn charset_of(content_type: &str) -> String {
     "utf-8".to_string()
 }
 
-/// Whether the request carries a body; a declared length of zero means it does not.
-pub fn has_body(headers: &HeaderMap, body: &Incoming) -> bool {
-    !body.is_end_stream() && headers.get("content-length").and_then(|v| v.to_str().ok()) != Some("0")
+/// Whether the request carries a body; a declared length of zero means it
+/// does not, and neither GET nor HEAD has one whatever was sent with it.
+pub fn has_body(method: &str, headers: &HeaderMap, body: &Incoming) -> bool {
+    method != "GET"
+        && method != "HEAD"
+        && !body.is_end_stream()
+        && headers.get("content-length").and_then(|v| v.to_str().ok()) != Some("0")
 }
 
 fn declared_length(headers: &HeaderMap) -> f64 {
@@ -252,6 +281,27 @@ fn declared_length(headers: &HeaderMap) -> f64 {
         Some(value) => crate::js::number_from_str(value),
         None => 0.0,
     }
+}
+
+/// How much of a refused body is still read and thrown away, and for how
+/// long, so that the refusal reaches a client that is busy sending.
+const DISCARD_LIMIT: usize = 64 * 1024 * 1024;
+const DISCARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Reads the rest of a body that is already over its limit. Answering while
+/// the client is still writing would close the connection under it, and a
+/// reset can cost the client the answer it has not read yet.
+async fn discard_rest(body: &mut Incoming) {
+    let discard = async {
+        let mut discarded = 0;
+        while let Some(Ok(frame)) = body.frame().await {
+            discarded += frame.data_ref().map_or(0, |data| data.len());
+            if discarded > DISCARD_LIMIT {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(DISCARD_TIMEOUT, discard).await;
 }
 
 async fn read_limited(body: Incoming, limit: usize) -> Result<Vec<u8>, HttpError> {
@@ -262,6 +312,8 @@ async fn read_limited(body: Incoming, limit: usize) -> Result<Vec<u8>, HttpError
         if let Ok(data) = frame.into_data() {
             bytes.extend_from_slice(&data);
             if bytes.len() > limit {
+                drop(bytes);
+                discard_rest(&mut body).await;
                 return Err(HttpError::new(413, "request entity too large"));
             }
         }
@@ -269,20 +321,7 @@ async fn read_limited(body: Incoming, limit: usize) -> Result<Vec<u8>, HttpError
     Ok(bytes)
 }
 
-/// Undoes a `Content-Encoding` of gzip or deflate, refusing the result once
-/// it passes `limit` bytes.
-fn decode_body(encoded: Vec<u8>, headers: &HeaderMap, limit: usize) -> Result<Vec<u8>, HttpError> {
-    let encoding = headers
-        .get("content-encoding")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("identity")
-        .to_ascii_lowercase();
-    let mut reader: Box<dyn Read> = match encoding.as_str() {
-        "identity" => return Ok(encoded),
-        "gzip" => Box::new(flate2::read::GzDecoder::new(&encoded[..])),
-        "deflate" => Box::new(flate2::read::ZlibDecoder::new(&encoded[..])),
-        other => return Err(HttpError::new(415, format!("unsupported content encoding \"{other}\""))),
-    };
+fn read_within(reader: &mut dyn Read, limit: usize) -> Result<Vec<u8>, HttpError> {
     let mut decoded = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
     loop {
@@ -299,6 +338,33 @@ fn decode_body(encoded: Vec<u8>, headers: &HeaderMap, limit: usize) -> Result<Ve
     }
 }
 
+/// Undoes a `Content-Encoding` of gzip or deflate, refusing the result once
+/// it passes `limit` bytes. The whole input has to be the encoding: several
+/// gzip members in a row are one body, anything else after the data is an
+/// error, as it is to the Bun server's `DecompressionStream`.
+fn decode_body(encoded: Vec<u8>, headers: &HeaderMap, limit: usize) -> Result<Vec<u8>, HttpError> {
+    let encoding = headers
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("identity")
+        .to_ascii_lowercase();
+    match encoding.as_str() {
+        "identity" => Ok(encoded),
+        "gzip" => read_within(&mut flate2::read::MultiGzDecoder::new(&encoded[..]), limit),
+        "deflate" => {
+            let mut decoder = flate2::read::ZlibDecoder::new(&encoded[..]);
+            let decoded = read_within(&mut decoder, limit)?;
+            if decoder.total_in() != encoded.len() as u64 {
+                return Err(HttpError::new(400, "invalid request body"));
+            }
+            Ok(decoded)
+        }
+        other => Err(HttpError::new(415, format!("unsupported content encoding \"{other}\""))),
+    }
+}
+
+/// The body as text, decoded the way `TextDecoder` decodes UTF-8: bytes that
+/// are not UTF-8 become U+FFFD, and one byte order mark at the start is dropped.
 async fn read_decoded(body: Incoming, headers: &HeaderMap, limit: usize) -> Result<String, HttpError> {
     // The unknown-encoding refusal comes before any byte is read.
     let encoding = headers.get("content-encoding").and_then(|v| v.to_str().ok()).unwrap_or("identity");
@@ -310,7 +376,8 @@ async fn read_decoded(body: Incoming, headers: &HeaderMap, limit: usize) -> Resu
     }
     let encoded = read_limited(body, limit).await?;
     let decoded = decode_body(encoded, headers, limit)?;
-    Ok(String::from_utf8_lossy(&decoded).into_owned())
+    let text = String::from_utf8_lossy(&decoded);
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
 }
 
 /// The body of any request as text, whatever its content type: 413 past
@@ -333,6 +400,15 @@ pub async fn read_text_body(req: &mut HttpRequest, limit: usize) -> Result<Strin
 pub struct JsonBody {
     pub value: Value,
     pub raw: RawBody,
+    /// Numbers that were outside the range of a double; `null` in `value`.
+    pub non_finite: Vec<NonFinite>,
+}
+
+impl JsonBody {
+    /// `{}`, the body of a request that carried no JSON.
+    pub fn empty(raw: RawBody) -> JsonBody {
+        JsonBody { value: Value::Object(Map::new()), raw, non_finite: Vec::new() }
+    }
 }
 
 /// The body of an `application/json` request, parsed; `{}` for any other
@@ -340,10 +416,9 @@ pub struct JsonBody {
 /// at the top level: 400 for malformed JSON, 413 over 10 MiB, 415 for a
 /// non-UTF charset or an unknown content encoding.
 pub async fn read_json_body(headers: &HeaderMap, body: Incoming, has_body: bool) -> Result<JsonBody, HttpError> {
-    let empty = || Value::Object(Map::new());
     let content_type = headers.get("content-type").and_then(|v| v.to_str().ok());
     if media_type_of(content_type) != "application/json" || !has_body {
-        return Ok(JsonBody { value: empty(), raw: RawBody::Unread(body) });
+        return Ok(JsonBody::empty(RawBody::Unread(body)));
     }
     if !charset_of(content_type.unwrap_or("")).starts_with("utf-") {
         return Err(HttpError::new(415, "unsupported charset"));
@@ -352,17 +427,19 @@ pub async fn read_json_body(headers: &HeaderMap, body: Incoming, has_body: bool)
         return Err(HttpError::new(413, "request entity too large"));
     }
 
+    // The decoder has dropped one byte order mark; a second one goes here,
+    // as the Bun server strips one from the decoded text itself.
     let text = read_decoded(body, headers, JSON_BODY_LIMIT).await?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     if text.is_empty() {
-        return Ok(JsonBody { value: empty(), raw: RawBody::Taken });
+        return Ok(JsonBody::empty(RawBody::Taken));
     }
     let first = text.trim_start_matches([' ', '\t', '\n', '\r']).chars().next();
     if !matches!(first, Some('{') | Some('[')) {
         return Err(HttpError::new(400, "invalid JSON body"));
     }
-    let value = crate::js::json_parse(text).ok_or_else(|| HttpError::new(400, "invalid JSON body"))?;
-    Ok(JsonBody { value, raw: RawBody::Taken })
+    let parsed = js::json_parse_full(text).ok_or_else(|| HttpError::new(400, "invalid JSON body"))?;
+    Ok(JsonBody { value: parsed.value, raw: RawBody::Taken, non_finite: parsed.non_finite })
 }
 
 /// The path and query string a request asked for, exactly as sent.

@@ -511,16 +511,35 @@ pub fn json_stringify(value: &serde_json::Value) -> String {
     out
 }
 
+/// JavaScript truthiness of a JSON value: `null`, `false`, `0` and `""` are
+/// falsy, everything else — every array and object included — is truthy.
+pub fn is_truthy(value: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+/// `String(value)` for a JSON number, or `None` for any other value.
+pub fn json_number_to_string(value: &serde_json::Value) -> Option<String> {
+    let number = value.as_number()?;
+    Some(match (number.as_i64(), number.as_u64()) {
+        (Some(integer), _) => integer.to_string(),
+        (None, Some(integer)) => number_to_string(integer as f64),
+        (None, None) => number_to_string(number.as_f64().unwrap_or(f64::NAN)),
+    })
+}
+
 fn write_json(value: &serde_json::Value, out: &mut String) {
     use serde_json::Value;
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
-        Value::Number(number) => match (number.as_i64(), number.as_u64()) {
-            (Some(integer), _) => out.push_str(&integer.to_string()),
-            (None, Some(integer)) => out.push_str(&number_to_string(integer as f64)),
-            (None, None) => out.push_str(&number_to_string(number.as_f64().unwrap_or(f64::NAN))),
-        },
+        Value::Number(_) => out.push_str(&json_number_to_string(value).unwrap_or_default()),
         Value::String(text) => out.push_str(&serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into())),
         Value::Array(items) => {
             out.push('[');

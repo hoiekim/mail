@@ -13,7 +13,7 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
 use crate::js;
-use crate::models::{RuntimeCookie, RuntimeSession, SameSite, SignedUser, SsoSession};
+use crate::models::{RuntimeCookie, RuntimeSession, SignedUser, SsoSession};
 use crate::postgres::repositories::sessions::PostgresSessionStore;
 use crate::postgres::DbError;
 
@@ -104,8 +104,8 @@ fn fresh_cookie(options: &SessionOptions) -> RuntimeCookie {
         http_only: Some(true),
         path: Some("/".to_string()),
         domain: None,
-        secure: Some(options.secure),
-        same_site: SameSite::Strict,
+        secure: Some(serde_json::Value::Bool(options.secure)),
+        same_site: Some(serde_json::Value::String("strict".to_string())),
     }
 }
 
@@ -198,7 +198,7 @@ impl HttpSession {
         self.cookie.expires = Some(Utc::now() + Duration::milliseconds(max_age));
         let save_error = self.save().await.err();
 
-        if self.cookie.secure == Some(true) && !secure_request {
+        if self.cookie.is_secure() && !secure_request {
             return (None, save_error);
         }
         (Some(self.serialize_cookie()), save_error)
@@ -216,14 +216,11 @@ impl HttpSession {
         if self.cookie.http_only == Some(true) {
             parts.push("HttpOnly".to_string());
         }
-        if self.cookie.secure == Some(true) {
+        if self.cookie.is_secure() {
             parts.push("Secure".to_string());
         }
-        match self.cookie.same_site {
-            SameSite::True | SameSite::Strict => parts.push("SameSite=Strict".to_string()),
-            SameSite::Lax => parts.push("SameSite=Lax".to_string()),
-            SameSite::None => parts.push("SameSite=None".to_string()),
-            SameSite::Unset => {}
+        if let Some(same_site) = self.cookie.same_site_attribute() {
+            parts.push(format!("SameSite={same_site}"));
         }
         parts.join("; ")
     }

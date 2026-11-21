@@ -5,12 +5,16 @@ use std::sync::OnceLock;
 use super::route::{auth_required, dispatch, ApiResponse, Reply, Route};
 use crate::http::request::HttpRequest;
 use crate::http::respond::Response;
-use crate::push;
+use crate::{env, push};
 use crate::push_validation::validate_push_subscription;
 use crate::read_only::refuse_read_only;
 
 async fn get_public_key(_req: &mut HttpRequest) -> anyhow::Result<Reply> {
-    Ok(match push::get_push_public_key() {
+    // The variable's own value, as the Bun server answers it: also when it
+    // is set but empty (`.env.example` ships it that way), which the push
+    // module reads as no key at all.
+    let key = push::get_push_public_key().or_else(|| env::var("PUSH_VAPID_PUBLIC_KEY"));
+    Ok(match key {
         Some(key) => ApiResponse::success_with(key),
         None => ApiResponse::success(),
     }
