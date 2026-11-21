@@ -221,7 +221,7 @@ export const rawHttp = (port: number, request: string | Uint8Array, timeoutMs = 
       });
     };
     socket.on("connect", () => socket.write(request));
-    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
     socket.on("end", finish);
     socket.on("close", finish);
     socket.on("error", (error) => {

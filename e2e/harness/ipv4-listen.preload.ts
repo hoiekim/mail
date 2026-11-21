@@ -9,12 +9,16 @@
  */
 import net from "net";
 
-const original = net.Server.prototype.listen;
+type Listen = (this: net.Server, ...args: unknown[]) => net.Server;
 
-net.Server.prototype.listen = function patchedListen(this: net.Server, ...args: unknown[]) {
+const original = net.Server.prototype.listen as unknown as Listen;
+
+const patchedListen: Listen = function (...args) {
   const [port, second] = args;
   if (typeof port === "number" && (second === undefined || typeof second === "function")) {
-    return original.call(this, port, "0.0.0.0", ...(args.slice(1) as [])) as net.Server;
+    return original.call(this, port, "0.0.0.0", ...args.slice(1));
   }
-  return original.apply(this, args as never) as net.Server;
-} as typeof net.Server.prototype.listen;
+  return original.apply(this, args);
+};
+
+net.Server.prototype.listen = patchedListen as unknown as typeof net.Server.prototype.listen;

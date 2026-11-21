@@ -108,7 +108,7 @@ const command = async (): Promise<string[]> => {
 
 const pump = async (stream: ReadableStream<Uint8Array>, sink: string[], label: string) => {
   const decoder = new TextDecoder();
-  for await (const chunk of stream) {
+  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
     const text = decoder.decode(chunk, { stream: true });
     sink.push(text);
     if (STREAM_LOGS) process.stderr.write(text.replace(/^/gm, `[${label}] `));
