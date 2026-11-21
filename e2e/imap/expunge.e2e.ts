@@ -143,6 +143,24 @@ describe("EXPUNGE", () => {
     imap.close();
   });
 
+  test("in INBOX it also destroys what was moved into Trash", async () => {
+    // NOTE: looks like a bug with data loss. A message filed into Trash is
+    // flagged \Deleted and, being received mail, is an INBOX message too. So
+    // an EXPUNGE with INBOX selected removes it, though the client flagged
+    // nothing: after "MOVE to Trash", the next EXPUNGE empties Trash. The
+    // same happens to the classic COPY-to-Trash + STORE \Deleted + EXPUNGE.
+    const { imap } = await inbox(2);
+    expect((await imap.command("MOVE 1 Trash")).untagged).toEqual(["* 1 EXPUNGE"]);
+    expect((await imap.command("STATUS Trash (MESSAGES)")).untagged).toEqual(['* STATUS "Trash" (MESSAGES 1)']);
+    expect(await uids(imap, "FETCH 1:* (UID FLAGS)")).toEqual([
+      "* 1 FETCH (UID 2 FLAGS ())",
+      "* 2 FETCH (UID 3 FLAGS (\\Deleted))",
+    ]);
+    expect((await imap.command("EXPUNGE")).lines).toEqual(["* 2 EXPUNGE", "A6 OK EXPUNGE completed"]);
+    expect((await imap.command("STATUS Trash (MESSAGES)")).untagged).toEqual(['* STATUS "Trash" (MESSAGES 0)']);
+    imap.close();
+  });
+
   test("is refused on an examined mailbox and without a selected mailbox", async () => {
     const { imap } = await inbox(1);
     await imap.command("STORE 1 +FLAGS.SILENT (\\Deleted)");
