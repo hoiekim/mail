@@ -400,6 +400,13 @@ pub(crate) struct Connection {
     stall_at: Option<Instant>,
 }
 
+impl Drop for Connection {
+    /// However the task ends, the listener stops counting the connection.
+    fn drop(&mut self) {
+        self.server.remove_connection(self.id);
+    }
+}
+
 /// A context that wakes nobody, for a poll whose `Pending` is an answer.
 fn noop_context() -> Context<'static> {
     Context::from_waker(futures_util::task::noop_waker_ref())
@@ -559,6 +566,9 @@ impl Connection {
         self.write_now();
         if let Some(done) = done {
             let _ = done.send(());
+        }
+        if self.out.is_empty() {
+            self.on_drain();
         }
     }
 

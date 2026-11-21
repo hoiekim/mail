@@ -430,6 +430,15 @@ fn hostname() -> String {
     String::from_utf8_lossy(&buffer[..end]).into_owned()
 }
 
+/// An accepted socket, counted until its task is over — however it ends.
+struct OpenSocket(Arc<ServerShared>);
+
+impl Drop for OpenSocket {
+    fn drop(&mut self) {
+        self.0.socket_closed();
+    }
+}
+
 async fn accept_loop(shared: Arc<ServerShared>, listener: TcpListener) {
     loop {
         let accepted = tokio::select! {
@@ -439,10 +448,9 @@ async fn accept_loop(shared: Arc<ServerShared>, listener: TcpListener) {
         match accepted {
             Ok((socket, address)) => {
                 shared.sockets.fetch_add(1, Ordering::SeqCst);
-                let shared = shared.clone();
+                let open = OpenSocket(shared.clone());
                 tokio::spawn(async move {
-                    accept(shared.clone(), socket, address).await;
-                    shared.socket_closed();
+                    accept(open.0.clone(), socket, address).await;
                 });
             }
             Err(error) => {
