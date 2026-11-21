@@ -772,6 +772,15 @@ const dateInputs = new Set<string>(DATES);
     "5-1-2026", "5/1/2026 10:00", "1/5/26", "1/5/70", "0/5/2026", "1/0/2026", "1/32/2026", "12/31/1969 23:59:59", "Dec 31 1969 23:59:59 UTC", "Jan 1 1970 UTC", "1 1 1970 GMT",
     "@", "#5 Jan 2026", "5 Jan 2026 #", "5 @ Jan @ 2026", "5;Jan;2026", "[5 Jan 2026]", "5_Jan_2026", "5~Jan~2026", "5'Jan'2026", "5\"Jan\"2026", "<5 Jan 2026>"];
   for (const value of misc) dateInputs.add(value);
+  // Every character that might count as white space, in each place white space matters.
+  for (const code of [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1f, 0x20, 0x7f, 0x85, 0xa0, 0x1680, 0x180e, 0x2000, 0x2001, 0x2005, 0x200a, 0x200b, 0x2028, 0x2029, 0x202f,
+    0x205f, 0x2060, 0x3000, 0xfeff, 0x40, 0x5b, 0x5f, 0x60, 0x7b, 0xe9, 0x1f600]) {
+    const ch = String.fromCodePoint(code);
+    for (const value of [`Jan${ch}5${ch}2026`, `Jan 5 2026 10:00:00${ch}PM`, `Jan${ch}uary 5 2026`, `${ch}2026-01-05`, `2026-01-05${ch}`, `1${ch}2${ch}2026`,
+      `5 Jan 2026 10:00${ch}+0100`, `2026-01-05T10:00:00${ch}Z`, `5${ch}Jan${ch}2026${ch}10:00${ch}GMT`]) {
+      dateInputs.add(value);
+    }
+  }
   const random = rng(77);
   const SOUP = ["5", "05", "31", "2026", "26", "1970", "0", "12", "13", "99", "Jan", "feb", "DEC", "Mon", "Sat,", "10:00", "10:30:15", "23:59:59.999", "1:2", "AM", "pm",
     "Z", "GMT", "UTC", "EST", "PDT", "+0100", "-08:00", "+1", "GMT+2", "T", "-", "/", ".", ",", ":", "(x)", "(", ")", "+", "junk", "\u00e9", "2026-01-05", "T10:00:00Z", "1/2/2026"];
