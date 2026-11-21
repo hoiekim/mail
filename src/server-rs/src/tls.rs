@@ -89,3 +89,30 @@ pub fn insecure_connector() -> tokio_rustls::TlsConnector {
         .with_no_client_auth();
     tokio_rustls::TlsConnector::from(Arc::new(config))
 }
+
+/// The server-side TLS configuration from the certificate and key on disk.
+/// Read per call, so a renewed certificate is picked up by the next
+/// connection. Fails when the pair is unset, unreadable or not valid PEM.
+pub fn server_config() -> anyhow::Result<std::sync::Arc<rustls::ServerConfig>> {
+    use anyhow::{anyhow, Context};
+
+    let TlsCredentials::Available { cert, key } = get_tls_credentials() else {
+        anyhow::bail!("SSL certificate not configured");
+    };
+    let mut cert_reader = std::io::BufReader::new(File::open(&cert).with_context(|| format!("reading {cert}"))?);
+    let certificates: Vec<_> = rustls_pemfile::certs(&mut cert_reader).collect::<Result<_, _>>()?;
+    let mut key_reader = std::io::BufReader::new(File::open(&key).with_context(|| format!("reading {key}"))?);
+    let private_key =
+        rustls_pemfile::private_key(&mut key_reader)?.ok_or_else(|| anyhow!("no private key found in {key}"))?;
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_single_cert(certificates, private_key)?;
+    Ok(std::sync::Arc::new(config))
+}
+
+/// A TLS acceptor for one connection, from the certificate on disk now.
+pub fn acceptor() -> anyhow::Result<tokio_rustls::TlsAcceptor> {
+    Ok(tokio_rustls::TlsAcceptor::from(server_config()?))
+}

@@ -7,7 +7,10 @@
 
 pub mod alarm;
 pub mod auth_client;
+pub mod auth_rate_limit;
+pub mod concurrency_env;
 pub mod env;
+pub mod fifo_semaphore;
 pub mod http;
 pub mod imap;
 pub mod js;
@@ -15,6 +18,7 @@ pub mod logger;
 pub mod mails;
 pub mod mime;
 pub mod models;
+pub mod net;
 pub mod postgres;
 pub mod proxy_protocol;
 pub mod push;

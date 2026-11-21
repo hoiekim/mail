@@ -77,6 +77,7 @@ hickory-resolver = "0.24"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
 
 [profile.release]
 opt-level = 3
