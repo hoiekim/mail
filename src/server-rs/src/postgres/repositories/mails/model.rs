@@ -520,6 +520,11 @@ impl PartialMailModel {
         })
     }
 
+    /// The selected fields of a row as the pool returned it.
+    pub fn from_row<S: AsRef<str>>(fields: &[S], row: &Row) -> Result<PartialMailModel, ModelValidationError> {
+        PartialMailModel::new(fields, row.as_map())
+    }
+
     /// Like [`PartialMailModel::new`], for any JSON value: only an object can
     /// be a row.
     pub fn from_value<S: AsRef<str>>(fields: &[S], data: &Value) -> Result<PartialMailModel, ModelValidationError> {

@@ -52,7 +52,6 @@ let trace: { sql: string; values: unknown[] }[] = [];
 };
 
 const models = await import("../../../../server/lib/postgres/models");
-const database = await import("../../../../server/lib/postgres/database");
 const core = await import("../../../../server/lib/postgres/repositories/mails/core");
 const coreQuery = await import("../../../../server/lib/postgres/repositories/mails/core-query");
 const counters = await import("../../../../server/lib/postgres/repositories/mails/counters");

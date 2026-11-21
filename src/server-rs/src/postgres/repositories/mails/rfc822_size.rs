@@ -185,7 +185,7 @@ fn format_headers(mail: &MailForSize, has_text: bool, has_html: bool, has_attach
     }
     if !mail.date.is_empty() {
         let date = js::date_parse(mail.date)
-            .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+            .and_then(chrono::DateTime::from_timestamp_millis)
             .map(|date| js::utc_string(&date))
             .unwrap_or_else(|| "Invalid Date".to_string());
         headers.push(format!("Date: {date}"));

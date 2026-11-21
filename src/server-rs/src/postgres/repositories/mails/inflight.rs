@@ -18,18 +18,22 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
-use std::panic::resume_unwind;
+use std::panic::{resume_unwind, AssertUnwindSafe};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use futures_util::future::{FutureExt, Shared};
+use tokio::sync::oneshot;
 
-type Settled = Result<Arc<dyn Any + Send + Sync>, Arc<Mutex<Option<Box<dyn Any + Send>>>>>;
+/// What a panicking run leaves for its waiters: the payload, for the first
+/// of them to take.
+type Panic = Arc<Mutex<Option<Box<dyn Any + Send>>>>;
+type Settled = Result<Arc<dyn Any + Send + Sync>, Panic>;
 type Pending = Shared<Pin<Box<dyn Future<Output = Settled> + Send>>>;
 
-fn inflight() -> &'static Mutex<HashMap<String, Pending>> {
+fn inflight() -> MutexGuard<'static, HashMap<String, Pending>> {
     static INFLIGHT: OnceLock<Mutex<HashMap<String, Pending>>> = OnceLock::new();
-    INFLIGHT.get_or_init(Default::default)
+    INFLIGHT.get_or_init(Default::default).lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Removes the key's entry when the work is over, however it ends.
@@ -37,9 +41,7 @@ struct Settle(String);
 
 impl Drop for Settle {
     fn drop(&mut self) {
-        if let Ok(mut pending) = inflight().lock() {
-            pending.remove(&self.0);
-        }
+        inflight().remove(&self.0);
     }
 }
 
@@ -57,30 +59,35 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = T> + Send + 'static,
 {
-    let pending = {
-        let mut entries = inflight().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (pending, start) = {
+        let mut entries = inflight();
         match entries.get(key) {
-            Some(pending) => pending.clone(),
+            Some(pending) => (pending.clone(), None),
             None => {
-                let settle = Settle(key.to_string());
-                let run = work();
-                let task = tokio::spawn(async move {
-                    let _settle = settle;
-                    let output: Arc<dyn Any + Send + Sync> = Arc::new(run.await);
-                    output
-                });
+                let (deliver, delivered) = oneshot::channel::<Settled>();
                 let pending: Pending = (Box::pin(async move {
-                    match task.await {
-                        Ok(output) => Ok(output),
-                        Err(error) => Err(Arc::new(Mutex::new(error.try_into_panic().ok()))),
-                    }
+                    // A run that never delivers was torn down with its runtime.
+                    delivered.await.unwrap_or_else(|_| Err(Panic::default()))
                 }) as Pin<Box<dyn Future<Output = Settled> + Send>>)
                     .shared();
                 entries.insert(key.to_string(), pending.clone());
-                pending
+                (pending, Some((deliver, Settle(key.to_string()))))
             }
         }
     };
+    if let Some((deliver, settle)) = start {
+        // Outside the lock, so the work may itself coalesce. Should building
+        // it panic, `settle` clears the entry on the way out.
+        let run = work();
+        tokio::spawn(async move {
+            let output = AssertUnwindSafe(run).catch_unwind().await;
+            drop(settle);
+            let _ = deliver.send(match output {
+                Ok(output) => Ok(Arc::new(output) as Arc<dyn Any + Send + Sync>),
+                Err(payload) => Err(Arc::new(Mutex::new(Some(payload)))),
+            });
+        });
+    }
     async move {
         match pending.await {
             Ok(output) => match output.downcast::<T>() {
@@ -88,7 +95,7 @@ where
                 Err(_) => panic!("single_flight: one key was used for two result types"),
             },
             Err(panic) => {
-                let payload = panic.lock().ok().and_then(|mut payload| payload.take());
+                let payload = panic.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
                 match payload {
                     Some(payload) => resume_unwind(payload),
                     None => panic!("single_flight: the coalesced work panicked or was cancelled"),
@@ -100,28 +107,24 @@ where
 
 /// The number of in-flight entries, for tests.
 pub fn inflight_size() -> usize {
-    inflight().lock().map(|entries| entries.len()).unwrap_or(0)
+    inflight().len()
 }
 
 /// Clears all in-flight state, for tests. Never called by production code.
 pub fn inflight_reset() {
-    if let Ok(mut entries) = inflight().lock() {
-        entries.clear();
-    }
+    inflight().clear();
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use tokio::sync::oneshot;
-
     use super::*;
 
     /// The in-flight map is process-wide, so these tests take turns.
-    fn serial() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    async fn serial() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let guard = LOCK.lock().await;
         inflight_reset();
         guard
     }
@@ -132,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn coalesces_two_callers_with_the_same_key_into_one_work_invocation() {
-        let _serial = serial();
+        let _serial = serial().await;
         let invocations = Arc::new(AtomicUsize::new(0));
         let (resolve, gate) = oneshot::channel::<Arc<String>>();
         let gate = gate.shared();
@@ -161,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_coalesce_across_different_keys() {
-        let _serial = serial();
+        let _serial = serial().await;
         let invocations = Arc::new(AtomicUsize::new(0));
         let (resolve_a, gate_a) = oneshot::channel::<Arc<String>>();
         let (resolve_b, gate_b) = oneshot::channel::<Arc<String>>();
@@ -188,7 +191,7 @@ mod tests {
 
     #[tokio::test]
     async fn deletes_the_entry_on_success_so_subsequent_callers_start_fresh() {
-        let _serial = serial();
+        let _serial = serial().await;
         let invocations = Arc::new(AtomicUsize::new(0));
         let run = || {
             let invocations = invocations.clone();
@@ -203,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn deletes_the_entry_on_failure_so_a_failed_load_does_not_stick() {
-        let _serial = serial();
+        let _serial = serial().await;
         let invocations = Arc::new(AtomicUsize::new(0));
         let run = || {
             let invocations = invocations.clone();
@@ -221,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn callers_waiting_on_a_failing_in_flight_all_see_the_same_rejection() {
-        let _serial = serial();
+        let _serial = serial().await;
         let invocations = Arc::new(AtomicUsize::new(0));
         let (reject, gate) = oneshot::channel::<String>();
         let gate = gate.shared();
@@ -249,7 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_work_finishes_and_the_entry_clears_when_every_caller_gives_up() {
-        let _serial = serial();
+        let _serial = serial().await;
         let (resolve, gate) = oneshot::channel::<u8>();
         let (done, finished) = oneshot::channel::<()>();
         let waiting = single_flight("k", move || async move {
@@ -274,13 +277,35 @@ mod tests {
 
     #[tokio::test]
     async fn a_panic_in_the_work_reaches_every_waiter_and_clears_the_entry() {
-        let _serial = serial();
+        let _serial = serial().await;
         async fn explode() -> u8 {
             panic!("exploded")
         }
         let first = tokio::spawn(single_flight("k", explode));
         let message = first.await.unwrap_err().into_panic();
         assert_eq!(message.downcast_ref::<&str>(), Some(&"exploded"));
+        assert_eq!(inflight_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn work_may_itself_coalesce_under_another_key() {
+        let _serial = serial().await;
+        let outer = single_flight("outer", || {
+            let inner = single_flight("inner", || async { 20u8 });
+            async move { inner.await + 1 }
+        });
+        assert_eq!(outer.await, 21);
+        assert_eq!(inflight_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn work_that_cannot_even_start_leaves_no_entry_behind() {
+        let _serial = serial().await;
+        let started = std::panic::catch_unwind(|| {
+            let build = || -> std::future::Ready<u8> { panic!("no work to give") };
+            drop(single_flight("k", build));
+        });
+        assert!(started.is_err());
         assert_eq!(inflight_size(), 0);
     }
 }

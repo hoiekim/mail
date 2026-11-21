@@ -69,7 +69,7 @@ pub fn uses_domain_uid_space(mailbox: Option<&str>) -> bool {
 }
 
 pub fn is_inbox_tree(mailbox: Option<&str>, sent: bool) -> bool {
-    !sent && mailbox.map_or(true, |name| name.starts_with(INBOX_ACCOUNTS_PREFIX))
+    !sent && mailbox.is_none_or(|name| name.starts_with(INBOX_ACCOUNTS_PREFIX))
 }
 
 /// The domain view a write into `destination` records a mapping row under, or
