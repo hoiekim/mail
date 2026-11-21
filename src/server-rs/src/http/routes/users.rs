@@ -10,7 +10,7 @@ use crate::http::issue_session::issue_authenticated_session;
 use crate::http::rate_limit::{get_client_ip, login_identity_of, login_limiter, token_limiter, RateLimiter};
 use crate::http::request::HttpRequest;
 use crate::http::respond::{json, Response};
-use crate::http::sso_hooks::{is_local_login_allowed, sso_mode};
+use crate::http::sso_hooks::{is_local_login_allowed, sign_out_of_provider, sso_mode};
 use crate::postgres::initialize::VERSION;
 use crate::read_only::{
     delivers_to_admin_mailbox, is_reserved_username, resolve_session_user, ADMIN_RO_USERNAME,
@@ -105,8 +105,15 @@ async fn post_login(req: &mut HttpRequest) -> anyhow::Result<Reply> {
 }
 
 async fn delete_login(req: &mut HttpRequest) -> anyhow::Result<Reply> {
+    let auth = req.session.auth.clone();
     req.session.destroy().await?;
-    Ok(ApiResponse::success().into())
+    // A session from single sign-on also ends at the provider: the refresh
+    // token is revoked, and the browser is told where to end that session.
+    Ok(match sign_out_of_provider(auth).await {
+        Some(Some(logout_url)) => ApiResponse::success_with(json!({ "logoutUrl": logout_url })),
+        _ => ApiResponse::success(),
+    }
+    .into())
 }
 
 async fn post_token(req: &mut HttpRequest) -> anyhow::Result<Reply> {
