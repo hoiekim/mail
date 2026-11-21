@@ -8,7 +8,7 @@ import { deliverFixture, startImapServer } from "./support";
 // message's sequence number and UID are its position here. Flags are set once:
 // plain and html \Seen, alternative \Flagged, attachmentBase64 \Answered,
 // attachmentQp \Deleted.
-const NAMES = FIXTURE_NAMES.filter((name) => name !== "missingHeaders" && name !== "large");
+const NAMES: FixtureName[] = FIXTURE_NAMES.filter((name) => name !== "missingHeaders" && name !== "large");
 const EVERY = NAMES.map((_, index) => index + 1);
 
 /** The sequence numbers (and UIDs) of the named fixtures, ascending. */

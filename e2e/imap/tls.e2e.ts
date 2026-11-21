@@ -74,7 +74,7 @@ describe("the implicit TLS port", () => {
   test("drops a client that speaks plain text to it", async () => {
     const socket = net.createConnection({ host: "127.0.0.1", port: secure.ports.imaps });
     const received: Buffer[] = [];
-    socket.on("data", (chunk) => received.push(chunk));
+    socket.on("data", (chunk: Buffer) => received.push(chunk));
     socket.on("error", () => undefined);
     const closed = new Promise<void>((resolve) => socket.on("close", () => resolve()));
     socket.write("A1 NOOP\r\n");

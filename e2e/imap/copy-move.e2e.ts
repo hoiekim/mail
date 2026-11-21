@@ -87,7 +87,7 @@ describe("COPY", () => {
     const [source, copy] = rows;
     expect(source!.message_id).toBe(mails[0]!.message_id);
     expect(copy!.message_id).toMatch(/^[0-9a-f]{16}\.copy@server$/);
-    expect({ ...copy, message_id: "" }).toEqual({ ...source, message_id: "", uid_domain: 2 });
+    expect<Record<string, unknown>>({ ...copy, message_id: "" }).toEqual({ ...source, message_id: "", uid_domain: 2 });
     const filed = await server.db.query(
       "SELECT x.mailbox, x.uid FROM mail_mailbox_uid x JOIN mails m USING (mail_id) WHERE m.user_id = $1 AND m.uid_domain = 2",
       [user.id]

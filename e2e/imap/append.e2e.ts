@@ -289,7 +289,7 @@ describe("APPEND: what is stored", () => {
     expect(row!.message_id).toMatch(/^[0-9a-f]{8}$/);
     expect(new Date(row!.date).getTime()).toBeGreaterThanOrEqual(before - 1000);
     expect(new Date(row!.date).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
-    expect({ ...row, message_id: "", date: "" }).toEqual({
+    expect<Record<string, unknown>>({ ...row, message_id: "", date: "" }).toEqual({
       message_id: "",
       date: "",
       subject: "bare",
