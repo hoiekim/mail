@@ -160,9 +160,11 @@ const mockGetMailById = mock(async () => null as unknown);
 const mockFindViewableMail = mock(
   async (..._args: unknown[]) => null as { ownerId: string; domains: string[] } | null
 );
+const mockCanViewAttachment = mock(async (..._args: unknown[]) => false);
 mock.module("server/lib/postgres/repositories/mails", () => ({
   getMailById: mockGetMailById,
   findViewableMail: mockFindViewableMail,
+  canViewAttachment: mockCanViewAttachment,
 }));
 
 const mockTrainWithEmail = mock(async () => undefined);
@@ -265,15 +267,38 @@ describe("getHeadersRoute", () => {
     expect(options.domains).toEqual(["example.com"]);
   });
 
-  it("returns failed for a domain the user holds no role on", async () => {
+  it("reads the user's own rows for a domain they hold no role on (one they used to own)", async () => {
     const { getHeadersRoute } = await import("./get-headers");
 
+    mockGetMailHeaders.mockResolvedValueOnce(oneBatch([]) as never);
     mockGetDomainAccess.mockResolvedValueOnce(null);
 
     const req = makeReq({
       method: "GET",
       session: { user: makeUser("alice") },
-      params: { account: "charlie@example.com" },
+      params: { account: "info@example.net" },
+      query: {},
+    });
+
+    const result = await apiResult(await getHeadersRoute.callback(req));
+    expect((result as ApiResponse<unknown>).status).toBe("success");
+    const [store, , options] = mockGetMailHeaders.mock.calls[0] as unknown as [
+      { id: string },
+      string,
+      { domains?: string[] },
+    ];
+    // Only ever the user's own rows: nobody else's mail without a role.
+    expect(store.id).toBe("u1");
+    expect(options.domains).toBeUndefined();
+  });
+
+  it("returns failed for an account that is not an address", async () => {
+    const { getHeadersRoute } = await import("./get-headers");
+
+    const req = makeReq({
+      method: "GET",
+      session: { user: makeUser("alice") },
+      params: { account: "no-at-sign" },
       query: {},
     });
 
@@ -1388,10 +1413,24 @@ describe("getAttachmentRoute", () => {
   it("returns failed when mail not found (IDOR protection)", async () => {
     const { getAttachmentRoute } = await import("./get-attachment");
     mockMailsTableQueryOne.mockResolvedValueOnce(null);
+    mockCanViewAttachment.mockResolvedValueOnce(false);
     const req = makeReq({ params: { id: "att1" } });
     const result = await getAttachmentRoute.callback(req);
     expect((result as ApiResponse<unknown>).status).toBe("failed");
     expect((result as ApiResponse<unknown>).message).toBe("Not found");
+    expect(mockGetAttachmentFile).not.toHaveBeenCalled();
+  });
+
+  it("serves an attachment of a mail in a domain the user views, by its id alone", async () => {
+    // The client asks by attachment id only, as for the user's own mail.
+    const { getAttachmentRoute } = await import("./get-attachment");
+    const file = { name: "shared.pdf" } as unknown as Bun.BunFile;
+    mockMailsTableQueryOne.mockResolvedValueOnce(null);
+    mockCanViewAttachment.mockResolvedValueOnce(true);
+    mockGetAttachmentFile.mockResolvedValueOnce(file);
+    const result = await getAttachmentRoute.callback(makeReq({ params: { id: "att1" } }));
+    expect(result).toBe(file);
+    expect(mockCanViewAttachment).toHaveBeenCalledWith("u1", "att1");
   });
 
   it("returns failed when attachment file missing from disk", async () => {

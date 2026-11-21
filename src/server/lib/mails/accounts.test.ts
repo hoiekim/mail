@@ -13,6 +13,7 @@ const mockSearchAccountStats = mock(
 const mockListDomainAccess = mock(
   (_userId: string): Promise<DomainAccess[]> => Promise.resolve([])
 );
+const mockListFormerDomains = mock((_userId: string): Promise<string[]> => Promise.resolve([]));
 
 mock.module("../postgres/repositories/mails", () => ({
   getAccountStats: mockGetAccountStats,
@@ -24,6 +25,7 @@ const realDomainRepository = { ...(await import("../postgres/repositories/domain
 mock.module("../postgres/repositories/domains", () => ({
   ...realDomainRepository,
   listDomainAccess: mockListDomainAccess,
+  listFormerDomains: mockListFormerDomains,
 }));
 
 // `mock.module` is process-global with no unmock API: hand the real module
@@ -94,6 +96,48 @@ describe("getAccounts", () => {
     expect(result.sent.map((a) => a.key)).toEqual(["me@example.org"]);
     expect(result.spam.map((a) => a.key)).toEqual(["junk@example.org"]);
     expect(result.shared).toEqual([]);
+  });
+
+  it("keeps listing the addresses of a domain the user no longer owns, whose mail stayed", async () => {
+    mockListFormerDomains.mockResolvedValueOnce(["example.net", "example.org"]);
+
+    await getAccounts(user);
+
+    const listed = ["testuser.example.com", "example.org", "example.net"];
+    expect(mockListFormerDomains).toHaveBeenCalledWith("user-123");
+    expect(mockGetAccountStats).toHaveBeenCalledWith("user-123", false, listed);
+    expect(mockGetAccountStats).toHaveBeenCalledWith("user-123", true, listed);
+  });
+
+  it("reads each owner's viewed domains in one pair of queries, split per domain", async () => {
+    const viewer = (name: string, ownerId: string): DomainAccess =>
+      access({ domainId: `d-${name}`, name, ownerId, ownerUsername: ownerId, role: "viewer" });
+    mockListDomainAccess.mockResolvedValue([
+      access({}),
+      viewer("example.com", "owner-1"),
+      viewer("example.net", "owner-1"),
+      viewer("example.info", "owner-2"),
+    ]);
+    mockGetAccountStats.mockImplementation(async (id, sent) => {
+      if (id === "owner-1" && !sent) return [stat("a@example.com"), stat("b@Example.NET")];
+      if (id === "owner-2" && !sent) return [stat("c@example.info")];
+      return [];
+    });
+
+    const result = await getAccounts(user);
+
+    const owner1 = mockGetAccountStats.mock.calls.filter((call) => call[0] === "owner-1");
+    expect(owner1).toHaveLength(2);
+    expect(owner1[0].slice(2)).toEqual([
+      ["example.com", "example.net"],
+      false,
+      ["example.com", "example.net"],
+    ]);
+    expect(result.shared.map((d) => [d.domain, d.owner, d.received.map((a) => a.key)])).toEqual([
+      ["example.com", "owner-1", ["a@example.com"]],
+      ["example.info", "owner-2", ["c@example.info"]],
+      ["example.net", "owner-1", ["b@Example.NET"]],
+    ]);
   });
 
   it("lists a viewed domain apart, from its owner's mail filtered to that domain", async () => {

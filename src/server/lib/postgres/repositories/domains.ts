@@ -4,6 +4,7 @@ import {
   DOMAINS,
   DOMAIN_CLAIMS,
   DOMAIN_ROLES,
+  FORMER_DOMAINS,
   DOMAIN_COUNT_MAX,
   DOMAIN_VIEWER_COUNT_MAX,
   DomainRole,
@@ -159,13 +160,34 @@ export const backfillAccountDomains = async (zone: string): Promise<number> => {
   return result.rowCount ?? 0;
 };
 
+export const buildDeleteOwnedDomain = (userId: string, name: string): PreparedQuery => ({
+  // One statement: the domain leaves and is remembered as a former one, so
+  // its mail, which stays in the owner's rows, keeps its place in their list.
+  sql: `
+    WITH removed AS (
+      DELETE FROM ${DOMAINS} WHERE name = $1 AND user_id = $2 RETURNING user_id, name
+    ), remembered AS (
+      INSERT INTO ${FORMER_DOMAINS} (user_id, name) SELECT user_id, name FROM removed
+      ON CONFLICT (user_id, name) DO NOTHING
+    )
+    SELECT COUNT(*)::int AS removed FROM removed`,
+  values: [name.toLowerCase(), userId],
+});
+
 /** Removes a domain its owner no longer wants. Its mail stays with the owner. */
 export const deleteOwnedDomain = async (userId: string, name: string): Promise<boolean> => {
-  const result = await pool.query(
-    `DELETE FROM ${DOMAINS} WHERE name = $1 AND user_id = $2`,
-    [name.toLowerCase(), userId]
+  const { sql, values } = buildDeleteOwnedDomain(userId, name);
+  const result = await pool.query<{ removed: number }>(sql, values);
+  return (result.rows[0]?.removed ?? 0) > 0;
+};
+
+/** The domains an account owned and no longer does, whose mail it still holds. */
+export const listFormerDomains = async (userId: string): Promise<string[]> => {
+  const result = await pool.query<{ name: string }>(
+    `SELECT name FROM ${FORMER_DOMAINS} WHERE user_id = $1 ORDER BY name`,
+    [userId]
   );
-  return (result.rowCount ?? 0) > 0;
+  return result.rows.map((row) => row.name);
 };
 
 export interface DomainClaim {
@@ -247,7 +269,7 @@ export type PromoteClaimResult =
  * decides who receives a domain's mail. Its roles are dropped with the move,
  * since they were granted by the previous owner and would otherwise let those
  * people read the new owner's mail. The previous owner's stored mail stays
- * with them.
+ * with them, and the domain is remembered as one of their former ones.
  */
 export const promoteClaim = async (
   userId: string,
@@ -285,6 +307,10 @@ export const promoteClaim = async (
     } else {
       previousOwnerId = row.user_id;
       await client.query(`DELETE FROM ${DOMAIN_ROLES} WHERE domain_id = $1`, [row.domain_id]);
+      await client.query(
+        `INSERT INTO ${FORMER_DOMAINS} (user_id, name) VALUES ($1, $2) ON CONFLICT (user_id, name) DO NOTHING`,
+        [row.user_id, normalized]
+      );
       await client.query(
         `UPDATE ${DOMAINS} SET user_id = $2, verified_at = CURRENT_TIMESTAMP WHERE domain_id = $1`,
         [row.domain_id, userId]

@@ -116,15 +116,6 @@ export const purgeSessions = async (): Promise<number> => {
 };
 
 /**
- * Deletes every session the retired read-only admin login issued. Such a
- * session carries admin's user id with `is_read_only` set, and this version no
- * longer treats that flag as read-only, so it must not survive the upgrade.
- */
-export const deleteReadOnlySessions = async (): Promise<number> => {
-  return sessionsTable.deleteWhere({ [SESSION_IS_READ_ONLY]: true });
-};
-
-/**
  * Deletes every session issued to a given user, whichever credential minted it.
  * Rotating a user's password has to reach the sessions it already issued: a
  * session row carries no password, and `rolling` renews its window on every

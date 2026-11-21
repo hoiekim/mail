@@ -164,6 +164,7 @@ bun run user create alice --domain example.com  # ...and *@example.com too
 bun run user create bob --email bob@example.org # where bob's password resets go
 bun run user set-password alice                 # a new password, for a lost one
 bun run user add-domain alice example.org       # give an existing account a domain
+bun run user disable bob                        # end bob's password sign-in and sessions
 ```
 
 `--domain` and `add-domain` assign a domain without the DNS check described
@@ -202,9 +203,13 @@ domain that another account owns moves it to you. Its viewers are dropped with
 the move, and the mail already stored stays with the previous owner.
 
 To send from a domain outside the served zone, the Mailgun account has to have
-that domain too: Mail sends through the Mailgun domain of the same name.
+that domain too: Mail sends through the Mailgun domain of the same name. Until
+it does, a send from that domain is refused with a message saying so.
 
-Removing a domain stops new mail to it; the mail already received stays.
+Removing a domain stops new mail to it. The mail already received stays with
+you, and its addresses stay in your accounts list. The same holds when someone
+else verifies a domain you owned: new mail goes to them, and the mail you have
+stays yours.
 
 ### Roles: owner and viewer
 
@@ -237,8 +242,11 @@ A mail app signs in with one of two kinds of username:
   read-only.
 
 Either way the password is alice's own (or, with single sign-on, alice's app
-password). Per-account folders are named by local part, so in a login that
-covers several domains, `info@` on two of them shares one folder.
+password). Per-account folders (`INBOX/accounts/<name>`) are named by local
+part and read back on the login's main domain, so a plain `alice` login lists
+the folders of her default domain only: her own name under `EMAIL_DOMAIN`, or
+`EMAIL_DOMAIN` itself if she owns it. Every domain's mail is still in INBOX and
+Sent Messages, and `alice@example.org` lists `example.org`'s folders.
 
 Over SMTP, `alice` can send from any domain she owns: the `From` address picks
 it. `alice@example.org` can send from `example.org` only, and only if she owns
@@ -248,19 +256,30 @@ it.
 
 Earlier versions created `admin` at boot from `ADMIN_PASSWORD`, gave it the
 bare `*@<EMAIL_DOMAIN>`, and offered a read-only `admin-ro` login through
-`ADMIN_RO_PASSWORD`. None of those variables is read any more; remove them
-after the upgrade has rolled out (a previous version still running during the
-rollout reads them). On its first boot this version:
+`ADMIN_RO_PASSWORD`. None of those variables is read any more.
 
-- gives the existing `admin` account the bare domain, which it has always
-  received, as its owner. `admin` is an ordinary account from then on: it
-  keeps its password, and resets it like any other account, or with
-  `bun run user set-password admin`;
-- retires `admin-ro`: its password is replaced with one nobody knows, and its
-  sessions end. To give someone the same access, give their account the
-  viewer role on the domain;
-- gives every account the domain row for the name it already received mail
-  at. No mail moves.
+1. Remove `ADMIN_RO_PASSWORD` from the environment first: a previous version
+   that restarts re-seeds `admin-ro` while it is set.
+2. Before the new version takes traffic, run with its image (the commands
+   create the new tables and leave the previous version's working):
+
+   ```
+   bun run user add-domain admin <EMAIL_DOMAIN>   # admin keeps receiving *@<EMAIL_DOMAIN>
+   bun run user disable admin-ro                  # retire the read-only login
+   ```
+
+   Until an account owns `<EMAIL_DOMAIN>`, mail to `*@<EMAIL_DOMAIN>` is
+   refused, and each boot warns about it.
+3. Roll out. Each boot gives every account that has none the domain row for
+   the name it already receives mail at, `<username>.<EMAIL_DOMAIN>`. No mail
+   moves.
+4. Remove `ADMIN_PASSWORD` and `ADMIN_PASSWORD_RESET`.
+
+`admin` is an ordinary account from then on: it keeps its password, and resets
+it like any other account, or with `bun run user set-password admin`. To give
+someone the access `admin-ro` had, give their account the viewer role on
+`<EMAIL_DOMAIN>`. A session `admin-ro` signed in before the upgrade ends at its
+next request.
 
 ## Single sign-on (optional)
 

@@ -100,12 +100,17 @@ const resolveScope = async (
 ): Promise<ResolvedSessionUser | null> => {
   if (scopeDomain === undefined) {
     const owned = await ownedDomainNames(person.id);
+    const primaryDomain = defaultDomain(owned, username) ?? "";
+    // Account folders are named by local part and read back on the primary
+    // domain, so only that domain's addresses are listed: a folder for an
+    // address on another domain would open a different mailbox. A login
+    // scoped to that domain lists its folders.
     return {
       user: person,
       isReadOnly: false,
       username,
-      accountDomains: owned,
-      primaryDomain: defaultDomain(owned, username) ?? "",
+      accountDomains: primaryDomain ? [primaryDomain] : [],
+      primaryDomain,
     };
   }
   const access = await getDomainAccess(person.id, scopeDomain);

@@ -111,3 +111,31 @@ export const findViewableMail = async (
   const row = result.rows[0];
   return row ? { ownerId: row.user_id, domains: row.domains } : null;
 };
+
+export const buildFindViewableAttachmentQuery = (
+  viewerId: string,
+  attachmentId: string
+): { sql: string; values: ParamValue[] } => ({
+  // The same rule as `buildFindViewableMailQuery`, found by an attachment the
+  // mail carries instead of by its id.
+  sql: `
+    SELECT m.mail_id
+    FROM mails m
+    JOIN ${DOMAINS} d ON d.user_id = m.user_id
+    JOIN ${DOMAIN_ROLES} r ON r.domain_id = d.domain_id AND r.user_id = $1
+    WHERE m.attachments @> $2::jsonb
+      AND m.expunged = FALSE
+      AND ${mailInDomainsExpression("ARRAY[d.name]::text[]", "m.")}
+    LIMIT 1`,
+  values: [viewerId, JSON.stringify([{ content: { data: attachmentId } }])],
+});
+
+/** Whether a viewer may download `attachmentId`: a mail of a domain they view carries it. */
+export const canViewAttachment = async (
+  viewerId: string,
+  attachmentId: string
+): Promise<boolean> => {
+  const { sql, values } = buildFindViewableAttachmentQuery(viewerId, attachmentId);
+  const result = await pool.query(sql, values);
+  return (result.rowCount ?? 0) > 0;
+};

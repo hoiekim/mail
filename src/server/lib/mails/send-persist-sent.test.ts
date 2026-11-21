@@ -12,6 +12,7 @@ import { describe, it, expect, mock, spyOn, beforeEach, afterAll } from "bun:tes
 import { MailDataToSend, SignedUser } from "common";
 import * as mailgunModule from "./mailgun";
 import * as domainRepo from "../postgres/repositories/domains";
+import * as alarmModule from "../alarm";
 
 const REAL_SERVER = (globalThis as Record<string, unknown>).__REAL_SERVER as Record<
   string,
@@ -148,5 +149,34 @@ describe("sendMail — the domain it sends from", () => {
       from: { value: { address: string }[] };
     };
     expect(saved.from.value[0].address).toBe("admin@example.org");
+  });
+});
+
+describe("sendMail — a sending domain Mailgun doesn't have", () => {
+  it("tells the sender, and never alarms the operator", async () => {
+    const alarm = spyOn(alarmModule, "sendAlarm").mockResolvedValue(undefined as never);
+    mockSendMailgunMail.mockRejectedValueOnce(
+      Object.assign(new Error("Domain not found: example.org"), { status: 404 })
+    );
+    try {
+      const send = sendMail(USER, new MailDataToSend({ ...MAIL, senderDomain: "example.org" }));
+      await expect(send).rejects.toThrow(
+        "This server can't send from example.org yet. Ask its operator to add the domain to Mailgun."
+      );
+      expect(alarm).not.toHaveBeenCalled();
+    } finally {
+      alarm.mockRestore();
+    }
+  });
+
+  it("still alarms any other failure", async () => {
+    const alarm = spyOn(alarmModule, "sendAlarm").mockResolvedValue(undefined as never);
+    mockSendMailgunMail.mockRejectedValueOnce(Object.assign(new Error("boom"), { status: 500 }));
+    try {
+      await expect(sendMail(USER, new MailDataToSend({ ...MAIL }))).rejects.toThrow();
+      expect(alarm).toHaveBeenCalledTimes(1);
+    } finally {
+      alarm.mockRestore();
+    }
   });
 });

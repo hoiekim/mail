@@ -11,10 +11,11 @@ export interface MailReader {
 }
 
 /**
- * The reader for an account (an address): the user's own store for a domain
- * they own, its owner's filtered to the domain for one they view, and null
- * for a domain they hold no role on. The role is read in the same request, so
- * a revoked one stops the next read.
+ * The reader for an account (an address): its owner's rows, filtered to the
+ * domain, for a domain the user views; otherwise the user's own rows, which
+ * hold whatever mail they have for the address — a domain they own, or one
+ * they used to own and whose mail stayed with them. The role is read in the
+ * same request, so a revoked one stops the next read.
  */
 export const resolveMailReader = async (
   user: SignedUser,
@@ -23,7 +24,8 @@ export const resolveMailReader = async (
   const domain = domainOfAddress(account);
   if (!domain) return null;
   const access = await getDomainAccess(user.id, domain);
-  if (!access) return null;
-  if (access.role === "owner") return { store: user };
-  return { store: { id: access.ownerId }, domains: [access.name] };
+  if (access?.role === "viewer") {
+    return { store: { id: access.ownerId }, domains: [access.name] };
+  }
+  return { store: user };
 };

@@ -1,13 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { pool } from "./client";
-import {
-  writeUser,
-  searchUser,
-  deleteReadOnlySessions,
-  deleteSessionsForUser,
-  assignDomain,
-  backfillAccountDomains,
-} from "./repositories";
+import { backfillAccountDomains, findDomain } from "./repositories";
 import { buildCreateTable, buildCreateIndex, buildIndexName } from "./database";
 import { runBootMaintenance, MaintenanceWork, Statement } from "./maintenance";
 import { sendAlarm } from "../alarm";
@@ -40,6 +33,7 @@ import {
   domainsTable,
   domainClaimsTable,
   domainRolesTable,
+  formerDomainsTable,
 } from "./models";
 
 export const version = "1";
@@ -62,6 +56,7 @@ export const tables: Table<unknown, Schema>[] = [
   domainClaimsTable,
   // Depends on domains (FK to domains.domain_id ON DELETE CASCADE).
   domainRolesTable,
+  formerDomainsTable,
 ];
 
 // The full-text search index predates `table.indexes` and keeps its original
@@ -289,30 +284,21 @@ export const bootMaintenance = async (signal?: AbortSignal): Promise<void> => {
   }
 };
 
-/** The one-time half of the domains migration; bump to re-run it. */
-const DOMAINS_MIGRATION_VERSION = "1";
-
 /**
- * Brings the domain tables up to date with the accounts, at every boot before
- * any listener binds.
+ * Checks the domain rows against the accounts, at every boot before any
+ * listener binds.
  *
- * Once (gated by its own marker, so a later change in the app is not undone at
- * the next restart):
- * - `admin`, if the account exists, owns the bare served domain, which it has
- *   always received;
- * - the read-only `admin-ro` login, which `ADMIN_RO_PASSWORD` used to seed, is
- *   retired: its password is replaced with one nobody knows and its sessions
- *   are deleted. A person with the viewer role on a domain replaces it.
+ * Every account that can sign in owns its own name under the served zone.
+ * New accounts get that row where they are created (sign-up, single sign-on,
+ * the user script), and delivery creates a missing one on first mail. This
+ * covers the accounts neither reaches before they need it: an account made by
+ * a previous version, including one made during a rolling deploy, or a row
+ * restored or imported straight into `users`. Without its row such an account
+ * cannot send, list its accounts or share its domain until mail arrives for
+ * it. The statement is idempotent: a name already taken stays with its owner.
  *
- * Every boot:
- * - sessions the read-only login issued are deleted (a previous version may
- *   still issue them during a rolling deploy, and the session store refuses
- *   them on read too);
- * - every account that can sign in owns its own name under the served zone.
- *   Idempotent, and a name already taken stays with its owner.
- *
- * Expand-only: nothing here changes or drops a column, and no mail row moves,
- * so the previous version keeps running beside this one.
+ * It also warns when no account owns the served zone itself, since mail to
+ * `*@<EMAIL_DOMAIN>` is then refused.
  */
 export const initializeDomains = async (): Promise<void> => {
   const zone = getDomain().toLowerCase();
@@ -324,56 +310,16 @@ export const initializeDomains = async (): Promise<void> => {
         "  in your .env file to receive mail."
     );
   }
-  const deletedReadOnlySessions = await deleteReadOnlySessions();
-  if (deletedReadOnlySessions > 0) {
-    logger.info("Deleted sessions the retired read-only admin login issued.", {
-      deletedSessions: deletedReadOnlySessions,
-    });
-  }
-
-  if (!(await checkSchemaAtTarget(DOMAINS_MIGRATION_VERSION, DOMAINS_MIGRATION_MARKER_KEY))) {
-    const admin = await searchUser({ username: LEGACY_ADMIN_USERNAME });
-    if (admin) await assignDomain(admin.user_id, zone);
-    await retireReadOnlyLogin();
-    await writeSchemaMarker(DOMAINS_MIGRATION_VERSION, DOMAINS_MIGRATION_MARKER_KEY);
-  }
 
   const backfilled = await backfillAccountDomains(zone);
   if (backfilled > 0) {
     logger.info("Gave accounts their own domain under the served zone.", { backfilled });
   }
-};
 
-const DOMAINS_MIGRATION_MARKER_KEY: MarkerKey = "domains_migration";
-
-/** The account that received the bare served domain before domains were rows. */
-const LEGACY_ADMIN_USERNAME = "admin";
-
-/** The read-only login `ADMIN_RO_PASSWORD` used to seed. */
-const LEGACY_READ_ONLY_USERNAME = "admin-ro";
-
-/**
- * Retires the read-only login a previous version seeded. The row is kept, so
- * nothing that refers to its user id breaks; what is destroyed is the
- * credential — the stored password is replaced with a secret that exists
- * nowhere — and the sessions it already issued. The generation moves in the
- * same write, so a session row restored after the delete fails the fence.
- */
-const retireReadOnlyLogin = async (): Promise<void> => {
-  const existing = await searchUser({ username: LEGACY_READ_ONLY_USERNAME });
-  if (!existing) return;
-
-  const revoked = await writeUser({
-    user_id: existing.user_id,
-    username: LEGACY_READ_ONLY_USERNAME,
-    password: randomBytes(32).toString("hex"),
-    email: existing.email ?? undefined,
-    password_version: (existing.password_version ?? 1) + 1,
-  });
-  if (!revoked?._id) throw new Error("Failed to retire the read-only admin login");
-
-  const deletedSessions = await deleteSessionsForUser(existing.user_id);
-  logger.info("Retired the read-only admin login that ADMIN_RO_PASSWORD seeded.", {
-    deletedSessions,
-  });
+  if (!(await findDomain(zone))) {
+    logger.warn(
+      `[CONFIG WARNING] No account owns ${zone}, so mail to *@${zone} is refused.\n` +
+        `  Give it to an account with: bun run user add-domain <username> ${zone}`
+    );
+  }
 };

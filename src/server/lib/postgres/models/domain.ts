@@ -8,6 +8,9 @@
  * - `domain_claims` holds a name someone has asked to add and not yet proved
  *   with its DNS record. A claim is per person, so a claim nobody can verify
  *   blocks no one: the row moves into `domains` only once the record resolves.
+ * - `former_domains` remembers the domains an account owned and no longer
+ *   does (removed, or verified away by someone else). Their mail stays in the
+ *   account's rows, so its account list keeps showing their addresses.
  * - `domain_roles` holds the people other than the owner who have a role on a
  *   domain. The one role stored here today is `viewer`; the owner is the
  *   domain row's `user_id`, which is what keeps a domain to exactly one owner.
@@ -19,6 +22,7 @@ import { USER_ID } from "./common";
 export const DOMAINS = "domains";
 export const DOMAIN_CLAIMS = "domain_claims";
 export const DOMAIN_ROLES = "domain_roles";
+export const FORMER_DOMAINS = "former_domains";
 
 export const DOMAIN_ID = "domain_id";
 export const DOMAIN_NAME = "name";
@@ -211,5 +215,48 @@ export const domainRolesTable = createTable({
   constraints: [`PRIMARY KEY (${DOMAIN_ID}, ${USER_ID})`],
   indexes: [{ column: USER_ID }],
   ModelClass: DomainRoleModel,
+  supportsSoftDelete: false,
+});
+
+export interface FormerDomainJSON {
+  user_id: string;
+  name: string;
+  created_at: string;
+}
+
+const formerDomainSchema = {
+  [USER_ID]: "UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE",
+  [DOMAIN_NAME]: `VARCHAR(${DOMAIN_NAME_MAX_LENGTH}) NOT NULL`,
+  [DOMAIN_CREATED_AT]: "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP",
+};
+
+type FormerDomainSchema = typeof formerDomainSchema;
+
+export class FormerDomainModel extends Model<FormerDomainJSON, FormerDomainSchema> {
+  declare user_id: string;
+  declare name: string;
+  declare created_at: string;
+
+  static typeChecker = {
+    user_id: isString,
+    name: isString,
+    created_at: isString,
+  };
+
+  constructor(data: unknown) {
+    super(data, FormerDomainModel.typeChecker);
+  }
+
+  toJSON(): FormerDomainJSON {
+    return { user_id: this.user_id, name: this.name, created_at: this.created_at };
+  }
+}
+
+export const formerDomainsTable = createTable({
+  name: FORMER_DOMAINS,
+  primaryKey: USER_ID,
+  schema: formerDomainSchema,
+  constraints: [`PRIMARY KEY (${USER_ID}, ${DOMAIN_NAME})`],
+  ModelClass: FormerDomainModel,
   supportsSoftDelete: false,
 });

@@ -12,6 +12,7 @@ import {
   domainClaimsTable,
   domainRolesTable,
   domainsTable,
+  formerDomainsTable,
   mailsTable,
   usersTable,
   DOMAIN_COUNT_MAX,
@@ -19,13 +20,18 @@ import {
 } from "../models";
 import {
   buildBackfillAccountDomains,
+  buildDeleteOwnedDomain,
   buildGetDomainAccess,
   buildGrantViewer,
   buildInsertClaim,
   buildListDomainAccess,
   buildReadersOfDomain,
 } from "./domains";
-import { buildFindViewableMailQuery, mailInDomainsCondition } from "./mails/domain-scope";
+import {
+  buildFindViewableAttachmentQuery,
+  buildFindViewableMailQuery,
+  mailInDomainsCondition,
+} from "./mails/domain-scope";
 import { membershipCondition } from "./mails/views";
 
 const PG_URL = process.env.INBOX_TEST_PG_URL;
@@ -62,7 +68,7 @@ if (PG_URL) describe("domain statements against a real Postgres", () => {
   const setup = (async () => {
     await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
     await pool.query(`CREATE SCHEMA ${SCHEMA}`);
-    for (const table of [usersTable, mailsTable, domainsTable, domainClaimsTable, domainRolesTable]) {
+    for (const table of [usersTable, mailsTable, domainsTable, domainClaimsTable, domainRolesTable, formerDomainsTable]) {
       await q(buildCreateTable(table.name, table.schema, table.constraints));
     }
   })();
@@ -155,6 +161,28 @@ if (PG_URL) describe("domain statements against a real Postgres", () => {
     }
     const oneTooMany = await addUser("late");
     expect((await run(buildGrantViewer(domainId, oneTooMany))).rowCount).toBe(0);
+  });
+
+  it("removes only the owner's domain, remembering it as a former one", async () => {
+    await fresh();
+    const owner = await addUser("owner");
+    const other = await addUser("other");
+    await addDomain("example.org", owner);
+
+    const stranger = await run(buildDeleteOwnedDomain(other, "example.org"));
+    expect(stranger.rows[0].removed).toBe(0);
+
+    const removed = await run(buildDeleteOwnedDomain(owner, "Example.ORG"));
+    expect(removed.rows[0].removed).toBe(1);
+    expect((await q("SELECT name FROM domains")).rows).toEqual([]);
+    expect((await q("SELECT user_id, name FROM former_domains")).rows).toEqual([
+      { user_id: owner, name: "example.org" },
+    ]);
+
+    // Owned and removed again: still one memory of it, and still reported removed.
+    await addDomain("example.org", owner);
+    expect((await run(buildDeleteOwnedDomain(owner, "example.org"))).rows[0].removed).toBe(1);
+    expect((await q("SELECT COUNT(*)::int AS n FROM former_domains")).rows[0].n).toBe(1);
   });
 
   it("refuses a role a CHECK does not know", async () => {
@@ -294,6 +322,31 @@ if (PG_URL) describe("domain statements against a real Postgres", () => {
       expect((await run(buildFindViewableMailQuery(viewer, hidden))).rows).toEqual([]);
       // The owner reads their own rows directly, never through a role.
       expect((await run(buildFindViewableMailQuery(owner, visible))).rows).toEqual([]);
+    });
+
+    it("finds an attachment for a viewer only on a mail of a domain they view", async () => {
+      await fresh();
+      const owner = await addUser("owner");
+      const viewer = await addUser("viewer");
+      const shared = await addDomain("example.com", owner);
+      await addDomain("example.org", owner);
+      await run(buildGrantViewer(shared, viewer));
+      const attachment = (id: string) => [{ filename: "f", content: { data: id } }];
+      await addMail(owner, {
+        subject: "s",
+        envelope_to: [{ address: "x@example.com" }],
+        attachments: attachment("att-shared"),
+      });
+      await addMail(owner, {
+        subject: "h",
+        envelope_to: [{ address: "x@example.org" }],
+        to_address: [{ address: "x@example.com" }],
+        attachments: attachment("att-hidden"),
+      });
+
+      expect((await run(buildFindViewableAttachmentQuery(viewer, "att-shared"))).rowCount).toBe(1);
+      expect((await run(buildFindViewableAttachmentQuery(viewer, "att-hidden"))).rowCount).toBe(0);
+      expect((await run(buildFindViewableAttachmentQuery(viewer, "att-none"))).rowCount).toBe(0);
     });
   });
 });

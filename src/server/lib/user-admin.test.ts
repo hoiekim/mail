@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   addDomain,
   createUser,
+  disableUser,
   setPassword,
   UserAdminError,
   type UserAdminStore,
@@ -123,5 +124,21 @@ describe("addDomain", () => {
     store.domains.set("example.net", "u-someone");
     await expect(addDomain("alice", "example.net", store)).rejects.toBeInstanceOf(UserAdminError);
     await expect(addDomain("nobody", "example.org", store)).rejects.toBeInstanceOf(UserAdminError);
+  });
+});
+
+describe("disableUser", () => {
+  it("replaces the password with one nobody knows and ends the sessions", async () => {
+    await createUser({ username: "admin-ro", password: "long-enough" }, store);
+    await disableUser("admin-ro", store);
+    expect(store.sessionsDeleted).toEqual(["u-admin-ro"]);
+    const [[userId, username, password]] = store.rotations;
+    expect([userId, username]).toEqual(["u-admin-ro", "admin-ro"]);
+    expect(password).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("refuses a missing account", async () => {
+    await expect(disableUser("nobody", store)).rejects.toBeInstanceOf(UserAdminError);
+    expect(store.rotations).toEqual([]);
   });
 });

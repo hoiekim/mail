@@ -111,7 +111,7 @@ export const sendMail = async (
 
     return response;
   } catch (error: unknown) {
-    throw sendingFailure(error);
+    throw sendingFailure(error, domain);
   }
 };
 
@@ -129,12 +129,25 @@ export const sendSystemMail = async (mailToSend: MailDataToSend) => {
   try {
     return await sendMailgunMail(domain, new MailDataToSend({ ...mailToSend, senderDomain: domain }), undefined);
   } catch (error: unknown) {
-    throw sendingFailure(error);
+    throw sendingFailure(error, domain);
   }
 };
 
-/** Logs and alarms a failed send, and words it for the person who sent it. */
-const sendingFailure = (error: unknown): MailSendingError => {
+/**
+ * Logs and alarms a failed send, and words it for the person who sent it.
+ *
+ * Mailgun answers 404 for a sending domain it doesn't have. Any user can
+ * verify a domain and send from it before the operator has added it to
+ * Mailgun, so that refusal is the sender's to act on, not a fault: it is
+ * logged at warn and never alarms.
+ */
+const sendingFailure = (error: unknown, domain: string): MailSendingError => {
+  if ((error as { status?: number } | null)?.status === 404) {
+    logger.warn("Mailgun has no sending domain for this send", { domain }, error);
+    return new MailSendingError(
+      `This server can't send from ${domain} yet. Ask its operator to add the domain to Mailgun.`
+    );
+  }
   logger.error("Email sending request failed", {}, error);
   sendAlarm(
     "Mail Send Failed",

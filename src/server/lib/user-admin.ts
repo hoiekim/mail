@@ -4,6 +4,7 @@
  * the operator creates the first one (and any other) with `scripts/user.ts`.
  */
 
+import { randomBytes } from "crypto";
 import { isValidEmail } from "./users";
 import { isRoutableUsername } from "./util";
 import { accountDomain, normalizeDomainName } from "./domains";
@@ -139,6 +140,29 @@ export const setPassword = async (
   if (!user) throw new UserAdminError(`There is no account named ${username}.`);
   await store.deleteSessions(user.user_id);
   const version = await store.rotatePassword(user.user_id, user.username, password);
+  if (version === null) throw new UserAdminError(`There is no account named ${username}.`);
+};
+
+/**
+ * Disables an account's password sign-in: the password is replaced with one
+ * that exists nowhere, in the same write that moves the credential generation,
+ * and the account's web sessions are deleted. Its mail apps lose their
+ * connection at their next command. The account and its mail stay;
+ * `setPassword` brings it back. (This is how the read-only `admin-ro` login an
+ * earlier version seeded is retired.)
+ */
+export const disableUser = async (
+  username: string,
+  store: UserAdminStore = postgresUserAdminStore
+): Promise<void> => {
+  const user = await store.findUserByUsername(username.trim());
+  if (!user) throw new UserAdminError(`There is no account named ${username}.`);
+  await store.deleteSessions(user.user_id);
+  const version = await store.rotatePassword(
+    user.user_id,
+    user.username,
+    randomBytes(32).toString("hex")
+  );
   if (version === null) throw new UserAdminError(`There is no account named ${username}.`);
 };
 

@@ -16,7 +16,6 @@ import { pool, resetPool } from "../client";
 import {
   PostgresSessionStore,
   purgeSessions,
-  deleteReadOnlySessions,
 } from "./sessions";
 
 type Mode = "ok" | "empty" | "throw";
@@ -24,7 +23,6 @@ type Mode = "ok" | "empty" | "throw";
 let writeMode: Mode = "ok";
 let readMode: Mode = "ok";
 let purgeMode: Mode = "ok";
-let revokeMode: Mode = "ok";
 // The user row's password_version the fence reads; "missing" simulates a
 // deleted account row, "throw" a lookup fault.
 let userVersionMode: number | "missing" | "throw" = 1;
@@ -103,10 +101,6 @@ const mockQuery = mock(async (sql: string, values: unknown[] = []) => {
     if (purgeMode === "throw") throw new Error("permission denied for table sessions");
     return { rows: [{ session_id: SESSION_ID }], rowCount: 1 };
   }
-  if (sql.startsWith("DELETE FROM sessions") && sql.includes("session_is_read_only")) {
-    if (revokeMode === "throw") throw new Error("deadlock detected");
-    return { rows: [{ session_id: SESSION_ID }], rowCount: 1 };
-  }
   return { rows: [] as unknown[], rowCount: 0 as number | null };
 });
 
@@ -126,7 +120,6 @@ beforeEach(() => {
   writeMode = "ok";
   readMode = "ok";
   purgeMode = "ok";
-  revokeMode = "ok";
   userVersionMode = 1;
   stampedVersion = 1;
   readOnlyRow = false;
@@ -314,17 +307,5 @@ describe("purgeSessions", () => {
 
   it("resolves the deleted count when the sweep lands", async () => {
     await expect(purgeSessions()).resolves.toBe(1);
-  });
-});
-
-describe("deleteReadOnlySessions", () => {
-  it("rejects when the delete raises, so the boot does not pass over it", async () => {
-    revokeMode = "throw";
-
-    await expect(deleteReadOnlySessions()).rejects.toThrow("deadlock detected");
-  });
-
-  it("resolves the deleted count when the delete lands", async () => {
-    await expect(deleteReadOnlySessions()).resolves.toBe(1);
   });
 });

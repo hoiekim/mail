@@ -7,6 +7,7 @@
  *   bun run user create <username> [--email <address>] [--domain <name>]...
  *   bun run user set-password <username>
  *   bun run user add-domain <username> <domain>
+ *   bun run user disable <username>
  *
  * Examples:
  *   bun run user create alice --domain example.com   # alice also receives *@example.com
@@ -18,6 +19,7 @@ import { pool } from "../src/server/lib/postgres/client";
 import {
   addDomain,
   createUser,
+  disableUser,
   setPassword,
   UserAdminError,
 } from "../src/server/lib/user-admin";
@@ -25,7 +27,8 @@ import {
 const USAGE = `Usage:
   bun run user create <username> [--email <address>] [--domain <name>]...
   bun run user set-password <username>
-  bun run user add-domain <username> <domain>`;
+  bun run user add-domain <username> <domain>
+  bun run user disable <username>`;
 
 const fail = (message: string): never => {
   console.error(message);
@@ -111,6 +114,9 @@ const main = async () => {
   } else if (command === "add-domain") {
     if (!domain) fail(USAGE);
     console.info(`${username} now owns ${await addDomain(username, domain)}.`);
+  } else if (command === "disable") {
+    await disableUser(username);
+    console.info(`${username} can no longer sign in with a password; its sessions ended.`);
   } else {
     fail(USAGE);
   }

@@ -828,8 +828,9 @@ describe("domain-scoped login", () => {
 
   it("reads the whole store of a plain login, listing every domain the person owns", async () => {
     const { args } = makeHarness();
+    const zone = (process.env.EMAIL_DOMAIN || "mydomain").toLowerCase();
     mockListDomainAccess.mockResolvedValue([
-      { ...access("owner"), name: "auditor.example.com" },
+      { ...access("owner"), name: `auditor.${zone}` },
       { ...access("owner"), name: "example.org" },
       { ...access("viewer"), name: "example.net" },
     ]);
@@ -841,6 +842,13 @@ describe("domain-scoped login", () => {
     expect(result!.store.getUser().id).toBe(auditor.id);
     expect(result!.store.getDomains()).toBeUndefined();
     expect(mockGetDomainAccess).not.toHaveBeenCalled();
+    // Account folders are read back on the primary domain, so only its
+    // addresses are listed; a folder for another domain's address would open
+    // a different mailbox.
+    expect(result!.store.getPrimaryDomain()).toBe(`auditor.${zone}`);
+    expect((result!.store as unknown as { accountDomains: string[] }).accountDomains).toEqual([
+      `auditor.${zone}`,
+    ]);
   });
 
   it("applies the same scoping to LOGIN", async () => {
