@@ -5,7 +5,6 @@ import {
   getThreadSubjectCandidates,
   ThreadRow
 } from "../postgres/repositories/mails/thread";
-import { getUserDomain } from "../util";
 import { toMailHeaderData } from "./headers";
 import {
   collectThread,
@@ -35,13 +34,12 @@ const defaultRepository: ThreadRepository = {
 };
 
 /**
- * The user's own addresses: those on the domain their mail arrives at
- * (`*@user.domain`, or `*@domain` for admin). Another user's address on this
- * server is a correspondent like any other.
+ * The user's own addresses: those on the domains they own. Another user's
+ * address on this server is a correspondent like any other.
  */
-export const ownAddressesOf = (username: string): IsOwnAddress => {
-  const domain = getUserDomain(username).toLowerCase();
-  return (address) => address.toLowerCase().split("@").pop() === domain;
+export const ownAddressesOf = (domains: string[]): IsOwnAddress => {
+  const owned = new Set(domains.map((domain) => domain.toLowerCase()));
+  return (address) => owned.has(address.toLowerCase().split("@").pop() ?? "");
 };
 
 /**
@@ -55,8 +53,8 @@ export const ownAddressesOf = (username: string): IsOwnAddress => {
 export const getThread = async (
   user: MaskedUser | SignedUser,
   mailId: string,
-  repository: ThreadRepository = defaultRepository,
-  isOwnAddress: IsOwnAddress = ownAddressesOf(user.username ?? "")
+  isOwnAddress: IsOwnAddress,
+  repository: ThreadRepository = defaultRepository
 ): Promise<MailHeaderData[]> => {
   const userId = resolveUserId(user);
   if (!userId) return [];

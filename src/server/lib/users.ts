@@ -10,6 +10,9 @@ import { evictSmtpConnections } from "./smtp-registry";
 import { usersTable, USER_ID, TOKEN, EXPIRY } from "./postgres/models";
 import { logger } from "./logger";
 import { hashPassword } from "./verify-password";
+import { isRoutableUsername } from "./util";
+import { accountDomain } from "./domains";
+import { assignDomain } from "./postgres/repositories/domains";
 
 const { APP_HOSTNAME } = process.env;
 
@@ -239,6 +242,10 @@ export const setUserInfo = async (
   evictImapSessions(username);
   evictSmtpConnections(username);
 
+  // A finished sign-up owns its own name under the served zone from now on.
+  // Idempotent, so a password reset on an existing account changes nothing.
+  if (isRoutableUsername(username)) await assignDomain(id, accountDomain(username));
+
   // The session this signs carries the bumped generation: the route issues it
   // through `updateSession`, which stamps `passwordVersion` onto the row, and
   // a stamp of the pre-bump generation would fail the fence on its first
@@ -265,8 +272,8 @@ export const createAuthenticationMail = (
   if (username) href += `&u=${username}`;
 
   return {
-    senderFullName: "Administrator",
-    sender: "admin",
+    senderFullName: "Mail",
+    sender: "no-reply",
     to: email,
     subject: "Please set your password for Mail",
     html: `

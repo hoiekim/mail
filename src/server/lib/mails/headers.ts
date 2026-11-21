@@ -25,6 +25,11 @@ export interface GetMailsOptions {
   saved: boolean;
   spam: boolean;
   pagination?: Pagination;
+  /**
+   * Only the mail of these domains of the owner's: a viewer of one domain
+   * reads its owner's rows filtered to it. Omitted, the whole store.
+   */
+  domains?: string[];
 }
 
 /**
@@ -47,7 +52,7 @@ interface UserWithId {
   user_id?: string;
 }
 
-const resolveUserId = (user: MaskedUser | SignedUser): string | undefined =>
+const resolveUserId = (user: MaskedUser | Pick<SignedUser, "id">): string | undefined =>
   "id" in user ? user.id : (user as UserWithId).user_id;
 
 async function* noBatches(): AsyncGenerator<MailHeaderResult[]> {}
@@ -90,7 +95,7 @@ export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
   });
 
 export const getMailHeaders = async (
-  user: MaskedUser | SignedUser,
+  user: MaskedUser | Pick<SignedUser, "id">,
   address: string,
   options: GetMailsOptions
 ): Promise<AsyncIterable<MailHeaderResult[]>> => {
@@ -103,6 +108,7 @@ export const getMailHeaders = async (
     sent: options.sent,
     saved: options.saved,
     spam: options.spam,
+    domains: options.domains,
     from,
     size,
   };
@@ -118,7 +124,7 @@ export interface MailHeaderPage {
 
 /** Up to `limit` rows of the list, starting after `after` (or at the top). */
 export const getMailHeaderPage = async (
-  user: MaskedUser | SignedUser,
+  user: MaskedUser | Pick<SignedUser, "id">,
   address: string,
   options: GetMailsOptions,
   limit: number,
@@ -130,7 +136,7 @@ export const getMailHeaderPage = async (
   const { ids, next } = await pgGetMailHeaderIdPage(
     userId,
     address,
-    { sent: options.sent, saved: options.saved, spam: options.spam, after },
+    { sent: options.sent, saved: options.saved, spam: options.spam, domains: options.domains, after },
     limit
   );
   return { batches: pgGetMailHeadersByIds(userId, ids), next };
@@ -138,7 +144,7 @@ export const getMailHeaderPage = async (
 
 /** The unified list's counterpart of getMailHeaderPage. */
 export const getUnifiedMailHeaderPage = async (
-  user: MaskedUser | SignedUser,
+  user: MaskedUser | Pick<SignedUser, "id">,
   addresses: string[],
   limit: number,
   after?: ListCursor
@@ -156,7 +162,7 @@ export const getUnifiedMailHeaderPage = async (
 };
 
 export const getMailHeadersDelta = async (
-  user: MaskedUser | SignedUser,
+  user: MaskedUser | Pick<SignedUser, "id">,
   address: string,
   options: GetMailsOptions,
   since: string
@@ -168,6 +174,7 @@ export const getMailHeadersDelta = async (
     sent: options.sent,
     saved: options.saved,
     spam: options.spam,
+    domains: options.domains,
   };
 
   const { as_of, headers, expunged_ids } = await pgGetMailHeadersDelta(
@@ -181,7 +188,7 @@ export const getMailHeadersDelta = async (
 };
 
 export const getUnifiedMailHeaders = async (
-  user: MaskedUser | SignedUser,
+  user: MaskedUser | Pick<SignedUser, "id">,
   addresses: string[],
   options: GetUnifiedMailsOptions
 ): Promise<AsyncIterable<MailHeaderResult[]>> => {
@@ -195,7 +202,7 @@ export const getUnifiedMailHeaders = async (
 };
 
 export const getUnifiedMailHeadersDelta = async (
-  user: MaskedUser | SignedUser,
+  user: MaskedUser | Pick<SignedUser, "id">,
   addresses: string[],
   since: string
 ): Promise<MailHeadersDelta> => {

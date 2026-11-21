@@ -33,11 +33,19 @@ import {
   membershipFilter,
   usesDomainUidSpace,
 } from "./views";
+import { domainsArrayLiteral, mailInDomainsExpression } from "./domain-scope";
+
+/** The domain predicate as a `WHERE` suffix, empty when unscoped. */
+const domainCondition = (domains: string[] | undefined, prefix: string): string =>
+  domains === undefined
+    ? ""
+    : ` AND ${mailInDomainsExpression(domainsArrayLiteral(domains), prefix)}`;
 
 export const buildCountMessagesQuery = (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   let sql: string;
   let values: ParamValue[];
@@ -48,7 +56,7 @@ export const buildCountMessagesQuery = (
   // UIDs. A `MAX(uid)` over these rows cannot back UIDNEXT: it drops when the
   // highest-UID mail is spam-quarantined, expunged or hard-deleted, and RFC
   // 3501 §2.3.1.1 requires UIDNEXT to exceed every UID ever assigned.
-  const membership = membershipExpression(mailbox, sent);
+  const membership = membershipExpression(mailbox, sent, "", domains);
 
   if (usesDomainUidSpace(mailbox)) {
     sql = `
@@ -65,7 +73,7 @@ export const buildCountMessagesQuery = (
     // exists iff the mail is in this mailbox. Legacy mails that predate
     // the write-side dual-write and never got backfilled have no mapping
     // row and are intentionally invisible to reads.
-    const joinMembership = membershipExpression(mailbox, sent, "m.");
+    const joinMembership = membershipExpression(mailbox, sent, "m.", domains);
     sql = `
         SELECT
           COUNT(*) FILTER (WHERE ${joinMembership}) as total,
@@ -90,7 +98,8 @@ export const buildMailsByRangeQuery = (
   end: number,
   useUid: boolean,
   fields: string[],
-  changedSince?: number
+  changedSince?: number,
+  domains?: string[]
 ): {
   sql: string;
   values: ParamValue[];
@@ -162,7 +171,7 @@ export const buildMailsByRangeQuery = (
       ? `, ${UID_DOMAIN} AS uid_mailbox`
       : "";
     const fieldList = `${projection}${uidMailboxAlias}${octetProjections("")}`;
-    const membership = membershipCondition(mailbox, sent);
+    const membership = membershipCondition(mailbox, sent, "", domains);
     if (useUid) {
       sql = `
           SELECT ${fieldList} FROM mails
@@ -199,7 +208,7 @@ export const buildMailsByRangeQuery = (
       qualifiedFields.length + uidMailboxAlias.length + octetsFragment.length > 0
         ? `${qualifiedFields}${uidMailboxAlias}${octetsFragment}`
         : "m.*";
-    const membership = membershipCondition(mailbox, sent, "m.");
+    const membership = membershipCondition(mailbox, sent, "m.", domains);
     if (useUid) {
       sql = `
           SELECT ${fieldList} FROM mails m
@@ -436,7 +445,8 @@ export const buildSearchMailsByUidQuery = (
   user_id: string,
   mailbox: string | null,
   sent: boolean,
-  criteria: { type: string; value?: unknown }[]
+  criteria: { type: string; value?: unknown }[],
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   // Column reference for the criterion clauses. Domain-scoped view
   // uses the plain column on `mails`; per-mailbox uses the
@@ -450,7 +460,7 @@ export const buildSearchMailsByUidQuery = (
     "m.user_id = $1",
     "m.sent = $2",
     "m.expunged = FALSE",
-    membershipExpression(mailbox, sent, "m."),
+    membershipExpression(mailbox, sent, "m.", domains),
   ];
   const values: ParamValue[] = [user_id, sent];
 
@@ -490,7 +500,8 @@ export const buildSearchMailsByUidQuery = (
 export const buildAllUidsQuery = (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   let sql: string;
   let values: ParamValue[];
@@ -498,7 +509,7 @@ export const buildAllUidsQuery = (
   if (usesDomainUidSpace(mailbox)) {
     sql = `
         SELECT ${UID_DOMAIN} as uid FROM mails
-        WHERE user_id = $1 AND sent = $2 AND expunged = FALSE${membershipCondition(mailbox, sent)}
+        WHERE user_id = $1 AND sent = $2 AND expunged = FALSE${membershipCondition(mailbox, sent, "", domains)}
         ORDER BY ${UID_DOMAIN} ASC
       `;
     values = [user_id, sent];
@@ -509,7 +520,7 @@ export const buildAllUidsQuery = (
           ON x.${USER_ID} = m.${USER_ID}
           AND x.${MAILBOX} = $3
           AND x.${MAIL_ID} = m.${MAIL_ID}
-        WHERE m.${USER_ID} = $1 AND m.${SENT} = $2 AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.")}
+        WHERE m.${USER_ID} = $1 AND m.${SENT} = $2 AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.", domains)}
         ORDER BY x.${UID} ASC
       `;
     values = [user_id, sent, mailbox];
@@ -520,7 +531,8 @@ export const buildAllUidsQuery = (
 export const buildFirstUnseenUidQuery = (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   let sql: string;
   let values: ParamValue[];
@@ -528,7 +540,7 @@ export const buildFirstUnseenUidQuery = (
   if (usesDomainUidSpace(mailbox)) {
     sql = `
         SELECT ${UID_DOMAIN} as uid FROM mails
-        WHERE user_id = $1 AND sent = $2 AND expunged = FALSE AND read = FALSE${membershipCondition(mailbox, sent)}
+        WHERE user_id = $1 AND sent = $2 AND expunged = FALSE AND read = FALSE${membershipCondition(mailbox, sent, "", domains)}
         ORDER BY ${UID_DOMAIN} ASC
         LIMIT 1
       `;
@@ -540,7 +552,7 @@ export const buildFirstUnseenUidQuery = (
           ON x.${USER_ID} = m.${USER_ID}
           AND x.${MAILBOX} = $3
           AND x.${MAIL_ID} = m.${MAIL_ID}
-        WHERE m.${USER_ID} = $1 AND m.${SENT} = $2 AND m.${EXPUNGED} = FALSE AND m.read = FALSE${membershipCondition(mailbox, sent, "m.")}
+        WHERE m.${USER_ID} = $1 AND m.${SENT} = $2 AND m.${EXPUNGED} = FALSE AND m.read = FALSE${membershipCondition(mailbox, sent, "m.", domains)}
         ORDER BY x.${UID} ASC
         LIMIT 1
       `;
@@ -567,11 +579,48 @@ export const buildExpungeDeletedFilters = (
   ...membershipFilter(mailbox, sent),
 });
 
+/**
+ * The domain-view EXPUNGE for a login scoped to some domains: the filter bag
+ * above cannot carry the domain predicate, so the rows are selected here and
+ * expunged by id, like the mapped boxes.
+ */
+export const buildScopedExpungeDeletedSelectQuery = (
+  user_id: string,
+  mailbox: string | null,
+  sent: boolean,
+  domains: string[]
+): { sql: string; values: ParamValue[] } => ({
+  sql: `
+      SELECT ${MAIL_ID} as mail_id, ${UID_DOMAIN} as uid FROM mails
+      WHERE ${USER_ID} = $1 AND ${SENT} = $2
+        AND ${DELETED} = TRUE AND ${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "", domains)}
+    `,
+  values: [user_id, sent],
+});
+
+/** The scoped twin of `buildExpungeUidsFilters`, for the same reason. */
+export const buildScopedExpungeUidsSelectQuery = (
+  user_id: string,
+  mailbox: string | null,
+  sent: boolean,
+  uids: number[],
+  domains: string[]
+): { sql: string; values: ParamValue[] } => ({
+  sql: `
+      SELECT ${MAIL_ID} as mail_id, ${UID_DOMAIN} as uid FROM mails
+      WHERE ${USER_ID} = $1 AND ${SENT} = $2
+        AND ${UID_DOMAIN} = ANY($3::bigint[])
+        AND ${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "", domains)}
+    `,
+  values: [user_id, sent, uids.map(String)],
+});
+
 /** The mapped-box twin: resolves the mail_ids and their per-mailbox UIDs. */
 export const buildExpungeDeletedSelectQuery = (
   user_id: string,
   mailbox: string | null,
-  sent: boolean
+  sent: boolean,
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   const selectSql = `
       SELECT m.${MAIL_ID} as mail_id, x.${UID} as uid FROM mails m
@@ -580,7 +629,7 @@ export const buildExpungeDeletedSelectQuery = (
         AND x.${MAILBOX} = $3
         AND x.${MAIL_ID} = m.${MAIL_ID}
       WHERE m.${USER_ID} = $1 AND m.${SENT} = $2
-        AND m.${DELETED} = TRUE AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.")}
+        AND m.${DELETED} = TRUE AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.", domains)}
     `;
   return { sql: selectSql, values: [user_id, sent, mailbox] };
 };
@@ -608,7 +657,8 @@ export const buildExpungeUidsSelectQuery = (
   user_id: string,
   mailbox: string | null,
   sent: boolean,
-  uids: number[]
+  uids: number[],
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   const uidPlaceholders = uids.map((_, i) => `$${i + 4}`).join(",");
   const selectSql = `
@@ -620,7 +670,7 @@ export const buildExpungeUidsSelectQuery = (
       WHERE m.${USER_ID} = $1
         AND m.${SENT} = $2
         AND x.${UID} IN (${uidPlaceholders})
-        AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.")}
+        AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.", domains)}
     `;
   const selectValues: ParamValue[] = [user_id, sent, mailbox, ...uids];
   return { sql: selectSql, values: selectValues };
@@ -641,7 +691,8 @@ export const buildMailFlagUpdatesQuery = (
   user_id: string,
   mailbox: string | null,
   sent: boolean,
-  mail_ids: string[]
+  mail_ids: string[],
+  domains?: string[]
 ): { sql: string; values: ParamValue[] } => {
   const flagCols = [READ, SAVED, DELETED, DRAFT, ANSWERED].join(", ");
   if (usesDomainUidSpace(mailbox)) {
@@ -649,7 +700,7 @@ export const buildMailFlagUpdatesQuery = (
       sql: `
         SELECT ${MAIL_ID} AS mail_id, ${UID_DOMAIN} AS uid, ${flagCols} FROM mails
         WHERE ${USER_ID} = $1 AND ${SENT} = $2 AND ${EXPUNGED} = FALSE
-          AND ${MAIL_ID} = ANY($3)
+          AND ${MAIL_ID} = ANY($3)${domainCondition(domains, "")}
       `,
       values: [user_id, sent, mail_ids],
     };
@@ -664,7 +715,7 @@ export const buildMailFlagUpdatesQuery = (
           AND x.${MAILBOX} = $3
           AND x.${MAIL_ID} = m.${MAIL_ID}
         WHERE m.${USER_ID} = $1 AND m.${SENT} = $2 AND m.${EXPUNGED} = FALSE
-          AND m.${MAIL_ID} = ANY($4)
+          AND m.${MAIL_ID} = ANY($4)${domainCondition(domains, "m.")}
       `,
     values: [user_id, sent, mailbox, mail_ids],
   };

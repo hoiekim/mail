@@ -4,9 +4,9 @@ import {
   getMailHeaderPage,
   getMailHeadersDelta,
   toMailHeaderData,
-  addressToUsername,
   GetMailsOptions
 } from "server";
+import { resolveMailReader } from "./reader";
 import { jsonList } from "../../respond";
 import { Route } from "../route";
 import { encodeListCursor, ListPageResponse, parseListPageParams } from "./list-page";
@@ -30,11 +30,10 @@ export const getHeadersRoute = new Route<
   async (req) => {
     const user = req.session.user!;
 
-    const { username } = user;
-    const usernameInAccount = addressToUsername(req.params.account);
-    const valid = ["admin", usernameInAccount].includes(username);
-
-    if (!valid) {
+    // The account's domain decides whose rows are read: the user's own for a
+    // domain they own, its owner's (filtered to it) for one they view.
+    const reader = await resolveMailReader(user, req.params.account);
+    if (!reader) {
       return {
         status: "failed",
         message: "Invalid request. You may not look at other users' emails."
@@ -44,7 +43,8 @@ export const getHeadersRoute = new Route<
     const options: GetMailsOptions = {
       sent: !!req.query.sent,
       saved: !!req.query.saved,
-      spam: !!req.query.spam
+      spam: !!req.query.spam,
+      domains: reader.domains
     };
 
     const { since } = req.query;
@@ -59,7 +59,7 @@ export const getHeadersRoute = new Route<
         };
       }
       const delta = await getMailHeadersDelta(
-        user,
+        reader.store,
         req.params.account,
         options,
         since
@@ -71,7 +71,7 @@ export const getHeadersRoute = new Route<
     if ("error" in pageParams) return { status: "failed", message: pageParams.error };
     if (pageParams.paged) {
       const { batches, next } = await getMailHeaderPage(
-        user,
+        reader.store,
         req.params.account,
         options,
         pageParams.limit,
@@ -83,6 +83,6 @@ export const getHeadersRoute = new Route<
       });
     }
 
-    return jsonList(await getMailHeaders(user, req.params.account, options), toMailHeaderData);
+    return jsonList(await getMailHeaders(reader.store, req.params.account, options), toMailHeaderData);
   }
 );
