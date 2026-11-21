@@ -134,7 +134,8 @@ describe("GET /api/push/public-key", () => {
 
 describe("VAPID keys at boot", () => {
   const exitCodeWith = async (publicKey: string, privateKey: string) =>
-    (await bootExpectingExit({ env: { PUSH_VAPID_PUBLIC_KEY: publicKey, PUSH_VAPID_PRIVATE_KEY: privateKey } })).exitCode;
+    // A boot that is going to refuse the keys does so within a second or two.
+    (await bootExpectingExit({ env: { PUSH_VAPID_PUBLIC_KEY: publicKey, PUSH_VAPID_PRIVATE_KEY: privateKey } }, 10_000)).exitCode;
 
   /** Boots with the pair and returns the public key the server then hands out. */
   const servedKeyWith = async (publicKey: string, privateKey: string) => {

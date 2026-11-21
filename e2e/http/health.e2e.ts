@@ -132,7 +132,7 @@ describe("GET /api/health on a server without a certificate", () => {
 describe("GET /api/health on a server with a certificate", () => {
   let server: TestServer;
   beforeAll(async () => {
-    server = await startServer({ tls: true, startupTimeoutMs: 30_000 });
+    server = await startServer({ tls: true, startupTimeoutMs: 20_000 });
   }, 90_000);
   afterAll(async () => {
     await server?.stop();

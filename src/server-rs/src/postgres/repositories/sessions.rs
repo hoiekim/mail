@@ -268,3 +268,58 @@ impl PostgresSessionStore {
         delete_session(session_id).await.map(|_| ())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cookie(secure: Option<&str>, same_site: Option<&str>) -> RuntimeCookie {
+        RuntimeCookie {
+            original_max_age: None,
+            max_age: None,
+            signed: None,
+            expires: None,
+            http_only: None,
+            path: None,
+            domain: None,
+            secure: parse_cookie_json("cookie_secure", secure).unwrap(),
+            same_site: parse_cookie_json("cookie_same_site", same_site).unwrap(),
+        }
+    }
+
+    #[test]
+    fn cookie_columns_hold_json() {
+        assert!(cookie(Some("true"), None).is_secure());
+        assert!(!cookie(Some("false"), None).is_secure());
+        assert!(!cookie(None, None).is_secure());
+        assert!(!cookie(Some(""), None).is_secure());
+        // Whatever JSON.parse makes of the text, by JavaScript's truthiness.
+        assert!(cookie(Some("\"auto\""), None).is_secure());
+        assert!(cookie(Some("1"), None).is_secure());
+        assert!(!cookie(Some("0"), None).is_secure());
+        assert!(!cookie(Some("null"), None).is_secure());
+
+        assert_eq!(cookie(None, Some("\"strict\"")).same_site_attribute(), Some("Strict"));
+        assert_eq!(cookie(None, Some("true")).same_site_attribute(), Some("Strict"));
+        assert_eq!(cookie(None, Some("\"lax\"")).same_site_attribute(), Some("Lax"));
+        assert_eq!(cookie(None, Some("\"none\"")).same_site_attribute(), Some("None"));
+        for no_attribute in [None, Some(""), Some("false"), Some("\"other\""), Some("null"), Some("1")] {
+            assert_eq!(cookie(None, no_attribute).same_site_attribute(), None, "{no_attribute:?}");
+        }
+    }
+
+    #[test]
+    fn cookie_columns_that_are_not_json_are_a_fault() {
+        assert!(parse_cookie_json("cookie_secure", Some("nonsense")).is_err());
+        assert!(parse_cookie_json("cookie_same_site", Some("strict")).is_err());
+        assert!(parse_cookie_json("cookie_same_site", Some("\"strict")).is_err());
+    }
+
+    #[test]
+    fn cookie_columns_are_written_back_as_they_were_read() {
+        for text in ["true", "false", "\"strict\"", "\"auto\"", "1", "null"] {
+            let parsed = parse_cookie_json("cookie_secure", Some(text)).unwrap().unwrap();
+            assert_eq!(js::json_stringify(&parsed), text);
+        }
+    }
+}

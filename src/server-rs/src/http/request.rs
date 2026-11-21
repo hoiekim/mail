@@ -492,6 +492,49 @@ mod tests {
         assert!(query.truthy("a") && !query.truthy("b") && !query.truthy("missing"));
     }
 
+    fn gzip(text: &str) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(text.as_bytes()).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn deflate(text: &str) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(text.as_bytes()).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn decoded(encoding: &str, body: Vec<u8>) -> Result<Vec<u8>, u16> {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", encoding.parse().unwrap());
+        decode_body(body, &headers, 1024).map_err(|error| error.status)
+    }
+
+    #[test]
+    fn compressed_bodies() {
+        assert_eq!(decoded("gzip", gzip("{}")), Ok(b"{}".to_vec()));
+        assert_eq!(decoded("GZIP", gzip("{}")), Ok(b"{}".to_vec()));
+        assert_eq!(decoded("deflate", deflate("{}")), Ok(b"{}".to_vec()));
+        assert_eq!(decoded("identity", b"{}".to_vec()), Ok(b"{}".to_vec()));
+        assert_eq!(decoded("br", b"{}".to_vec()), Err(415));
+        // Several gzip members in a row are one body.
+        assert_eq!(decoded("gzip", [gzip("{\"a\":"), gzip("1}")].concat()), Ok(b"{\"a\":1}".to_vec()));
+        assert_eq!(decoded("gzip", [gzip(""), gzip("{}"), gzip("")].concat()), Ok(b"{}".to_vec()));
+        // Anything else after the data is an error, as is data cut short.
+        assert_eq!(decoded("gzip", [gzip("{}"), b"trailing".to_vec()].concat()), Err(400));
+        assert_eq!(decoded("deflate", [deflate("{}"), b"zz".to_vec()].concat()), Err(400));
+        let whole = gzip("{\"a\":1}");
+        assert_eq!(decoded("gzip", whole[..whole.len() - 5].to_vec()), Err(400));
+        assert_eq!(decoded("gzip", b"{}".to_vec()), Err(400));
+        assert_eq!(decoded("deflate", gzip("{}")), Err(400));
+        // The limit is on what comes out.
+        assert_eq!(decoded("gzip", gzip(&" ".repeat(1024))).map(|body| body.len()), Ok(1024));
+        assert_eq!(decoded("gzip", gzip(&" ".repeat(1025))), Err(413));
+        assert_eq!(decoded("deflate", deflate(&" ".repeat(100_000))), Err(413));
+    }
+
     #[test]
     fn content_types() {
         assert_eq!(media_type_of(Some("Application/JSON; charset=utf-8")), "application/json");
