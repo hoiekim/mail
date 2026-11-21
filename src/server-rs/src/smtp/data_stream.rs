@@ -166,6 +166,12 @@ impl SmtpDataStream {
         error.get_ref().is_some_and(|inner| inner.is::<SmtpDataAbandoned>())
     }
 
+    /// The bytes that have arrived and not been read yet. The connection
+    /// stops reading its socket while this is at the high-water mark.
+    pub fn buffered(&self) -> usize {
+        self.shared.state.lock().unwrap().buffered
+    }
+
     /// The next piece of the message, `None` at its end.
     pub async fn next_chunk(&mut self) -> io::Result<Option<Bytes>> {
         std::future::poll_fn(|cx| self.poll_chunk(cx, usize::MAX)).await

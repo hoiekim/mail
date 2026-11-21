@@ -330,6 +330,13 @@ impl SmtpServer {
         self.shared.connection_count()
     }
 
+    /// The bytes of replies waiting for clients to read them, over every
+    /// connection. A connection stops taking commands while it holds more
+    /// than a socket buffer's worth.
+    pub fn queued_reply_bytes(&self) -> usize {
+        self.shared.connections.lock().unwrap().values().map(|connection| connection.queued_reply_bytes()).sum()
+    }
+
     /// Calls `listener` for every connection failure worth reporting.
     pub fn on_error(&self, listener: impl Fn(&SmtpServerError) + Send + Sync + 'static) {
         self.shared.error_listeners.lock().unwrap().push(Arc::new(listener));

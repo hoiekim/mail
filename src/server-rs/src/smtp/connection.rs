@@ -27,6 +27,7 @@ use std::future::Future;
 use std::io;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -298,12 +299,18 @@ pub(crate) enum Control {
 pub(crate) struct ConnectionHandle {
     /// `session.user`, kept current for the eviction sweep.
     user: Mutex<Option<String>>,
+    /// The bytes of replies the client has not been sent yet.
+    queued: AtomicUsize,
     control: mpsc::UnboundedSender<Control>,
 }
 
 impl ConnectionHandle {
     pub fn user(&self) -> Option<String> {
         self.user.lock().unwrap().clone()
+    }
+
+    pub fn queued_reply_bytes(&self) -> usize {
+        self.queued.load(Ordering::Relaxed)
     }
 
     /// Answers the client `421 <text>` and closes the connection.
@@ -406,7 +413,7 @@ impl Connection {
     /// Registers the connection with its listener and returns its task's state.
     pub fn new(server: Arc<ServerShared>, io: Io, remote: Remote) -> Connection {
         let (sender, control) = mpsc::unbounded_channel();
-        let handle = Arc::new(ConnectionHandle { user: Mutex::new(None), control: sender });
+        let handle = Arc::new(ConnectionHandle { user: Mutex::new(None), queued: AtomicUsize::new(0), control: sender });
         let id = server.add_connection(handle.clone());
         let secure = server.options.secure;
         let session = SmtpSession {
@@ -477,6 +484,7 @@ impl Connection {
                 }
             }
 
+            self.handle.queued.store(self.out.len(), Ordering::Relaxed);
             let deadline = [self.greeting_at, self.idle_at, self.stall_at].into_iter().flatten().min();
             let want_read = self.lookahead.is_none() && !self.eof;
             let want_shutdown = self.ended && !self.shut_down;

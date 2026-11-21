@@ -62,6 +62,64 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 
 type BoxedStream = Box<dyn Stream>;
 
+/// A stream whose first write carries `preface` in front of it, in the same
+/// segment: a PROXY header and the TLS ClientHello arriving in one read.
+struct Prefaced<S> {
+    preface: Vec<u8>,
+    inner: S,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Prefaced<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Prefaced<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.preface.is_empty() {
+            return std::pin::Pin::new(&mut self.inner).poll_write(cx, buf);
+        }
+        let mut joined = self.preface.clone();
+        joined.extend_from_slice(buf);
+        let preface = self.preface.len();
+        match std::pin::Pin::new(&mut self.inner).poll_write(cx, &joined) {
+            std::task::Poll::Ready(Ok(written)) if written >= preface => {
+                self.preface.clear();
+                std::task::Poll::Ready(Ok(written - preface))
+            }
+            std::task::Poll::Ready(Ok(written)) => {
+                self.preface.drain(..written);
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 /// One byte per character, as the recorder writes what it sends and receives.
 pub fn binary(bytes: &[u8]) -> String {
     bytes.iter().map(|&byte| char::from(byte)).collect()
@@ -253,6 +311,12 @@ impl Client {
 
     /// The client side of a TLS handshake, accepting any certificate.
     pub async fn start_tls(&mut self) -> String {
+        self.start_tls_behind(&[]).await
+    }
+
+    /// A TLS handshake whose ClientHello leaves in one write with `preface`
+    /// in front of it.
+    pub async fn start_tls_behind(&mut self, preface: &[u8]) -> String {
         let stream: BoxedStream = match self.raw.take() {
             Some(raw) => Box::new(raw),
             None => {
@@ -260,6 +324,7 @@ impl Client {
                 reader.unsplit(self.writer.take().expect("the client is connected"))
             }
         };
+        let stream: BoxedStream = Box::new(Prefaced { preface: preface.to_vec(), inner: stream });
         let connector = mail_server::tls::insecure_connector();
         let name = rustls::pki_types::ServerName::try_from("localhost").expect("a valid server name");
         match connector.connect(name, stream).await {
