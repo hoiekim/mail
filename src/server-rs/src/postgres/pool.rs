@@ -478,7 +478,13 @@ impl Pool {
     }
 
     async fn checkout(&self) -> DbResult<Object> {
-        self.inner.get().await.map_err(|error| DbError::new(error.to_string()))
+        // A connection the server refused carries the server's own message
+        // ("database … is not currently accepting connections"), which is
+        // what an alarm about it should say.
+        self.inner.get().await.map_err(|error| match error {
+            deadpool_postgres::PoolError::Backend(backend) => DbError::from(backend),
+            other => DbError::new(other.to_string()),
+        })
     }
 
     pub async fn query(&self, sql: &str, params: &[Param]) -> DbResult<QueryResult> {
