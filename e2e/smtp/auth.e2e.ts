@@ -176,6 +176,13 @@ describe("AUTH PLAIN", () => {
     expect((await smtp.send("QUIT")).raw).toBe("500 Error: invalid userdata");
     expect((await smtp.send("NOOP")).raw).toBe("250 OK");
   });
+
+  test("except an HTTP request line, which ends the connection even there", async () => {
+    const smtp = await connect("smtps");
+    expect((await smtp.send("AUTH PLAIN")).raw).toBe("334 ");
+    expect((await smtp.send("GET / HTTP/1.1")).raw).toBe("421 HTTP requests not allowed");
+    expect(await smtp.waitForClose(5000)).toBe(true);
+  });
 });
 
 describe("AUTH LOGIN", () => {
@@ -394,6 +401,15 @@ describe("a credential that changes under an open session", () => {
     expect((await smtp.data("Subject: too late\r\n\r\nbody\r\n")).raw).toBe(CHANGED);
     expect(await smtp.waitForClose(5000)).toBe(true);
     expect(server.mailgun.requests.length).toBe(sent);
+  });
+
+  test("MAIL FROM is answered 451 when the account can no longer be read", async () => {
+    const user = await createUser(server, uniqueName("rot"));
+    const smtp = await signedIn(user);
+    await server.db.query("UPDATE users SET password = NULL WHERE username = $1", [user.username]);
+    expect((await smtp.send(`MAIL FROM:<x@${user.username}.mail.test>`)).raw).toBe("451 4.3.0 Error: temporary lookup failure");
+    // Transient: the connection stays open.
+    expect((await smtp.send("NOOP")).raw).toBe("250 OK");
   });
 
   test("a new sign-in with the same password works after the change", async () => {

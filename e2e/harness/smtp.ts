@@ -409,6 +409,18 @@ export class SmtpClient {
     });
   }
 
+  /**
+   * Stops reading from the socket, the way a stalled client does, so the
+   * server's replies back up; `resume` reads again.
+   */
+  pause(): void {
+    this.socket.pause();
+  }
+
+  resume(): void {
+    this.socket.resume();
+  }
+
   /** Sends `QUIT`, reads `221` if it comes, and closes. */
   async quit(): Promise<SmtpReply | undefined> {
     if (this.isClosed) return undefined;

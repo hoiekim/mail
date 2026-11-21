@@ -16,13 +16,16 @@ import {
 // `server` is reached directly, so every connection is 127.0.0.1 and shares
 // one recipient-probe budget: no test here may name an unknown local mailbox.
 // Those tests run against `proxied`, where each one picks its own client address.
+// `unconfigured` was started with no EMAIL_DOMAIN at all.
 let server: TestServer;
 let proxied: TestServer;
+let unconfigured: TestServer;
 
 beforeAll(async () => {
-  [server, proxied] = await Promise.all([
+  [server, proxied, unconfigured] = await Promise.all([
     startServer({ tls: true, env: { ADMIN_RO_PASSWORD: "read-only-password-e2e" } }),
     startServer({ env: { PROXY_PROTOCOL: "true" } }),
+    startServer({ env: { EMAIL_DOMAIN: undefined } }),
   ]);
   await createUser(server, "alice");
   await createUser(server, "bob");
@@ -32,7 +35,7 @@ beforeAll(async () => {
 afterEach(closeClients);
 
 afterAll(async () => {
-  await Promise.all([server?.stop(), proxied?.stop()]);
+  await Promise.all([server?.stop(), proxied?.stop(), unconfigured?.stop()]);
 });
 
 let nextAddress = 0;
@@ -426,6 +429,21 @@ describe("unknown local recipients", () => {
     expect((await other.send("RCPT TO:<x@alice.mail.test>")).raw).toBe(ACCEPTED);
   }, 30_000);
 
+  test("a recipient whose account row cannot be read is 451, and is not charged to the budget", async () => {
+    // NOTE: an account with no password yet (a sign-up in progress) makes the
+    // lookup throw; the recipient is told to retry rather than refused.
+    const name = uniqueName("pending");
+    await proxied.db.query("INSERT INTO users (username, email) VALUES ($1, $2)", [name, `${name}@elsewhere.example`]);
+    const smtp = await from(freshAddress());
+    await smtp.send("MAIL FROM:<bounce@remote.example>");
+    const started = Date.now();
+    for (let i = 0; i < 12; i++) {
+      expect((await smtp.rcptTo(`x${i}@${name}.mail.test`)).raw).toBe("451 4.3.0 Error: temporary lookup failure");
+    }
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect((await smtp.send("RCPT TO:<x@alice.mail.test>")).raw).toBe(ACCEPTED);
+  });
+
   test("recipients that resolve are never charged to the budget", async () => {
     const smtp = await from(freshAddress());
     await smtp.send("MAIL FROM:<bounce@remote.example>");
@@ -523,6 +541,22 @@ describe("relay refusal", () => {
       { address: "c@elsewhere.example" },
     ]);
     expect(server.mailgun.requests).toEqual([]);
+  });
+});
+
+describe("a server with no EMAIL_DOMAIN", () => {
+  test("accepts every recipient and then fails every message with a transient 450", async () => {
+    // NOTE: the server falls back to the domain "mydomain" for its accounts,
+    // but SMTP treats the missing setting as "not configured": no recipient
+    // is checked, and DATA is refused with a code that invites a retry.
+    const smtp = await session(unconfigured);
+    expect((await smtp.send("MAIL FROM:<a@remote.example>")).raw).toBe(ACCEPTED);
+    for (const recipient of ["x@nobody.mail.test", "x@mydomain", "admin@mydomain", "x@elsewhere.example"]) {
+      expect({ recipient, reply: (await smtp.rcptTo(recipient)).raw }).toEqual({ recipient, reply: ACCEPTED });
+    }
+    expect((await smtp.data(plain())).raw).toBe("450 Email service not configured");
+    expect(await unconfigured.db.query("SELECT 1 FROM mails")).toEqual([]);
+    expect((await smtp.send("NOOP")).raw).toBe("250 OK");
   });
 });
 

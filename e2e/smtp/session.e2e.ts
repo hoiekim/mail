@@ -465,6 +465,24 @@ describe("pipelining", () => {
     expect((await mailByMessageId(server, second)).envelope_from).toEqual([{ address: "b@remote.example" }]);
   });
 
+  test("a flood of pipelined commands is answered in full and in order, however slowly the client reads", async () => {
+    const smtp = await session(server);
+    const count = 100_000;
+    // The client stops reading, writes 600 kB of commands, and only later
+    // reads the 800 kB of replies: the server has to hold back, not drop.
+    smtp.pause();
+    smtp.write(`${"NOOP\r\n".repeat(count)}RSET\r\n`);
+    expect(await smtp.staysQuiet(500)).toBe(true);
+    smtp.resume();
+    const seen = new Map<string, number>();
+    for (let i = 0; i < count; i++) {
+      const reply = (await smtp.read()).raw;
+      seen.set(reply, (seen.get(reply) ?? 0) + 1);
+    }
+    expect([...seen]).toEqual([["250 OK", count]]);
+    expect((await smtp.read()).raw).toBe("250 Flushed");
+  });
+
   test("a command split across writes is read once its line ends", async () => {
     const smtp = await open(server);
     await smtp.writeFlushed("NO");

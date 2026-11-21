@@ -1,5 +1,14 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { ADMIN_PASSWORD, MAILGUN_KEY, createUser, startServer, waitFor, type MailgunRequest, type TestServer, type TestUser } from "../harness";
+import {
+  ADMIN_PASSWORD,
+  MAILGUN_KEY,
+  createUser,
+  startServer,
+  waitFor,
+  type MailgunRequest,
+  type TestServer,
+  type TestUser,
+} from "../harness";
 import type { SmtpClient } from "../harness/smtp";
 import {
   FIXED_DATE,
@@ -22,11 +31,17 @@ import {
 
 // Authenticated sending: a signed-in user's message is handed to Mailgun and
 // a copy is stored as Sent.
+// `offline` is pointed at a Mailgun address nothing listens on.
 let server: TestServer;
+let offline: TestServer;
 let alice: TestUser;
 
 beforeAll(async () => {
-  server = await startServer({ tls: true });
+  [server, offline] = await Promise.all([
+    startServer({ tls: true }),
+    // Port 1 on loopback: reserved, and refused by every sane machine.
+    startServer({ tls: true, env: { MAILGUN_URL: "http://127.0.0.1:1" } }),
+  ]);
   alice = await createUser(server, "alice");
   await createUser(server, "bob");
 }, 90_000);
@@ -36,7 +51,7 @@ beforeEach(() => server.mailgun.reset());
 afterEach(closeClients);
 
 afterAll(async () => {
-  await server?.stop();
+  await Promise.all([server?.stop(), offline?.stop()]);
 });
 
 const QUEUED = "250 OK: message queued";
@@ -678,6 +693,15 @@ describe("when Mailgun refuses", () => {
     expect(alarm.description).toMatch(/^\*\*Error:\*\* /);
   });
 
+  test("when Mailgun cannot be reached at all, the 450 carries the connection error's code", async () => {
+    const smtp = await open(offline, "smtps");
+    await smtp.ehlo();
+    expect((await smtp.authPlain("admin", ADMIN_PASSWORD)).raw).toBe("235 Authentication successful");
+    const result = await smtp.transaction({ from: "office@mail.test", to: ["bob@remote.example"], data: crlf("Subject: offline", "", "x") });
+    expect(result.final.raw).toBe("450 ECONNREFUSED");
+    expect(await offline.db.query("SELECT 1 FROM mails")).toEqual([]);
+  });
+
   test("with only Bcc recipients, one success is enough; if all fail the first failure answers", async () => {
     const smtp = await signIn("alice", alice.password);
     server.mailgun.replyAlways((request) =>
@@ -723,6 +747,14 @@ describe("submissions the server refuses itself", () => {
     );
     const { result } = await sendAsAlice({ to: ["bob@remote.example"] }, "To: bob@remote.example", `Subject: ${"s".repeat(998)}`, "", "x");
     expect(result.final.raw).toBe(QUEUED);
+  });
+
+  test("a message the parser gives up on", async () => {
+    const parts: string[] = [];
+    for (let i = 0; i < 1000; i++) parts.push("--p", "", "x");
+    expect(
+      await refused({ to: ["bob@remote.example"] }, "Subject: too many parts", 'Content-Type: multipart/mixed; boundary="p"', "", ...parts, "--p--")
+    ).toBe("450 Max allowed child nodes exceeded");
   });
 
   test("a message over the size ceiling is 552 and nothing is sent", async () => {

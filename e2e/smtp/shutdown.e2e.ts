@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import fs from "fs";
 import net from "net";
+import path from "path";
 import { startServer, waitFor, type TestServer } from "../harness";
 import { closeClients, mailByMessageId, messageId, plain, session } from "./support";
 
@@ -69,3 +71,21 @@ test("on SIGTERM: commands get 421, a message in flight is still taken, idle con
 
   expect(await exited).toBe(0);
 }, 40_000);
+
+test("at boot, working files a previous process left behind are removed and stored attachments kept", async () => {
+  const attachments = path.join(server.cwd, "attachments");
+  const leftover = path.join(attachments, ".incoming", "11111111-2222-4333-8444-555555555555");
+  fs.mkdirSync(leftover, { recursive: true });
+  fs.writeFileSync(path.join(leftover, "0"), "half-written attachment");
+  fs.writeFileSync(path.join(attachments, "kept-attachment"), "stored earlier");
+
+  await server.restart();
+
+  expect(fs.existsSync(path.join(attachments, ".incoming"))).toBe(false);
+  expect(fs.readFileSync(path.join(attachments, "kept-attachment"), "utf8")).toBe("stored earlier");
+  // And the restarted server takes mail again.
+  const id = messageId("restart");
+  const smtp = await session(server);
+  const result = await smtp.transaction({ from: "bounce@remote.example", to: ["hello@mail.test"], data: plain({ messageId: id }) });
+  expect(result.final.raw).toBe("250 OK: message queued");
+}, 60_000);
