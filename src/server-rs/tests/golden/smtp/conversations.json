@@ -5389,6 +5389,47 @@
   "errors": []
  },
  {
+  "name": "the client leaves instead of starting TLS, in the middle of a transaction",
+  "server": {"secure":false,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"EHLO client.test\r\n","on":"c"},
+   {"reply":true,"on":"c"},
+   {"send":"MAIL FROM:<a@x.org>\r\n"},
+   {"reply":true},
+   {"send":"RCPT TO:<b@y.org>\r\n"},
+   {"reply":true},
+   {"send":"STARTTLS\r\n"},
+   {"reply":true},
+   {"wait":50},
+   {"end":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
+   "220 mx.test ESMTP",
+   null,
+   "250-mx.test Nice to meet you, [127.0.0.1]\r\n250-PIPELINING\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250-AUTH LOGIN PLAIN\r\n250-STARTTLS\r\n250 SIZE 1048576",
+   null,
+   "250 Accepted",
+   null,
+   "250 Accepted",
+   null,
+   "220 Ready to start TLS",
+   null,
+   null,
+   "closed"
+  ],
+  "calls": [
+   {"hook":"onMailFrom","address":{"address":"a@x.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":false,"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}},
+   {"hook":"onRcptTo","address":{"address":"b@y.org","args":false},"session":{"id":"<id>","remoteAddress":"127.0.0.1","remotePort":"<port>","localAddress":"127.0.0.1","localPort":"<port>","secure":false,"user":null,"hostNameAppearsAs":"client.test","envelope":{"mailFrom":{"address":"a@x.org","args":false},"rcptTo":[],"bodyType":"7bit","smtpUtf8":false,"requireTLS":false},"transaction":1,"passwordVersion":null}}
+  ],
+  "errors": [
+   {"stage":"connect","remoteAddress":"127.0.0.1"}
+  ]
+ },
+ {
   "name": "implicit TLS",
   "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
   "steps": [
@@ -5494,6 +5535,26 @@
    {"closed":true}
   ],
   "observed": [
+   null,
+   null,
+   "closed"
+  ],
+  "calls": [],
+  "errors": [
+   {"stage":"connect","remoteAddress":"127.0.0.1"}
+  ]
+ },
+ {
+  "name": "a client that leaves the implicit TLS port without a handshake",
+  "server": {"secure":true,"tls":true,"proxyProtocol":false,"allowInsecureAuth":false,"name":"mx.test","size":1048576,"maxClients":10,"closeTimeout":400,"socketTimeout":null},
+  "steps": [
+   {"open":"c"},
+   {"wait":50},
+   {"end":true},
+   {"closed":true}
+  ],
+  "observed": [
+   null,
    null,
    null,
    "closed"

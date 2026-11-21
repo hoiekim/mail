@@ -1029,6 +1029,13 @@ export const conversations: Conversation[] = [
   conversation("the client leaves instead of starting TLS", [hello(), cmd("STARTTLS"), wait(50), end(), closed()], TLS, {
     errors: true
   }),
+  conversation("the client leaves instead of starting TLS, in the middle of a transaction", [
+    envelope(),
+    cmd("STARTTLS"),
+    wait(50),
+    end(),
+    closed()
+  ], TLS, { errors: true }),
 
   // ── Implicit TLS ────────────────────────────────────────────────────────
   conversation("implicit TLS", [
@@ -1059,6 +1066,10 @@ export const conversations: Conversation[] = [
     secure: true
   }, { errors: true }),
   conversation("an HTTP request sent to the implicit TLS port", [open(), send("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), closed()], {
+    tls: true,
+    secure: true
+  }, { errors: true }),
+  conversation("a client that leaves the implicit TLS port without a handshake", [open(), wait(50), end(), closed()], {
     tls: true,
     secure: true
   }, { errors: true }),
