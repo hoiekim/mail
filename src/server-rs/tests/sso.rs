@@ -962,3 +962,43 @@ async fn an_event_that_cannot_be_applied_is_a_fault_so_it_retries() {
     let error = receive_sso_event_with(&sso, &token, &CountedEffects::default()).await.unwrap_err();
     assert_eq!(error.to_string(), "the discovery document names a different issuer");
 }
+
+// ---------------------------------------------------------------------------
+// What the HTTP layer and the mail servers await
+// ---------------------------------------------------------------------------
+
+fn assert_send<T: Send>(_future: &T) {}
+
+/// The request pipeline and the mail servers run on a multi-threaded runtime:
+/// every future they are handed has to be able to move between threads.
+#[test]
+fn the_futures_the_servers_await_can_cross_threads() {
+    use mail_server::auth_client::AuthEvent;
+    use mail_server::sso::app_password::check_app_password;
+    use mail_server::sso::events::{handle_sso_event, receive_sso_event};
+    use mail_server::sso::session::enforce_sso_session;
+    use mail_server::sso::sign_in::finish_sign_in;
+    use mail_server::sso::{build_sso, ClientOverrides};
+
+    let env = SsoEnv {
+        auth_issuer: Some(FAKE_ISSUER.into()),
+        auth_client_id: Some("mail".into()),
+        auth_client_secret: Some(common::FAKE_CLIENT_SECRET.into()),
+        app_hostname: Some("mail.example.test".into()),
+        ..Default::default()
+    };
+    let sso = Arc::new(build_sso(&env, ClientOverrides::default()).unwrap().unwrap());
+    let auth = sso_auth(t0(), Some("rt_alice"));
+    let event = AuthEvent::default();
+    let mut session = FakeSession::of(None);
+
+    assert_send(&start_sign_in(&sso, Some("/mail")));
+    assert_send(&finish_sign_in(&sso, "/api/auth/callback", None));
+    assert_send(&enforce_sso_session(&mut session));
+    assert_send(&sign_out_of_provider(&sso, &auth));
+    assert_send(&receive_sso_event(&sso, ""));
+    assert_send(&handle_sso_event(&event));
+    assert_send(&check_app_password(&sso, "alice", "secret", AppPasswordScope::Imap, "127.0.0.1"));
+    assert_send(&sso.client.refresh("rt_alice"));
+    assert_send(&sso.client.introspect("secret", None));
+}
