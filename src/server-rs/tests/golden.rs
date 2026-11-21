@@ -74,7 +74,12 @@ fn compact_deep(value: Value) -> Value {
     match value {
         Value::String(text) => compact(&text),
         Value::Array(items) => Value::Array(items.into_iter().map(compact_deep).collect()),
-        Value::Object(fields) => Value::Object(fields.into_iter().map(|(key, item)| (key, compact_deep(item))).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, item)| (key, compact_deep(item)))
+                .collect(),
+        ),
         other => other,
     }
 }
@@ -116,7 +121,11 @@ struct Comparison {
 
 impl Comparison {
     fn new(name: &'static str) -> Comparison {
-        Comparison { name, total: 0, failures: Vec::new() }
+        Comparison {
+            name,
+            total: 0,
+            failures: Vec::new(),
+        }
     }
 
     fn check(&mut self, input: &dyn std::fmt::Debug, expected: &Value, actual: Value) {
@@ -167,8 +176,14 @@ fn text_of(value: &Value) -> &str {
 #[test]
 fn charset_labels_and_decoding() {
     let fixture = fixture("charset");
-    let inputs: Vec<Vec<u8>> = section(&fixture, "inputs").iter().map(|input| hex::decode(text_of(input)).unwrap()).collect();
-    let few: Vec<&[u8]> = section(&fixture, "few").iter().map(|index| inputs[index.as_u64().unwrap() as usize].as_slice()).collect();
+    let inputs: Vec<Vec<u8>> = section(&fixture, "inputs")
+        .iter()
+        .map(|input| hex::decode(text_of(input)).unwrap())
+        .collect();
+    let few: Vec<&[u8]> = section(&fixture, "few")
+        .iter()
+        .map(|index| inputs[index.as_u64().unwrap() as usize].as_slice())
+        .collect();
     let all: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
 
     let mut comparison = Comparison::new("charset");
@@ -230,7 +245,11 @@ fn charset_labels_and_decoding() {
     for case in section(&fixture, "utf8") {
         let bytes = hex::decode(text_of(&case[0])).unwrap();
         comparison.check(&case[0], &case[1], json!(decode_body_bytes(&bytes, Some("utf-8"))));
-        comparison.check(&case[0], &case[2], json!(decode_header_bytes(&bytes, "unicode-1-1-utf-8")));
+        comparison.check(
+            &case[0],
+            &case[2],
+            json!(decode_header_bytes(&bytes, "unicode-1-1-utf-8")),
+        );
     }
     comparison.finish();
 }
@@ -241,29 +260,39 @@ fn charset_labels_and_decoding() {
 
 #[test]
 fn header_decode_words() {
-    compare("decodeWords", section(&fixture("header"), "decodeWords"), |input| json!(decode_words(text_of(input))));
+    compare("decodeWords", section(&fixture("header"), "decodeWords"), |input| {
+        json!(decode_words(text_of(input)))
+    });
 }
 
 #[test]
 fn header_parse_header_value() {
-    compare("parseHeaderValue", section(&fixture("header"), "parseHeaderValue"), |input| {
-        serde_json::to_value(parse_header_value(text_of(input))).unwrap()
-    });
+    compare(
+        "parseHeaderValue",
+        section(&fixture("header"), "parseHeaderValue"),
+        |input| serde_json::to_value(parse_header_value(text_of(input))).unwrap(),
+    );
 }
 
 #[test]
 fn header_split_header_line() {
-    compare("splitHeaderLine", section(&fixture("header"), "splitHeaderLine"), |input| {
-        let line = split_header_line(text_of(input));
-        json!({ "key": line.key, "value": line.value })
-    });
+    compare(
+        "splitHeaderLine",
+        section(&fixture("header"), "splitHeaderLine"),
+        |input| {
+            let line = split_header_line(text_of(input));
+            json!({ "key": line.key, "value": line.value })
+        },
+    );
 }
 
 #[test]
 fn header_raw_octets_as_utf8() {
-    compare("rawOctetsAsUtf8", section(&fixture("header"), "rawOctetsAsUtf8"), |input| {
-        json!(raw_octets_as_utf8(text_of(input)))
-    });
+    compare(
+        "rawOctetsAsUtf8",
+        section(&fixture("header"), "rawOctetsAsUtf8"),
+        |input| json!(raw_octets_as_utf8(text_of(input))),
+    );
 }
 
 #[test]
@@ -272,9 +301,11 @@ fn header_message_ids() {
     compare("parseMessageIdList", section(&fixture, "parseMessageIdList"), |input| {
         json!(parse_message_id_list(text_of(input)))
     });
-    compare("ensureMessageIdFormat", section(&fixture, "ensureMessageIdFormat"), |input| {
-        json!(ensure_message_id_format(text_of(input)))
-    });
+    compare(
+        "ensureMessageIdFormat",
+        section(&fixture, "ensureMessageIdFormat"),
+        |input| json!(ensure_message_id_format(text_of(input))),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -283,9 +314,11 @@ fn header_message_ids() {
 
 #[test]
 fn address_parse_address_header() {
-    compare("parseAddressHeader", section(&fixture("address"), "parseAddressHeader"), |input| {
-        serde_json::to_value(parse_address_header(text_of(input))).unwrap()
-    });
+    compare(
+        "parseAddressHeader",
+        section(&fixture("address"), "parseAddressHeader"),
+        |input| serde_json::to_value(parse_address_header(text_of(input))).unwrap(),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -295,8 +328,12 @@ fn address_parse_address_header() {
 #[test]
 fn mime_text_to_html() {
     let fixture = fixture("mime-text");
-    compare("textToHtml", section(&fixture, "textToHtml"), |input| json!(text_to_html(text_of(input))));
-    compare("encodeEntities", section(&fixture, "encodeEntities"), |input| json!(encode_entities(text_of(input))));
+    compare("textToHtml", section(&fixture, "textToHtml"), |input| {
+        json!(text_to_html(text_of(input)))
+    });
+    compare("encodeEntities", section(&fixture, "encodeEntities"), |input| {
+        json!(encode_entities(text_of(input)))
+    });
     compare("addressesToHtml", section(&fixture, "addressesToHtml"), |input| {
         json!(addresses_to_html(&parse_address_header(text_of(input)).value))
     });
@@ -306,8 +343,11 @@ fn mime_text_to_html() {
 /// come from.
 fn embedded_headers(spec: &Value) -> EmbeddedHeaders {
     let recipients = |name: &str| -> Option<OneOrMany<ParsedAddress>> {
-        let mut parsed: Vec<ParsedAddress> =
-            spec[name].as_array()?.iter().map(|value| parse_address_header(text_of(value))).collect();
+        let mut parsed: Vec<ParsedAddress> = spec[name]
+            .as_array()?
+            .iter()
+            .map(|value| parse_address_header(text_of(value)))
+            .collect();
         match parsed.len() {
             0 => None,
             1 => parsed.pop().map(OneOrMany::One),
@@ -317,7 +357,9 @@ fn embedded_headers(spec: &Value) -> EmbeddedHeaders {
     EmbeddedHeaders {
         from: spec["from"].as_str().map(parse_address_header),
         subject: spec["subject"].as_str().map(str::to_string),
-        date: spec["date"].as_i64().map(|ms| MessageDate::from_millis(ms).expect("a date in range")),
+        date: spec["date"]
+            .as_i64()
+            .map(|ms| MessageDate::from_millis(ms).expect("a date in range")),
         to: recipients("to"),
         cc: recipients("cc"),
         bcc: recipients("bcc"),
@@ -326,10 +368,14 @@ fn embedded_headers(spec: &Value) -> EmbeddedHeaders {
 
 #[test]
 fn mime_text_embedded_headers() {
-    compare("embeddedHeaders", section(&fixture("mime-text"), "embeddedHeaders"), |spec| {
-        let headers = embedded_headers(spec);
-        json!([embedded_headers_as_text(&headers), embedded_headers_as_html(&headers)])
-    });
+    compare(
+        "embeddedHeaders",
+        section(&fixture("mime-text"), "embeddedHeaders"),
+        |spec| {
+            let headers = embedded_headers(spec);
+            json!([embedded_headers_as_text(&headers), embedded_headers_as_html(&headers)])
+        },
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -369,10 +415,14 @@ fn transfer_decoders() {
 #[test]
 fn entities() {
     let fixture = fixture("entities");
-    compare("decodeEntities", section(&fixture, "decodeEntities"), |input| json!(decode_entities(text_of(input))));
-    compare("decodeAttributeEntities", section(&fixture, "decodeAttributeEntities"), |input| {
-        json!(decode_attribute_entities(text_of(input)))
+    compare("decodeEntities", section(&fixture, "decodeEntities"), |input| {
+        json!(decode_entities(text_of(input)))
     });
+    compare(
+        "decodeAttributeEntities",
+        section(&fixture, "decodeAttributeEntities"),
+        |input| json!(decode_attribute_entities(text_of(input))),
+    );
 }
 
 #[test]
@@ -381,16 +431,22 @@ fn plain_text_html_to_plain_text() {
         Ok(text) => compact(&text),
         Err(failure) => json!({ "error": failure.to_string() }),
     };
-    compare("htmlToPlainText", section(&fixture("plain-text"), "htmlToPlainText"), |input| {
-        json!([render(text_of(input), false), render(text_of(input), true)])
-    });
+    compare(
+        "htmlToPlainText",
+        section(&fixture("plain-text"), "htmlToPlainText"),
+        |input| json!([render(text_of(input), false), render(text_of(input), true)]),
+    );
 }
 
 #[test]
 fn util_get_text() {
     let fixture = fixture("util");
-    compare("getText", section(&fixture, "getText"), |input| compact(&get_text(text_of(input))));
-    compare("nestedPath", section(&fixture, "nestedPath"), |input| json!(nested_path(text_of(input))));
+    compare("getText", section(&fixture, "getText"), |input| {
+        compact(&get_text(text_of(input)))
+    });
+    compare("nestedPath", section(&fixture, "nestedPath"), |input| {
+        json!(nested_path(text_of(input)))
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -399,14 +455,20 @@ fn util_get_text() {
 
 #[test]
 fn snippet_build_snippet() {
-    compare("buildSnippet", section(&fixture("snippet"), "buildSnippet"), |input| json!(build_snippet(input.as_str())));
+    compare("buildSnippet", section(&fixture("snippet"), "buildSnippet"), |input| {
+        json!(build_snippet(input.as_str()))
+    });
 }
 
 #[test]
 fn text_to_html_plain_text_to_html() {
     let fixture = fixture("text-to-html");
-    compare("plainTextToHtml", section(&fixture, "plainTextToHtml"), |input| json!(plain_text_to_html(text_of(input))));
-    compare("bodyHtml", section(&fixture, "bodyHtml"), |input| json!(body_html(input[0].as_str(), input[1].as_str())));
+    compare("plainTextToHtml", section(&fixture, "plainTextToHtml"), |input| {
+        json!(plain_text_to_html(text_of(input)))
+    });
+    compare("bodyHtml", section(&fixture, "bodyHtml"), |input| {
+        json!(body_html(input[0].as_str(), input[1].as_str()))
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -424,23 +486,38 @@ fn mail(value: &Value) -> ThreadMail {
 #[test]
 fn threading() {
     let fixture = fixture("threading");
-    compare("normalizeSubject", section(&fixture, "normalizeSubject"), |input| json!(normalize_subject(text_of(input))));
-    compare("isReplySubject", section(&fixture, "isReplySubject"), |input| json!(is_reply_subject(text_of(input))));
-    compare("bareMessageId", section(&fixture, "bareMessageId"), |input| json!(bare_message_id(text_of(input))));
+    compare("normalizeSubject", section(&fixture, "normalizeSubject"), |input| {
+        json!(normalize_subject(text_of(input)))
+    });
+    compare("isReplySubject", section(&fixture, "isReplySubject"), |input| {
+        json!(is_reply_subject(text_of(input)))
+    });
+    compare("bareMessageId", section(&fixture, "bareMessageId"), |input| {
+        json!(bare_message_id(text_of(input)))
+    });
     compare("storedIdForms", section(&fixture, "storedIdForms"), |input| {
         json!(stored_id_forms(input.as_array().unwrap().iter().map(text_of)))
     });
     // hasThreadHeaders, linkedIds and otherParticipantsOf of each mail.
     let mails: Vec<ThreadMail> = section(&fixture, "mails").iter().map(|case| mail(&case[0])).collect();
-    compare("hasThreadHeaders, linkedIds, otherParticipantsOf", section(&fixture, "mails"), |input| {
-        let mail = mail(input);
-        let mut participants: Vec<String> = other_participants_of(&mail, is_own).into_iter().collect();
-        // As JavaScript sorts strings: by UTF-16 code unit.
-        participants.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-        json!([has_thread_headers(&mail), linked_ids(&mail), participants])
-    });
+    compare(
+        "hasThreadHeaders, linkedIds, otherParticipantsOf",
+        section(&fixture, "mails"),
+        |input| {
+            let mail = mail(input);
+            let mut participants: Vec<String> = other_participants_of(&mail, is_own).into_iter().collect();
+            // As JavaScript sorts strings: by UTF-16 code unit.
+            participants.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            json!([has_thread_headers(&mail), linked_ids(&mail), participants])
+        },
+    );
     // Pairs name their mails by position.
-    let pair = |input: &Value| (&mails[input[0].as_u64().unwrap() as usize], &mails[input[1].as_u64().unwrap() as usize]);
+    let pair = |input: &Value| {
+        (
+            &mails[input[0].as_u64().unwrap() as usize],
+            &mails[input[1].as_u64().unwrap() as usize],
+        )
+    };
     compare("matchesBySubject", section(&fixture, "matchesBySubject"), |input| {
         let (a, b) = pair(input);
         json!(matches_by_subject(a, b, is_own))
@@ -464,7 +541,9 @@ fn threading() {
 #[test]
 fn dates() {
     let fixture = fixture("dates");
-    compare("new Date(text)", section(&fixture, "parse"), |input| json!(date_parse(text_of(input))));
+    compare("new Date(text)", section(&fixture, "parse"), |input| {
+        json!(date_parse(text_of(input)))
+    });
     compare("Date formatting", section(&fixture, "format"), |input| {
         let date = MessageDate::from_millis(input.as_i64().unwrap()).expect("a date in range");
         json!([date.to_iso_string(), date.to_utc_string()])
@@ -492,9 +571,15 @@ fn file_type(name: &str) -> Value {
 fn file_types_by_extension() {
     let fixture = fixture("mime-types");
     let table = section(&fixture, "table");
-    compare("file type table", table, |input| file_type(&format!("x.{}", text_of(input))));
-    compare("unknown extensions", section(&fixture, "unknown"), |input| file_type(text_of(input)));
-    compare("mimeTypeFromFilename", section(&fixture, "names"), |input| file_type(text_of(input)));
+    compare("file type table", table, |input| {
+        file_type(&format!("x.{}", text_of(input)))
+    });
+    compare("unknown extensions", section(&fixture, "unknown"), |input| {
+        file_type(text_of(input))
+    });
+    compare("mimeTypeFromFilename", section(&fixture, "names"), |input| {
+        file_type(text_of(input))
+    });
 
     // The table holds no extension of up to three letters and digits that Bun's does not.
     let known: std::collections::HashSet<&str> = table.iter().map(|entry| text_of(&entry[0])).collect();
@@ -509,7 +594,11 @@ fn file_types_by_extension() {
         names.extend(longer);
     }
     for name in names.iter().filter(|name| !known.contains(name.as_str())) {
-        assert_eq!(file_type(&format!("x.{name}")), json!("application/octet-stream"), "{name}");
+        assert_eq!(
+            file_type(&format!("x.{name}")),
+            json!("application/octet-stream"),
+            "{name}"
+        );
     }
 }
 
@@ -529,22 +618,38 @@ struct ParsedCase {
 async fn parse_in_chunks(raw: &[u8], chunk_size: usize) -> ParsedCase {
     let root = tempfile::tempdir().expect("a temporary directory");
     let attachment_dir = root.path().join("attachments");
-    let chunks: Vec<std::io::Result<bytes::Bytes>> =
-        raw.chunks(chunk_size).map(|chunk| Ok(bytes::Bytes::copy_from_slice(chunk))).collect();
+    let chunks: Vec<std::io::Result<bytes::Bytes>> = raw
+        .chunks(chunk_size)
+        .map(|chunk| Ok(bytes::Bytes::copy_from_slice(chunk)))
+        .collect();
     let source = tokio_util::io::StreamReader::new(futures_util::stream::iter(chunks));
     let started = MessageDate::now().timestamp_millis();
-    let result = parse_message(source, &ParseOptions { attachment_dir: attachment_dir.clone() }).await;
+    let result = parse_message(
+        source,
+        &ParseOptions {
+            attachment_dir: attachment_dir.clone(),
+        },
+    )
+    .await;
     let ended = MessageDate::now().timestamp_millis();
 
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&attachment_dir) {
         for entry in entries {
             let entry = entry.expect("a directory entry");
-            files.push((entry.file_name().to_string_lossy().into_owned(), std::fs::read(entry.path()).expect("an attachment file")));
+            files.push((
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read(entry.path()).expect("an attachment file"),
+            ));
         }
     }
     files.sort_by_key(|(name, _)| name.parse::<u64>().unwrap_or(u64::MAX));
-    ParsedCase { result, files, attachment_dir, window: (started, ended) }
+    ParsedCase {
+        result,
+        files,
+        attachment_dir,
+        window: (started, ended),
+    }
 }
 
 /// The parse result the way the generator records one.
@@ -571,14 +676,22 @@ fn recorded(parsed: &ParsedCase, frozen_now: i64) -> Value {
             ok.insert(key.to_string(), value);
         }
     };
-    let address =
-        |value: &Option<ParsedAddress>| value.as_ref().map(|value| compact_deep(serde_json::to_value(value).unwrap()));
+    let address = |value: &Option<ParsedAddress>| {
+        value
+            .as_ref()
+            .map(|value| compact_deep(serde_json::to_value(value).unwrap()))
+    };
     let addresses = |value: &Option<OneOrMany<ParsedAddress>>| {
-        value.as_ref().map(|value| compact_deep(serde_json::to_value(value).unwrap()))
+        value
+            .as_ref()
+            .map(|value| compact_deep(serde_json::to_value(value).unwrap()))
     };
     put("messageId", message.message_id.as_ref().map(|id| compact(id)));
     put("inReplyTo", message.in_reply_to.as_ref().map(|id| compact(id)));
-    put("references", message.references.as_ref().map(|ids| compact_deep(json!(ids))));
+    put(
+        "references",
+        message.references.as_ref().map(|ids| compact_deep(json!(ids))),
+    );
     put("from", address(&message.from));
     put("to", addresses(&message.to));
     put("cc", addresses(&message.cc));
@@ -589,7 +702,11 @@ fn recorded(parsed: &ParsedCase, frozen_now: i64) -> Value {
         "date",
         message.date.map(|date| {
             let ms = date.timestamp_millis();
-            json!(if (started..=ended).contains(&ms) { frozen_now } else { ms })
+            json!(if (started..=ended).contains(&ms) {
+                frozen_now
+            } else {
+                ms
+            })
         }),
     );
     put("text", message.text.as_ref().map(|text| compact(&unfreeze(text))));
@@ -599,7 +716,10 @@ fn recorded(parsed: &ParsedCase, frozen_now: i64) -> Value {
         .iter()
         .map(|attachment| {
             let mut value = serde_json::to_value(attachment).unwrap();
-            let relative = attachment.path.strip_prefix(&parsed.attachment_dir).expect("a file of the attachment directory");
+            let relative = attachment
+                .path
+                .strip_prefix(&parsed.attachment_dir)
+                .expect("a file of the attachment directory");
             value["path"] = json!(relative.to_string_lossy());
             compact_deep(value)
         })
@@ -630,7 +750,11 @@ async fn parser_parse_message() {
         for size in case["chunkSizes"].as_array().unwrap() {
             let size = size.as_u64().unwrap() as usize;
             let parsed = parse_in_chunks(&raw, size).await;
-            comparison.check(&(text_of(&case["name"]), size), &case["result"], recorded(&parsed, frozen_now));
+            comparison.check(
+                &(text_of(&case["name"]), size),
+                &case["result"],
+                recorded(&parsed, frozen_now),
+            );
         }
     }
     comparison.finish();

@@ -233,7 +233,10 @@ mod tests {
 
     #[test]
     fn decodes_legacy_names_without_a_semicolon_keeping_the_next_character() {
-        assert_eq!(decode_entities("&amp &ampx; a=1&copy=2 &lt3 &frac12x"), "& &x; a=1©=2 <3 ½x");
+        assert_eq!(
+            decode_entities("&amp &ampx; a=1&copy=2 &lt3 &frac12x"),
+            "& &x; a=1©=2 <3 ½x"
+        );
     }
 
     #[test]
@@ -243,7 +246,10 @@ mod tests {
 
     #[test]
     fn remaps_references_the_html_parser_treats_specially() {
-        assert_eq!(decode_entities("&#0; &#150; &#xD800; &#99999999;"), "\u{fffd} – \u{fffd} \u{fffd}");
+        assert_eq!(
+            decode_entities("&#0; &#150; &#xD800; &#99999999;"),
+            "\u{fffd} – \u{fffd} \u{fffd}"
+        );
     }
 
     #[test]
@@ -257,7 +263,10 @@ mod tests {
     #[test]
     fn attribute_values_decode_only_references_closed_by_a_semicolon() {
         assert_eq!(decode_attribute_entities("?a=1&amp;b=2&#38;c&#x26;d"), "?a=1&b=2&c&d");
-        assert_eq!(decode_attribute_entities("?a=1&copy=2&amp=3&#38x"), "?a=1&copy=2&amp=3&#38x");
+        assert_eq!(
+            decode_attribute_entities("?a=1&copy=2&amp=3&#38x"),
+            "?a=1&copy=2&amp=3&#38x"
+        );
         assert_eq!(decode_attribute_entities("&notaname;"), "&notaname;");
     }
 

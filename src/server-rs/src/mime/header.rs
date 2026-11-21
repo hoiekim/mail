@@ -129,7 +129,11 @@ fn decode_b(text: &str) -> Vec<u8> {
 
 fn decode_word(charset: &str, encoding: u8, text: &str) -> String {
     let label = charset.split('*').next().unwrap_or(charset);
-    let bytes = if encoding.eq_ignore_ascii_case(&b'Q') { decode_q(text) } else { decode_b(text) };
+    let bytes = if encoding.eq_ignore_ascii_case(&b'Q') {
+        decode_q(text)
+    } else {
+        decode_b(text)
+    };
     decode_header_bytes(&bytes, label)
 }
 
@@ -177,7 +181,13 @@ fn word_at<'a>(value: &'a str, at: usize, encodings: &[u8]) -> Option<EncodedWor
         return None;
     }
     let end = text_end + 2;
-    Some(EncodedWord { word: &value[at..end], end, charset, encoding, text: &value[text_start..text_end] })
+    Some(EncodedWord {
+        word: &value[at..end],
+        end,
+        charset,
+        encoding,
+        text: &value[text_start..text_end],
+    })
 }
 
 /// Where the run of whitespace starting at `at` ends.
@@ -251,7 +261,11 @@ fn apply_joins(value: &str) -> String {
     let mut at = 0;
     while let Some(found) = value[at..].find(JOIN) {
         let mark = at + found;
-        let start = if mark >= at + 2 && value[..mark].ends_with("?=") { mark - 2 } else { mark };
+        let start = if mark >= at + 2 && value[..mark].ends_with("?=") {
+            mark - 2
+        } else {
+            mark
+        };
         out.push_str(&value[at..start]);
         at = mark + JOIN.len();
         if let Some((_, _, text_start)) = word_prefix_at(value, at, ANY) {
@@ -286,7 +300,11 @@ pub fn decode_words(value: &str) -> String {
         let Some(word) = word_at(&packed, start, ANY) else {
             continue;
         };
-        if !word.charset.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'*')) {
+        if !word
+            .charset
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'*'))
+        {
             continue;
         }
         out.push_str(&packed[last..start]);
@@ -355,7 +373,10 @@ pub fn split_header_line(line: &str) -> HeaderLine {
             key: jsstr::trim(key).to_lowercase(),
             value: jsstr::trim(value).to_string(),
         },
-        None => HeaderLine { key: String::new(), value: String::new() },
+        None => HeaderLine {
+            key: String::new(),
+            value: String::new(),
+        },
     }
 }
 
@@ -374,7 +395,10 @@ impl HeaderParams {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.slots.iter().flatten().map(|(name, value)| (name.as_str(), value.as_str()))
+        self.slots
+            .iter()
+            .flatten()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
     }
 
     pub fn len(&self) -> usize {
@@ -505,7 +529,11 @@ pub fn parse_header_value(input: &str) -> StructuredHeaderValue {
         // `Number(digits) || 0`: an absurdly long number is Infinity.
         let nr: f64 = digits.and_then(|digits| digits.parse().ok()).unwrap_or(0.0);
         let entry = *continued_index.entry(actual.clone()).or_insert_with(|| {
-            continued.push(Continuation { name: actual, charset: None, parts: Vec::new() });
+            continued.push(Continuation {
+                name: actual,
+                charset: None,
+                parts: Vec::new(),
+            });
             continued.len() - 1
         });
         let entry = &mut continued[entry];
@@ -524,7 +552,9 @@ pub fn parse_header_value(input: &str) -> StructuredHeaderValue {
     }
 
     for mut entry in continued {
-        entry.parts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        entry
+            .parts
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         let joined: String = entry.parts.iter().map(|(_, part)| part.as_str()).collect();
         let decoded = match &entry.charset {
             Some(charset) => {
@@ -573,7 +603,9 @@ pub fn parse_message_id_list(value: &str) -> Vec<String> {
         at = start + 1;
         // `<([^<>\s]+)>`
         let body = &value[start + 1..];
-        let length = body.find(|c: char| c == '<' || c == '>' || jsstr::is_space(c)).unwrap_or(body.len());
+        let length = body
+            .find(|c: char| c == '<' || c == '>' || jsstr::is_space(c))
+            .unwrap_or(body.len());
         if length == 0 || !body[length..].starts_with('>') {
             continue;
         }
@@ -641,7 +673,10 @@ mod tests {
     fn splits_the_value_from_quoted_and_bare_parameters() {
         let parsed = parse_header_value("text/plain; charset=\"UTF-8\"; format=flowed");
         assert_eq!(parsed.value, "text/plain");
-        assert_eq!(parsed.params.iter().collect::<Vec<_>>(), [("charset", "UTF-8"), ("format", "flowed")]);
+        assert_eq!(
+            parsed.params.iter().collect::<Vec<_>>(),
+            [("charset", "UTF-8"), ("format", "flowed")]
+        );
     }
 
     #[test]
@@ -668,7 +703,10 @@ mod tests {
     fn unfolds_a_folded_line_and_lowercases_the_key() {
         assert_eq!(
             split_header_line("Subject: one\r\n two"),
-            HeaderLine { key: "subject".into(), value: "one two".into() }
+            HeaderLine {
+                key: "subject".into(),
+                value: "one two".into()
+            }
         );
     }
 
@@ -689,12 +727,18 @@ mod tests {
 
     #[test]
     fn reads_every_bracketed_id_in_order() {
-        assert_eq!(parse_message_id_list("<a@x> <b@y>\r\n <c@z>"), ["<a@x>", "<b@y>", "<c@z>"]);
+        assert_eq!(
+            parse_message_id_list("<a@x> <b@y>\r\n <c@z>"),
+            ["<a@x>", "<b@y>", "<c@z>"]
+        );
     }
 
     #[test]
     fn drops_comments_text_outside_brackets_and_duplicates() {
-        assert_eq!(parse_message_id_list("(old) <a@x> junk <a@x> <b@y>"), ["<a@x>", "<b@y>"]);
+        assert_eq!(
+            parse_message_id_list("(old) <a@x> junk <a@x> <b@y>"),
+            ["<a@x>", "<b@y>"]
+        );
     }
 
     #[test]

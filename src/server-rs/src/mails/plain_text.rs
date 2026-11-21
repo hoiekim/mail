@@ -55,7 +55,10 @@ struct Element {
 
 impl Element {
     fn attrib(&self, name: &str) -> Option<&str> {
-        self.attribs.iter().find(|(key, _)| *key == name).map(|(_, value)| value.as_str())
+        self.attribs
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.as_str())
     }
 }
 
@@ -70,7 +73,9 @@ enum Node {
 const READ_ATTRIBUTES: [&str; 5] = ["alt", "src", "href", "start", "type"];
 
 const P: &[&str] = &["p"];
-const FORM: &[&str] = &["input", "option", "optgroup", "select", "button", "datalist", "textarea"];
+const FORM: &[&str] = &[
+    "input", "option", "optgroup", "select", "button", "datalist", "textarea",
+];
 
 /// Opening one of these closes the listed elements when they are the
 /// innermost open one.
@@ -97,8 +102,25 @@ fn open_implies_close(name: &str) -> Option<&'static [&'static str]> {
 fn is_void(name: &str) -> bool {
     matches!(
         name,
-        "area" | "base" | "basefont" | "br" | "col" | "command" | "embed" | "frame" | "hr" | "img" | "input"
-            | "isindex" | "keygen" | "link" | "meta" | "param" | "source" | "track" | "wbr"
+        "area"
+            | "base"
+            | "basefont"
+            | "br"
+            | "col"
+            | "command"
+            | "embed"
+            | "frame"
+            | "hr"
+            | "img"
+            | "input"
+            | "isindex"
+            | "keygen"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
     )
 }
 
@@ -110,7 +132,10 @@ fn is_foreign(name: &str) -> bool {
 /// `foreignObject` is spelled with its capital here as there, so a
 /// lowercased tag name never matches it.
 fn is_html_integration(name: &str) -> bool {
-    matches!(name, "mi" | "mo" | "mn" | "ms" | "mtext" | "annotation-xml" | "foreignObject" | "desc" | "title")
+    matches!(
+        name,
+        "mi" | "mo" | "mn" | "ms" | "mtext" | "annotation-xml" | "foreignObject" | "desc" | "title"
+    )
 }
 
 /// Elements whose content is raw text up to their end tag.
@@ -190,7 +215,11 @@ impl TreeBuilder {
             self.failure.get_or_insert(PlainTextFailure::ConstructorTag);
         }
         if let Some(implied) = open_implies_close(&name) {
-            while self.open.last().is_some_and(|innermost| implied.contains(&innermost.as_str())) {
+            while self
+                .open
+                .last()
+                .is_some_and(|innermost| implied.contains(&innermost.as_str()))
+            {
                 self.open.pop();
                 self.pop_element();
             }
@@ -507,7 +536,11 @@ fn tokenize(html: &str, tree: &mut TreeBuilder) {
                 }
             }
             State::InAttributeValueDq | State::InAttributeValueSq => {
-                let quote = if state == State::InAttributeValueDq { b'"' } else { b'\'' };
+                let quote = if state == State::InAttributeValueDq {
+                    b'"'
+                } else {
+                    b'\''
+                };
                 if c == quote {
                     tree.attribute(attrib_name, section(i));
                     section_start = None;
@@ -527,7 +560,11 @@ fn tokenize(html: &str, tree: &mut TreeBuilder) {
                     state = State::BeforeCdata;
                     cdata_matched = 0;
                 } else {
-                    state = if c == b'-' { State::BeforeComment } else { State::InDeclaration };
+                    state = if c == b'-' {
+                        State::BeforeComment
+                    } else {
+                        State::InDeclaration
+                    };
                 }
             }
             State::BeforeCdata => {
@@ -562,7 +599,11 @@ fn tokenize(html: &str, tree: &mut TreeBuilder) {
                 }
             }
             State::AfterComment1 => {
-                state = if c == b'-' { State::AfterComment2 } else { State::InComment };
+                state = if c == b'-' {
+                    State::AfterComment2
+                } else {
+                    State::InComment
+                };
             }
             State::AfterComment2 => {
                 if c == b'>' {
@@ -733,10 +774,10 @@ struct Rope {
 
 impl Rope {
     fn from_string(text: String) -> Rope {
-        let mut rope = Rope::default();
-        rope.length = text.len();
-        rope.pieces.push_back(text);
-        rope
+        Rope {
+            length: text.len(),
+            pieces: LinkedList::from([text]),
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -817,14 +858,23 @@ impl BlockTransform {
             BlockTransform::None => text,
             BlockTransform::Quote => {
                 let text = text.into_string();
-                let lines: Vec<String> =
-                    text.trim_matches('\n').split('\n').map(|line| format!("> {line}")).collect();
+                let lines: Vec<String> = text
+                    .trim_matches('\n')
+                    .split('\n')
+                    .map(|line| format!("> {line}"))
+                    .collect();
                 Rope::from_string(lines.join("\n"))
             }
-            BlockTransform::ListItem { prefix, max_prefix_length } => {
+            BlockTransform::ListItem {
+                prefix,
+                max_prefix_length,
+            } => {
                 let spacing = format!("\n{}", " ".repeat(*max_prefix_length));
                 let padding = " ".repeat(max_prefix_length - jsstr::len(prefix));
-                Rope::from_string(format!("{prefix}{padding}{}", text.into_string().replace('\n', &spacing)))
+                Rope::from_string(format!(
+                    "{prefix}{padding}{}",
+                    text.into_string().replace('\n', &spacing)
+                ))
             }
         }
     }
@@ -842,7 +892,12 @@ struct TextBuilder {
 
 impl TextBuilder {
     fn new(show_urls: bool) -> TextBuilder {
-        TextBuilder { blocks: vec![Block::new(1, WORDWRAP, false)], uppercase: 0, words_added: 0, show_urls }
+        TextBuilder {
+            blocks: vec![Block::new(1, WORDWRAP, false)],
+            uppercase: 0,
+            words_added: 0,
+            show_urls,
+        }
     }
 
     fn block(&mut self) -> &mut Block {
@@ -885,7 +940,11 @@ impl TextBuilder {
         let mut joins = !stashed && !text.starts_with(is_whitespace);
         for word in words {
             words_added += usize::from(word_transform);
-            let word = if uppercase { word.to_uppercase() } else { word.to_string() };
+            let word = if uppercase {
+                word.to_uppercase()
+            } else {
+                word.to_string()
+            };
             if std::mem::take(&mut joins) {
                 lines.concat_word(word);
             } else {
@@ -899,9 +958,14 @@ impl TextBuilder {
 
     fn open_block(&mut self, leading_line_breaks: usize, reserved_line_length: usize, is_pre: bool) {
         let parent = self.block();
-        let max_line_length = parent.lines.max_line_length.saturating_sub(reserved_line_length).max(20);
+        let max_line_length = parent
+            .lines
+            .max_line_length
+            .saturating_sub(reserved_line_length)
+            .max(20);
         let is_pre = is_pre || parent.is_pre;
-        self.blocks.push(Block::new(leading_line_breaks, max_line_length, is_pre));
+        self.blocks
+            .push(Block::new(leading_line_breaks, max_line_length, is_pre));
     }
 
     fn close_block(&mut self, trailing_line_breaks: usize, transform: &BlockTransform) {
@@ -934,11 +998,18 @@ fn string_to_number(value: &str) -> f64 {
         if digits.is_empty() {
             return f64::NAN;
         }
-        return digits.chars().try_fold(0.0, |sum, c| Some(sum * radix as f64 + c.to_digit(radix)? as f64)).unwrap_or(f64::NAN);
+        return digits
+            .chars()
+            .try_fold(0.0, |sum, c| Some(sum * radix as f64 + c.to_digit(radix)? as f64))
+            .unwrap_or(f64::NAN);
     }
     let unsigned = value.strip_prefix(['+', '-']).unwrap_or(value);
     if unsigned == "Infinity" {
-        return if value.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+        return if value.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
     }
     // A decimal literal: digits with an optional fraction, or a fraction
     // alone, then an optional exponent.
@@ -986,7 +1057,11 @@ fn number_to_string(value: f64) -> String {
     } else {
         let exponent = point - 1;
         let exponent_sign = if exponent < 0 { '-' } else { '+' };
-        let fraction = if count > 1 { format!(".{}", &digits[1..]) } else { String::new() };
+        let fraction = if count > 1 {
+            format!(".{}", &digits[1..])
+        } else {
+            String::new()
+        };
         format!("{sign}{}{fraction}e{exponent_sign}{}", &digits[..1], exponent.abs())
     }
 }
@@ -1014,7 +1089,11 @@ fn letter_sequence(mut n: f64, base: char) -> String {
         .rev()
         .map(|digit| {
             let code = base as u32 as f64 + digit;
-            let unit = if code.is_nan() { 0 } else { (code.trunc() as i64).rem_euclid(65536) as u32 };
+            let unit = if code.is_nan() {
+                0
+            } else {
+                (code.trunc() as i64).rem_euclid(65536) as u32
+            };
             char::from_u32(unit).unwrap_or('\u{fffd}')
         })
         .collect()
@@ -1028,15 +1107,26 @@ const ROMAN_FIVES: [&str; 3] = ["V", "L", "D"];
 /// `undefined`, `NaN` or a thrown `TypeError` (`None` here).
 fn roman(n: f64) -> Option<String> {
     let text = number_to_string(n);
-    let digits: Vec<f64> = text.chars().map(|c| c.to_digit(10).map_or(f64::NAN, f64::from)).collect();
+    let digits: Vec<f64> = text
+        .chars()
+        .map(|c| c.to_digit(10).map_or(f64::NAN, f64::from))
+        .collect();
     let mut numerals = Vec::with_capacity(digits.len());
     for (i, &v) in digits.iter().rev().enumerate() {
         let ones = ROMAN_ONES.get(i).copied();
         let numeral = if v % 5.0 < 4.0 {
-            let five = if v < 5.0 { "" } else { ROMAN_FIVES.get(i).copied().unwrap_or("undefined") };
+            let five = if v < 5.0 {
+                ""
+            } else {
+                ROMAN_FIVES.get(i).copied().unwrap_or("undefined")
+            };
             format!("{five}{}", ones?.repeat((v % 5.0) as usize))
         } else {
-            let next = if v < 5.0 { ROMAN_FIVES.get(i).copied() } else { ROMAN_ONES.get(i + 1).copied() };
+            let next = if v < 5.0 {
+                ROMAN_FIVES.get(i).copied()
+            } else {
+                ROMAN_ONES.get(i + 1).copied()
+            };
             match (ones, next) {
                 // `undefined + undefined`
                 (None, None) => "NaN".to_string(),
@@ -1060,20 +1150,37 @@ enum Marker {
 }
 
 fn is_block(name: &str) -> bool {
-    matches!(name, "article" | "aside" | "div" | "footer" | "form" | "header" | "main" | "nav" | "section")
+    matches!(
+        name,
+        "article" | "aside" | "div" | "footer" | "form" | "header" | "main" | "nav" | "section"
+    )
 }
 
 /// What is left to do, innermost last.
 enum Step {
     /// The children of an element from `next` on.
-    Children { element: NodeId, next: usize },
+    Children {
+        element: NodeId,
+        next: usize,
+    },
     Node(NodeId),
-    CloseBlock { trailing_line_breaks: usize, transform: BlockTransform },
+    CloseBlock {
+        trailing_line_breaks: usize,
+        transform: BlockTransform,
+    },
     EndUppercase,
     /// After a link's text: its target, in brackets when there was text.
-    AnchorTarget { href: String, words_before: usize },
+    AnchorTarget {
+        href: String,
+        words_before: usize,
+    },
     /// The items of a list from `next` on, each in a block of its own.
-    ListItems { items: Vec<(NodeId, String)>, next: usize, max_prefix_length: usize, nested: bool },
+    ListItems {
+        items: Vec<(NodeId, String)>,
+        next: usize,
+        max_prefix_length: usize,
+        nested: bool,
+    },
 }
 
 struct Renderer<'a> {
@@ -1098,7 +1205,10 @@ impl<'a> Renderer<'a> {
             match step {
                 Step::Children { element, next } => {
                     if let Some(&child) = self.element(element).children.get(next) {
-                        self.steps.push(Step::Children { element, next: next + 1 });
+                        self.steps.push(Step::Children {
+                            element,
+                            next: next + 1,
+                        });
                         self.steps.push(Step::Node(child));
                     }
                 }
@@ -1107,7 +1217,10 @@ impl<'a> Renderer<'a> {
                     Node::Element(element) if !is_skipped(&element.name) => self.format(id),
                     _ => {}
                 },
-                Step::CloseBlock { trailing_line_breaks, transform } => {
+                Step::CloseBlock {
+                    trailing_line_breaks,
+                    transform,
+                } => {
                     self.builder.close_block(trailing_line_breaks, &transform);
                 }
                 Step::EndUppercase => self.builder.uppercase -= 1,
@@ -1116,16 +1229,30 @@ impl<'a> Renderer<'a> {
                     let target = if has_text { format!(" [{href}]") } else { href };
                     self.builder.add_inline(&target, false);
                 }
-                Step::ListItems { items, next, max_prefix_length, nested } => {
+                Step::ListItems {
+                    items,
+                    next,
+                    max_prefix_length,
+                    nested,
+                } => {
                     let Some((node, prefix)) = items.get(next).cloned() else {
-                        self.builder.close_block(if nested { 1 } else { 2 }, &BlockTransform::None);
+                        self.builder
+                            .close_block(if nested { 1 } else { 2 }, &BlockTransform::None);
                         continue;
                     };
-                    self.steps.push(Step::ListItems { items, next: next + 1, max_prefix_length, nested });
+                    self.steps.push(Step::ListItems {
+                        items,
+                        next: next + 1,
+                        max_prefix_length,
+                        nested,
+                    });
                     self.builder.open_block(1, max_prefix_length, false);
                     self.steps.push(Step::CloseBlock {
                         trailing_line_breaks: 1,
-                        transform: BlockTransform::ListItem { prefix, max_prefix_length },
+                        transform: BlockTransform::ListItem {
+                            prefix,
+                            max_prefix_length,
+                        },
                     });
                     self.steps.push(Step::Node(node));
                 }
@@ -1137,7 +1264,10 @@ impl<'a> Renderer<'a> {
     fn block(&mut self, id: NodeId, leading: usize, trailing: usize, reserved: usize, transform: BlockTransform) {
         let is_pre = self.element(id).name == "pre";
         self.builder.open_block(leading, reserved, is_pre);
-        self.steps.push(Step::CloseBlock { trailing_line_breaks: trailing, transform });
+        self.steps.push(Step::CloseBlock {
+            trailing_line_breaks: trailing,
+            transform,
+        });
         self.steps.push(Step::Children { element: id, next: 0 });
     }
 
@@ -1168,7 +1298,10 @@ impl<'a> Renderer<'a> {
                     let href = href.strip_prefix("mailto:").unwrap_or(&href);
                     if !href.is_empty() && !href.starts_with('#') {
                         let words_before = self.builder.words_added;
-                        self.steps.push(Step::AnchorTarget { href: href.to_string(), words_before });
+                        self.steps.push(Step::AnchorTarget {
+                            href: href.to_string(),
+                            words_before,
+                        });
                     }
                 }
                 self.steps.push(Step::Children { element: id, next: 0 });
@@ -1179,7 +1312,10 @@ impl<'a> Renderer<'a> {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.builder.open_block(if name <= "h3" { 3 } else { 2 }, 0, false);
                 self.builder.uppercase += 1;
-                self.steps.push(Step::CloseBlock { trailing_line_breaks: 2, transform: BlockTransform::None });
+                self.steps.push(Step::CloseBlock {
+                    trailing_line_breaks: 2,
+                    transform: BlockTransform::None,
+                });
                 self.steps.push(Step::EndUppercase);
                 self.steps.push(Step::Children { element: id, next: 0 });
             }
@@ -1247,7 +1383,12 @@ impl<'a> Renderer<'a> {
             return;
         }
         self.builder.open_block(if nested { 1 } else { 2 }, 0, false);
-        self.steps.push(Step::ListItems { items, next: 0, max_prefix_length, nested });
+        self.steps.push(Step::ListItems {
+            items,
+            next: 0,
+            max_prefix_length,
+            nested,
+        });
     }
 }
 
@@ -1373,13 +1514,21 @@ mod tests {
                 "short\nhttps://example.com/a/very/long/path/that/keeps/going/and/going/past/eighty/\
                  columns\nend",
             ),
-            ("keeps whitespace in pre", "<pre>  a\n    b  c</pre><p>after</p>", "  a\n    b  c\n\nafter"),
+            (
+                "keeps whitespace in pre",
+                "<pre>  a\n    b  c</pre><p>after</p>",
+                "  a\n    b  c\n\nafter",
+            ),
             (
                 "runs table cells together",
                 "<table><tr><td>Name</td><td>Qty</td></tr><tr><td>Apple</td><td>3</td></tr></table>",
                 "NameQtyApple3",
             ),
-            ("closes open items and paragraphs", "<ul><li>one<li>two</ul><p>a<p>b", " * one\n * two\n\na\n\nb"),
+            (
+                "closes open items and paragraphs",
+                "<ul><li>one<li>two</ul><p>a<p>b",
+                " * one\n * two\n\na\n\nb",
+            ),
             (
                 "drops scripts, styles, comments and images",
                 "<style>p{color:red}</style><p>a<!-- hidden -->b<img src=x alt=pic></p>\
@@ -1391,16 +1540,36 @@ mod tests {
                 "<html><head><title>Subject</title></head><body><p>Body</p></body></html>",
                 "Body",
             ),
-            ("reads everything without a body", "<title>Subject</title><p>Body</p>", "Subject\n\nBody"),
-            ("keeps only link text", "<p>Visit <a href=\"https://example.com\">our site</a>.</p>", "Visit our site."),
-            ("draws a horizontal rule", "<p>a</p><hr><p>b</p>", &format!("a\n\n{}\n\nb", "-".repeat(80))),
-            ("collapses whitespace", "<p>  Too   many \n\t spaces  </p>", "Too many spaces"),
+            (
+                "reads everything without a body",
+                "<title>Subject</title><p>Body</p>",
+                "Subject\n\nBody",
+            ),
+            (
+                "keeps only link text",
+                "<p>Visit <a href=\"https://example.com\">our site</a>.</p>",
+                "Visit our site.",
+            ),
+            (
+                "draws a horizontal rule",
+                "<p>a</p><hr><p>b</p>",
+                &format!("a\n\n{}\n\nb", "-".repeat(80)),
+            ),
+            (
+                "collapses whitespace",
+                "<p>  Too   many \n\t spaces  </p>",
+                "Too many spaces",
+            ),
             (
                 "ends script content only at its own end tag",
                 "<script>if (a</b) {}</scr ipt></script>after",
                 "after",
             ),
-            ("turns stray end tags into elements or nothing", "</p>x</br>y</div>z", "\n\nx\nyz"),
+            (
+                "turns stray end tags into elements or nothing",
+                "</p>x</br>y</div>z",
+                "\n\nx\nyz",
+            ),
             (
                 "decodes character references",
                 "<p>&lt;a&gt; &amp; &quot;q&quot; &#169; &#x263A; caf&eacute; AT&T &copy=1</p>",
@@ -1422,15 +1591,30 @@ mod tests {
     #[test]
     fn shows_link_targets_and_image_sources_with_urls() {
         let cases = [
-            ("<a href=\"https://x.org\">https://x.org</a>", "https://x.org [https://x.org]"),
-            ("<a href=\"mailto:a@b.c\">write</a> <a href=\"mailto:a@b.c\"></a>", "write [a@b.c] a@b.c"),
-            ("<a href=\"#top\">top</a> <a href=\"\">empty</a> <a>none</a>", "top empty none"),
-            ("<a href=\"https://x.org/?a=1&amp;b=2&copy=3&#38;c\">q</a>", "q [https://x.org/?a=1&b=2&copy=3&c]"),
+            (
+                "<a href=\"https://x.org\">https://x.org</a>",
+                "https://x.org [https://x.org]",
+            ),
+            (
+                "<a href=\"mailto:a@b.c\">write</a> <a href=\"mailto:a@b.c\"></a>",
+                "write [a@b.c] a@b.c",
+            ),
+            (
+                "<a href=\"#top\">top</a> <a href=\"\">empty</a> <a>none</a>",
+                "top empty none",
+            ),
+            (
+                "<a href=\"https://x.org/?a=1&amp;b=2&copy=3&#38;c\">q</a>",
+                "q [https://x.org/?a=1&b=2&copy=3&c]",
+            ),
             (
                 "<img src=\"cid:logo@x\" alt=\"Logo\"> <img src=\"y.png\"> <img alt=\"alt\">",
                 "Logo [cid:logo@x] [y.png] alt",
             ),
-            ("<h1><a href=\"https://x.org/h\">link</a></h1>", "LINK [https://x.org/h]"),
+            (
+                "<h1><a href=\"https://x.org/h\">link</a></h1>",
+                "LINK [https://x.org/h]",
+            ),
         ];
         for (html, expected) in cases {
             assert_eq!(text_with_urls(html), expected);
@@ -1498,9 +1682,11 @@ mod tests {
         assert_eq!(failed.rendered, "x");
         assert_eq!(text("<constructor>x"), "x");
 
-        let failed =
-            html_to_plain_text("<ol type=\"I\" start=\"10000\"><li>a</li></ol>", PlainTextOptions::default())
-                .unwrap_err();
+        let failed = html_to_plain_text(
+            "<ol type=\"I\" start=\"10000\"><li>a</li></ol>",
+            PlainTextOptions::default(),
+        )
+        .unwrap_err();
         assert_eq!(failed.reason, PlainTextFailure::RomanNumeral);
         assert_eq!(failed.rendered, " 10000. a");
     }
@@ -1516,19 +1702,34 @@ mod tests {
         assert_eq!(number_to_string(1e-7), "1e-7");
         assert_eq!(number_to_string(1.0000001), "1.0000001");
         assert_eq!(number_to_string(0.000001), "0.000001");
-        assert_eq!(number_to_string(123456789012345680000000000000.0), "1.2345678901234568e+29");
+        assert_eq!(
+            number_to_string(123456789012345680000000000000.0),
+            "1.2345678901234568e+29"
+        );
         assert_eq!(number_to_string(-0.0), "0");
         assert_eq!(number_to_string(-2.5), "-2.5");
     }
 
     #[test]
     fn list_markers_follow_the_javascript_arithmetic() {
-        assert_eq!(text("<ol type=\"I\" start=\"3999\"><li>a</li><li>b</li></ol>"), " MMMCMXCIX.  a\n Mundefined. b");
+        assert_eq!(
+            text("<ol type=\"I\" start=\"3999\"><li>a</li><li>b</li></ol>"),
+            " MMMCMXCIX.  a\n Mundefined. b"
+        );
         assert_eq!(text("<ol type=\"I\" start=\"40000\"><li>a</li></ol>"), " NaN. a");
-        assert_eq!(text("<ol type=\"i\" start=\"49999\"><li>a</li></ol>"), " nanmundefinedcmxcix. a");
+        assert_eq!(
+            text("<ol type=\"i\" start=\"49999\"><li>a</li></ol>"),
+            " nanmundefinedcmxcix. a"
+        );
         assert_eq!(text("<ol type=\"I\" start=\"-5\"><li>a</li></ol>"), " XCV. a");
-        assert_eq!(text("<ol type=\"a\" start=\"0\"><li>a</li><li>b</li></ol>"), " `. a\n a. b");
-        assert_eq!(text("<ol type=\"A\" start=\"27\"><li>a</li><li>b</li></ol>"), " AA. a\n AB. b");
+        assert_eq!(
+            text("<ol type=\"a\" start=\"0\"><li>a</li><li>b</li></ol>"),
+            " `. a\n a. b"
+        );
+        assert_eq!(
+            text("<ol type=\"A\" start=\"27\"><li>a</li><li>b</li></ol>"),
+            " AA. a\n AB. b"
+        );
         assert_eq!(text("<ol type=\"a\" start=\"abc\"><li>a</li></ol>"), " \u{0}. a");
     }
 }

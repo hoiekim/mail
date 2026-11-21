@@ -139,7 +139,9 @@ fn tokenize(input: &str) -> Vec<Token> {
     while let Some(chr) = chars.next() {
         if !escaped {
             if expecting == Some(chr) {
-                let no_break = chars.peek().is_some_and(|next| !matches!(next, ' ' | '\t' | '\r' | '\n' | ',' | ';'));
+                let no_break = chars
+                    .peek()
+                    .is_some_and(|next| !matches!(next, ' ' | '\t' | '\r' | '\n' | ',' | ';'));
                 list.push(Token::Operator { value: chr, no_break });
                 in_text = false;
                 expecting = None;
@@ -147,7 +149,10 @@ fn tokenize(input: &str) -> Vec<Token> {
             }
             if expecting.is_none() {
                 if let Some(closing) = closing_of(chr) {
-                    list.push(Token::Operator { value: chr, no_break: false });
+                    list.push(Token::Operator {
+                        value: chr,
+                        no_break: false,
+                    });
                     in_text = false;
                     expecting = closing;
                     continue;
@@ -276,7 +281,11 @@ fn handle_address(tokens: &[Token], depth: usize) -> Vec<ParsedAddressValue> {
                 }
             }
         }
-        return vec![ParsedAddressValue { address: None, name: text.join(" "), group: Some(members) }];
+        return vec![ParsedAddressValue {
+            address: None,
+            name: text.join(" "),
+            group: Some(members),
+        }];
     }
 
     if address.is_empty() && !text.is_empty() {
@@ -317,7 +326,11 @@ fn handle_address(tokens: &[Token], depth: usize) -> Vec<ParsedAddressValue> {
 
     let text = text.join(" ");
     let address = address.join(" ");
-    let mut entry_address = if !address.is_empty() { address.clone() } else { text.clone() };
+    let mut entry_address = if !address.is_empty() {
+        address.clone()
+    } else {
+        text.clone()
+    };
     let mut entry_name = if !text.is_empty() { text } else { address };
     if entry_address == entry_name {
         if entry_address.contains('@') {
@@ -326,7 +339,11 @@ fn handle_address(tokens: &[Token], depth: usize) -> Vec<ParsedAddressValue> {
             entry_address = String::new();
         }
     }
-    vec![ParsedAddressValue { address: Some(entry_address), name: entry_name, group: None }]
+    vec![ParsedAddressValue {
+        address: Some(entry_address),
+        name: entry_name,
+        group: None,
+    }]
 }
 
 fn parse_address_values(input: &str, depth: usize) -> Vec<ParsedAddressValue> {
@@ -374,7 +391,11 @@ fn punycode_domain_to_unicode(address: &str) -> String {
     let unicode: Vec<String> = address[at..]
         .split('.')
         .map(|label| {
-            let decoded = if label.starts_with("xn--") { domain_to_unicode(label) } else { String::new() };
+            let decoded = if label.starts_with("xn--") {
+                domain_to_unicode(label)
+            } else {
+                String::new()
+            };
             if decoded.is_empty() {
                 label.to_string()
             } else {
@@ -397,7 +418,7 @@ fn decode_addresses(addresses: &mut Vec<ParsedAddressValue>) {
         // and re-parsed.
         if no_address && only_b_encoded_words(&name) && !expanded[i] {
             let reparsed = parse_address_values(&decode_words(&name), 0);
-            expanded.extend(std::iter::repeat(true).take(reparsed.len()));
+            expanded.extend(std::iter::repeat_n(true, reparsed.len()));
             addresses.extend(reparsed);
             addresses.remove(i);
             expanded.remove(i);
@@ -463,13 +484,20 @@ mod tests {
     use super::*;
 
     fn mailbox(address: &str, name: &str) -> ParsedAddressValue {
-        ParsedAddressValue { address: Some(address.into()), name: name.into(), group: None }
+        ParsedAddressValue {
+            address: Some(address.into()),
+            name: name.into(),
+            group: None,
+        }
     }
 
     #[test]
     fn reads_a_bare_address_and_a_display_name() {
         let parsed = parse_address_header("a@example.com, Bob <bob@example.com>");
-        assert_eq!(parsed.value, [mailbox("a@example.com", ""), mailbox("bob@example.com", "Bob")]);
+        assert_eq!(
+            parsed.value,
+            [mailbox("a@example.com", ""), mailbox("bob@example.com", "Bob")]
+        );
         assert_eq!(parsed.text, "a@example.com, \"Bob\" <bob@example.com>");
     }
 
@@ -493,7 +521,10 @@ mod tests {
             [ParsedAddressValue {
                 address: None,
                 name: "Team".into(),
-                group: Some(vec![mailbox("alice@example.org", ""), mailbox("bob@example.org", "Bob B")]),
+                group: Some(vec![
+                    mailbox("alice@example.org", ""),
+                    mailbox("bob@example.org", "Bob B")
+                ]),
             }]
         );
         assert_eq!(parsed.text, "\"Team\": alice@example.org, \"Bob B\" <bob@example.org>;");
@@ -533,7 +564,11 @@ mod tests {
         let parsed = parse_address_header("undisclosed-recipients:;");
         assert_eq!(
             parsed.value,
-            [ParsedAddressValue { address: None, name: "undisclosed-recipients".into(), group: Some(vec![]) }]
+            [ParsedAddressValue {
+                address: None,
+                name: "undisclosed-recipients".into(),
+                group: Some(vec![])
+            }]
         );
     }
 

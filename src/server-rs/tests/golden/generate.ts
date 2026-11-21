@@ -20,6 +20,7 @@ import { createHash } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import punycode from "punycode";
 import { decodeAttributeEntities, decodeEntities } from "../../../server/lib/mails/entities";
 import { htmlToPlainText } from "../../../server/lib/mails/plain-text";
 import { buildSnippet } from "../../../server/lib/mails/snippet";
@@ -581,6 +582,23 @@ const PUNYCODE_LABELS = [
   "xn--4ca", "xn--bca", "xn--ea", "xn--wgbh1c", "xn--mgberp4a5d4ar", "xn--90a3ac", "xn--d1acj3b", "xn--j1amh", "xn--strae-oqa"
 ];
 
+/** Characters an internationalized domain label is made of, valid there or not. */
+const IDN_PIECES = [
+  ..."abcxyz019", "-", "-", "é", "ü", "ß", "ç", "ñ", "ø", "α", "β", "σ", "ς", "Σ", "п", "р", "и", "ё", "ש", "ל", "ם", "م", "ر", "ب", "٠", "۵",
+  "한", "글", "日", "本", "語", "か", "カ", "ー", "中", "😀", "❤", "\u0301", "\u0308", "\u200d", "\u200c", "·", "・", "ſ", "İ", "ı", "ａ", "Ａ", "²", "™", "℃",
+  "\u00ad", "\u3002", "\u200e", "\ufe0f", "क", "्", "ष", "ก", "า", "ง", "A", "Z", "\u05f3", "\u0660", "\u06f0", "\u1e9e", "\u0131", "\u1806", "\u2060"
+];
+
+/** A label in its punycode form, whatever the label is. */
+const punycodeLabel = (rng: Random): string => {
+  const label = rng.several(IDN_PIECES, 1, 7);
+  try {
+    return "xn--" + punycode.encode(label);
+  } catch {
+    return "xn--" + label;
+  }
+};
+
 const addressInputs = (rng: Random): string[] => {
   const encodedList = (text: string) => `=?UTF-8?B?${Buffer.from(text).toString("base64")}?=`;
   const locals = ["a", "bob", "john.doe", "user+tag", "\"quoted local\"", "x_y%z", "한", "é", "", "a@b", "\"a@b\""];
@@ -622,7 +640,8 @@ const addressInputs = (rng: Random): string[] => {
     Array.from({ length: 300 }, (_, i) => `User ${i} <u${i}@example.com>`).join(", "),
     ...PUNYCODE_LABELS.map((label) => `a@${label}`),
     ...PUNYCODE_LABELS.map((label) => `N <a@x.${label}.y>`),
-    ...Array.from({ length: 900 }, () => Array.from({ length: 1 + rng.int(4) }, mailbox).join(rng.pick([", ", ",", "; ", " ", ", , "])))
+    ...Array.from({ length: 900 }, () => Array.from({ length: 1 + rng.int(4) }, mailbox).join(rng.pick([", ", ",", "; ", " ", ", , "]))),
+    ...Array.from({ length: 500 }, () => `a@${Array.from({ length: 1 + rng.int(3) }, () => (rng.chance(0.8) ? punycodeLabel(rng) : rng.pick(["com", "example", "한글", "x"]))).join(".")}`)
   ];
 };
 
@@ -887,6 +906,15 @@ const htmlInputs = (rng: Random): string[] => {
     "a&nbsp;b&nbsp;&nbsp;c", "a\u00a0b \u00a0 c", "a\u200bb \u200b c", "a\u3000b", "a\u000bb\u000cc", "\u200b", "<p>\u200b</p>x", "a &amp;amp; b", "<p>&#60;script&#62;</p>",
     ...ENTITY_PIECES.map((piece) => `<p>a ${piece} b${piece}c</p>`),
     ...Array.from({ length: 700 }, () => node(1 + rng.int(5))),
+    // Uppercasing where one letter becomes several, and numbers written out as list markers.
+    ...Array.from({ length: 150 }, () => `<h${1 + rng.int(6)}>${rng.several(["ß", "ŉ", "ǰ", "ΐ", "ﬁ", "ﬃ", "i\u0307", "ı", "ǆ", "ǅ", "ς", "σ", "ᾳ", "ᾀ", "ա", "և", "ǉ", "a", "é", " ", " ", "😀", "한"], 1, 10)}</h1>`),
+    ...Array.from({ length: 300 }, () => {
+      const digits = () => rng.several("0123456789".split(""), 1, rng.pick([1, 3, 8, 17, 25]));
+      const start = rng.pick([digits, () => `${digits()}.${digits()}`, () => `.${digits()}`, () => `${digits()}e${rng.pick(["", "+", "-"])}${rng.int(330)}`, () => `${rng.pick(["-", "+", " ", ""])}${digits()}${rng.pick(["", " ", ".", "e", "x"])}`, () => `0x${rng.several("0123456789abcdefABCDEFg".split(""), 1, 14)}`, () => `0${rng.pick(["b", "o", "B", "O"])}${digits()}`])();
+      // A lettered list starting at Infinity never finishes in the TypeScript.
+      const types = Number(start) === Infinity ? ["", ' type="i"', ' type="I"'] : ["", ' type="a"', ' type="A"', ' type="i"', ' type="I"', ' type="1"'];
+      return `<ol start="${start}"${rng.pick(types)}><li>a</li><li>b</li></ol>`;
+    }),
     ...Array.from({ length: 500 }, soup)
   ];
 };
@@ -912,6 +940,17 @@ const plainTextFixture = () => {
   });
 
   const html = htmlInputs(rng);
+  for (const type of ["a", "A"]) {
+    knownDifferences.push({
+      function: "htmlToPlainText",
+      input: `<ol type="${type}" start="1e400"><li>a</li><li>b</li></ol>`,
+      typescript: JSON.stringify("never returns"),
+      rust: [" Infinity. a\n Infinity. b", " Infinity. a\n Infinity. b"],
+      why:
+        "The TypeScript loop that writes a number in letters does not end for Infinity: it appends digits until memory runs out. " +
+        "The Rust port writes the number itself."
+    });
+  }
   writeFixture("plain-text", {
     htmlToPlainText: run("htmlToPlainText", html, (input) => [renderOrError(input, false), renderOrError(input, true)])
   });
@@ -1005,7 +1044,10 @@ const threadingFixture = () => {
   const prefixes = ["Re:", "RE:", "re :", "Fwd:", "FW:", "fw:", "Fwd :", "AW:", "WG:", "SV:", "VS:", "Antw:", "TR:", "RV:", "Re[2]:", "Re [3] :", "Re：", "RE[10]：", "Re[]:", "Re[a]:", "Re", "Re;", "R:", "Rep:", "Fwdd:", "Reply:", "re:re:", "\u00a0Re:\u00a0", "Re:\u2028", "RE\u3000:", "Fw:Fwd:", "Ｒｅ:", "re[1]", "Rſ:", "SV[2]:\t"];
   const topics = ["Plan", "Project  plan", "Invoice", "invoice", "hi", "Hallo", "Return policy", "Regarding x", "", " ", "한글 제목", "ÉTÉ", "Σίσυφος ΣΟΦΟΣ", "İstanbul", "a", "ab", "abc", "😀", "😀a", "Weekly digest", "Re", "FW", "x: y", "\u00a0spaced\u00a0out\u3000"];
   const subject = () => Array.from({ length: rng.int(4) }, () => rng.pick(prefixes)).join(rng.pick(["", " ", "  "])) + rng.pick(["", " ", ""]) + rng.pick(topics) + rng.pick(["", " ", ""]);
-  const subjects = [...new Set(["Re: RE: Fwd: Project  plan", "AW: Re[2]: Hallo", "Return policy", "Re: x", "Fwd: x", "Regarding x", ...prefixes, ...topics, ...Array.from({ length: 500 }, subject)])];
+  // Lowercasing in context: a final sigma depends on the letters and marks around it.
+  const sigmaPieces = ["Σ", "Σ", "σ", "ς", "Α", "α", "a", "B", ".", "'", "’", "\u0301", "\u0345", "-", "\u00ad", "1", "ʰ", ":", "İ", "I", "\u200d", "\u0307", "ǅ", "ẞ", "😀", "한"];
+  const sigmas = Array.from({ length: 300 }, () => "x" + rng.several(sigmaPieces, 1, 8));
+  const subjects = [...new Set(["Re: RE: Fwd: Project  plan", "AW: Re[2]: Hallo", "Return policy", "Re: x", "Fwd: x", "Regarding x", ...prefixes, ...topics, ...Array.from({ length: 500 }, subject), ...sigmas])];
 
   const ids = ["<a@x>", "a@x", " <a@x> ", "<<a@x>>", "<a@x", "a@x>", "<>", "", " ", "<b@y>", "b@y", "\u00a0<c@z>\u00a0", "<a@x>>", "<한@글>", "<", ">"];
   const addresses = ["alice@x.com", "Alice@X.com", "me@inbox.test", "ME@INBOX.TEST", "bob@y.org", "billing@vendor-a.com", "ar@vendor-b.com", "", "ÉCOLE@x.fr", "İ@x.tr"];
@@ -1191,7 +1233,7 @@ const datesFixture = () => {
 // ---------------------------------------------------------------------------
 
 /** The instant "now" is while messages are parsed: an unreadable Date header reads as it. */
-export const FROZEN_NOW = 1795000000000;
+const FROZEN_NOW = 1795000000000;
 
 const freezeNow = () => {
   const RealDate = Date;
@@ -1249,7 +1291,7 @@ const parserFixture = async () => {
     for (const entry of all) {
       const raw = rawBytes(entry.raw);
       const sizes = raw.length > 200_000 ? [65536, 1000] : raw.length > 20_000 ? [65536, 7, 1000] : PARSER_CHUNK_SIZES;
-      const results = [];
+      const results: string[] = [];
       for (const size of sizes) results.push(JSON.stringify(await parseOnce(raw, size)));
       if (results.some((result) => result !== results[0])) throw new Error(`parser: chunking changes the result of ${entry.name}`);
       const result = JSON.parse(results[0]);

@@ -29,6 +29,7 @@ pub trait ThreadCandidate {
     fn subject(&self) -> &str;
     /// The stored `from_address` JSON: an entry or a list of entries, each
     /// with an `address`.
+    #[allow(clippy::wrong_self_convention)] // Named after the column, like its neighbours.
     fn from_address(&self) -> Option<&Value>;
     fn to_address(&self) -> Option<&Value>;
     fn cc_address(&self) -> Option<&Value>;
@@ -223,7 +224,9 @@ where
         return false;
     }
     let shared = other_participants_of(a, &is_own);
-    other_participants_of(b, &is_own).iter().any(|address| shared.contains(address))
+    other_participants_of(b, &is_own)
+        .iter()
+        .any(|address| shared.contains(address))
 }
 
 /// Whether one mail names the other in its thread headers.
@@ -316,21 +319,36 @@ mod tests {
 
     #[test]
     fn links_a_reply_to_the_message_it_answers() {
-        let reply = ThreadMail { in_reply_to: Some("<a@x>".into()), ..mail("b") };
+        let reply = ThreadMail {
+            in_reply_to: Some("<a@x>".into()),
+            ..mail("b")
+        };
         assert!(linked_by_headers(&mail("a"), &reply));
     }
 
     #[test]
     fn links_a_reply_to_an_appended_original_stored_without_brackets() {
-        let appended = ThreadMail { message_id: "a@x".into(), ..mail("a") };
-        let reply = ThreadMail { in_reply_to: Some("<a@x>".into()), ..mail("b") };
+        let appended = ThreadMail {
+            message_id: "a@x".into(),
+            ..mail("a")
+        };
+        let reply = ThreadMail {
+            in_reply_to: Some("<a@x>".into()),
+            ..mail("b")
+        };
         assert!(linked_by_headers(&appended, &reply));
     }
 
     #[test]
     fn links_two_replies_that_share_a_references_entry() {
-        let one = ThreadMail { reference_ids: Some(vec!["<a@x>".into()]), ..mail("b") };
-        let two = ThreadMail { reference_ids: Some(vec!["<a@x>".into(), "<b@x>".into()]), ..mail("c") };
+        let one = ThreadMail {
+            reference_ids: Some(vec!["<a@x>".into()]),
+            ..mail("b")
+        };
+        let two = ThreadMail {
+            reference_ids: Some(vec!["<a@x>".into(), "<b@x>".into()]),
+            ..mail("c")
+        };
         assert!(linked_by_headers(&one, &two));
     }
 
@@ -341,7 +359,10 @@ mod tests {
 
     #[test]
     fn matches_a_header_less_reply_with_the_same_subject_and_correspondent() {
-        let original = ThreadMail { subject: "Plan".into(), ..mail("a") };
+        let original = ThreadMail {
+            subject: "Plan".into(),
+            ..mail("a")
+        };
         let reply = ThreadMail {
             subject: "Re: Plan".into(),
             from_address: Some(json!([{ "address": "me@inbox.test" }])),
@@ -381,21 +402,36 @@ mod tests {
             ..mail("b")
         };
         assert!(!matches_by_subject(&a, &b, is_own));
-        let c = ThreadMail { subject: "Re: Invoice".into(), ..mail("c") };
+        let c = ThreadMail {
+            subject: "Re: Invoice".into(),
+            ..mail("c")
+        };
         assert!(!matches_by_subject(&c, &a, is_own));
     }
 
     #[test]
     fn does_not_match_two_non_replies_with_one_subject() {
-        let a = ThreadMail { subject: "Weekly digest".into(), ..mail("a") };
-        let b = ThreadMail { subject: "Weekly digest".into(), ..mail("b") };
+        let a = ThreadMail {
+            subject: "Weekly digest".into(),
+            ..mail("a")
+        };
+        let b = ThreadMail {
+            subject: "Weekly digest".into(),
+            ..mail("b")
+        };
         assert!(!matches_by_subject(&a, &b, is_own));
     }
 
     #[test]
     fn does_not_match_very_short_subjects() {
-        let a = ThreadMail { subject: "Re: hi".into(), ..mail("a") };
-        let b = ThreadMail { subject: "hi".into(), ..mail("b") };
+        let a = ThreadMail {
+            subject: "Re: hi".into(),
+            ..mail("a")
+        };
+        let b = ThreadMail {
+            subject: "hi".into(),
+            ..mail("b")
+        };
         assert!(!matches_by_subject(&a, &b, is_own));
     }
 
@@ -412,7 +448,10 @@ mod tests {
             reference_ids: Some(vec!["<a@x>".into(), "<b@x>".into()]),
             ..mail("c")
         };
-        let other = ThreadMail { subject: "Unrelated".into(), ..mail("z") };
+        let other = ThreadMail {
+            subject: "Unrelated".into(),
+            ..mail("z")
+        };
         let candidates = [a, b, c.clone(), other];
         let mut thread = ids(&collect_thread(&c, &candidates, is_own));
         thread.sort();
@@ -440,7 +479,13 @@ mod tests {
     #[test]
     fn returns_the_seed_alone_when_nothing_matches() {
         let a = mail("a");
-        let candidates = [a.clone(), ThreadMail { subject: "Other".into(), ..mail("z") }];
+        let candidates = [
+            a.clone(),
+            ThreadMail {
+                subject: "Other".into(),
+                ..mail("z")
+            },
+        ];
         assert_eq!(collect_thread(&a, &candidates, is_own), [&a]);
     }
 }

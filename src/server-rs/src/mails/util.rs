@@ -67,7 +67,11 @@ pub async fn get_attachment_file(id: &str) -> Option<AttachmentFile> {
     let path = get_attachment_file_path(Some(id));
     let file = tokio::fs::File::open(&path).await.ok()?;
     let metadata = file.metadata().await.ok()?;
-    metadata.is_file().then(|| AttachmentFile { path, size: metadata.len(), file })
+    metadata.is_file().then(|| AttachmentFile {
+        path,
+        size: metadata.len(),
+        file,
+    })
 }
 
 /// Where the URL starting at `start` ends, as
@@ -76,7 +80,9 @@ pub async fn get_attachment_file(id: &str) -> Option<AttachmentFile> {
 /// non-whitespace given back until it ends at a word boundary.
 fn url_end(text: &str, start: usize) -> Option<usize> {
     let rest = &text[start..];
-    let scheme = ["https://", "http://", "ftp://"].into_iter().find(|scheme| rest.starts_with(scheme))?;
+    let scheme = ["https://", "http://", "ftp://"]
+        .into_iter()
+        .find(|scheme| rest.starts_with(scheme))?;
     let mut chars = rest[scheme.len()..].chars();
     let first = chars.next().filter(|c| !jsstr::is_space(*c) && !"/$.?#".contains(*c))?;
     let second = chars.next().filter(|c| !jsstr::is_line_terminator(*c))?;
@@ -145,9 +151,7 @@ pub fn get_text(html: &str) -> String {
     while at < spaces.len() {
         let run_start = at;
         loop {
-            if is_break(at) && is_space(at + 1) {
-                at += 2;
-            } else if is_space(at) && is_break(at + 1) {
+            if (is_break(at) && is_space(at + 1)) || (is_space(at) && is_break(at + 1)) {
                 at += 2;
             } else if is_break(at) {
                 at += 1;
@@ -211,7 +215,9 @@ mod tests {
         let mut attachment = get_attachment_file(id).await.unwrap();
         assert_eq!(attachment.size, 12);
         let mut content = String::new();
-        tokio::io::AsyncReadExt::read_to_string(&mut attachment.file, &mut content).await.unwrap();
+        tokio::io::AsyncReadExt::read_to_string(&mut attachment.file, &mut content)
+            .await
+            .unwrap();
         assert_eq!(content, "stored bytes");
         assert_eq!(get_attachment(id).unwrap().as_deref(), Some(b"stored bytes".as_slice()));
 
@@ -220,7 +226,9 @@ mod tests {
 
     #[tokio::test]
     async fn attachment_file_is_none_when_the_file_is_missing() {
-        assert!(get_attachment_file("util-test-attachment-never-written").await.is_none());
+        assert!(get_attachment_file("util-test-attachment-never-written")
+            .await
+            .is_none());
         assert_eq!(get_attachment("util-test-attachment-never-written").unwrap(), None);
     }
 

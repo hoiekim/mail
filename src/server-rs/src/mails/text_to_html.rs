@@ -33,7 +33,9 @@ fn url_at(line: &str, at: usize) -> Option<&str> {
         return None;
     }
     let rest = &line[at..];
-    let scheme = ["https://", "http://"].into_iter().find(|scheme| rest.starts_with(scheme))?;
+    let scheme = ["https://", "http://"]
+        .into_iter()
+        .find(|scheme| rest.starts_with(scheme))?;
     let run = &rest[scheme.len()..];
     let run = &run[..run.find(|c| !is_url_char(c)).unwrap_or(run.len())];
     // The last character that can end a URL, with at least one before it.
@@ -74,7 +76,11 @@ fn quote_prefix(line: &str) -> (usize, usize) {
     let mut end = 0;
     while let Some(rest) = line[end..].strip_prefix('>') {
         level += 1;
-        end += 1 + rest.chars().next().filter(|c| jsstr::is_space(*c)).map_or(0, char::len_utf8);
+        end += 1 + rest
+            .chars()
+            .next()
+            .filter(|c| jsstr::is_space(*c))
+            .map_or(0, char::len_utf8);
     }
     (level, end)
 }

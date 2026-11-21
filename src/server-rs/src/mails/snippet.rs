@@ -25,8 +25,7 @@ fn is_attribution_line(line: &str, opening: &str, closing: &str) -> bool {
     let Some(between) = rest.strip_suffix(closing) else {
         return false;
     };
-    between.chars().next().is_some_and(|first| !jsstr::is_word(first))
-        && !between.contains(jsstr::is_line_terminator)
+    between.chars().next().is_some_and(|first| !jsstr::is_word(first)) && !between.contains(jsstr::is_line_terminator)
 }
 
 /// `/^\s*On\b.+wrote:\s*$/`
@@ -102,7 +101,10 @@ mod tests {
 
     #[test]
     fn passes_short_plain_text_through_unchanged() {
-        assert_eq!(snippet("Hello, this is the body.").as_deref(), Some("Hello, this is the body."));
+        assert_eq!(
+            snippet("Hello, this is the body.").as_deref(),
+            Some("Hello, this is the body.")
+        );
     }
 
     #[test]
@@ -163,7 +165,10 @@ mod tests {
 
     #[test]
     fn returns_none_for_a_forward_with_no_added_text() {
-        assert_eq!(snippet("---------- Forwarded message ---------\nFrom: old@x.com\nOld body"), None);
+        assert_eq!(
+            snippet("---------- Forwarded message ---------\nFrom: old@x.com\nOld body"),
+            None
+        );
     }
 
     #[test]

@@ -180,14 +180,19 @@ fn split_header_block(block: &[u8]) -> Vec<RawHeader> {
         }
     }
     // An mbox separator line is not a header.
-    let from_line = lines.first().is_some_and(|first| first.len() >= 5 && first[..5].eq_ignore_ascii_case(b"From "));
+    let from_line = lines
+        .first()
+        .is_some_and(|first| first.len() >= 5 && first[..5].eq_ignore_ascii_case(b"From "));
     lines
         .iter()
         .skip(usize::from(from_line))
         .filter(|line| !line.is_empty())
         .map(|line| {
             let colon = line.iter().position(|&byte| byte == b':').unwrap_or(0);
-            RawHeader { key: jsstr::trim(&latin1(&line[..colon])).to_lowercase(), line: latin1(line) }
+            RawHeader {
+                key: jsstr::trim(&latin1(&line[..colon])).to_lowercase(),
+                line: latin1(line),
+            }
         })
         .collect()
 }
@@ -230,8 +235,17 @@ fn read_message_headers(lines: &[RawHeader]) -> MessageHeaders {
     for RawHeader { key, line } in lines {
         let known = matches!(
             key.as_str(),
-            "from" | "to" | "cc" | "bcc" | "reply-to" | "subject" | "date" | "message-id" | "content-id"
-                | "in-reply-to" | "references"
+            "from"
+                | "to"
+                | "cc"
+                | "bcc"
+                | "reply-to"
+                | "subject"
+                | "date"
+                | "message-id"
+                | "content-id"
+                | "in-reply-to"
+                | "references"
         );
         if !known {
             continue;
@@ -251,8 +265,11 @@ fn read_message_headers(lines: &[RawHeader]) -> MessageHeaders {
             }
             // A date that cannot be read is the time of reading.
             "date" => {
-                headers.embedded.date =
-                    Some(date_parse(&text).and_then(MessageDate::from_millis).unwrap_or_else(MessageDate::now));
+                headers.embedded.date = Some(
+                    date_parse(&text)
+                        .and_then(MessageDate::from_millis)
+                        .unwrap_or_else(MessageDate::now),
+                );
             }
             "message-id" => {
                 if let Some(id) = ensure_message_id_format(&decode_words(&text)) {
@@ -657,7 +674,11 @@ const MAX_PATH_BYTES: usize = 4096;
 /// refuses to make a file of (a NUL in its extension, or an extension as
 /// long as a path may be) is an error here too.
 pub fn mime_type_from_filename(filename: &str) -> Result<String, MimeParseError> {
-    let lower: String = filename.to_lowercase().chars().filter(|c| !jsstr::is_space(*c)).collect();
+    let lower: String = filename
+        .to_lowercase()
+        .chars()
+        .filter(|c| !jsstr::is_space(*c))
+        .collect();
     let extension = lower.rsplit('.').next().unwrap_or("");
     if extension.is_empty() {
         return Ok("application/octet-stream".to_string());
@@ -673,7 +694,11 @@ pub fn mime_type_from_filename(filename: &str) -> Result<String, MimeParseError>
     }
     // The extension is what follows the last dot of the last path segment.
     let extension = extension.trim_end_matches('/');
-    let known = if extension.contains('/') { None } else { MIME_TYPES.get(extension) };
+    let known = if extension.contains('/') {
+        None
+    } else {
+        MIME_TYPES.get(extension)
+    };
     Ok(known.copied().unwrap_or("application/octet-stream").to_string())
 }
 
@@ -768,22 +793,31 @@ fn read_part_structure(part: &mut Part) -> Result<(), MimeParseError> {
 
     part.encoding =
         jsstr::trim(&without_comment(&first_header(&lines, "content-transfer-encoding")).to_lowercase()).to_string();
-    part.content_type = Some(jsstr::trim(&content_type.value.to_lowercase()).to_string()).filter(|value| !value.is_empty());
+    part.content_type =
+        Some(jsstr::trim(&content_type.value.to_lowercase()).to_string()).filter(|value| !value.is_empty());
     part.charset = param("charset").map(str::to_string);
     let disposition_value = disposition.value.to_lowercase();
     let disposition_value = jsstr::trim(&disposition_value);
     part.disposition = (!disposition_value.is_empty()).then(|| decode_words(disposition_value));
 
-    let raw_filename = disposition.params.get("filename").filter(|value| !value.is_empty()).or(param("name"));
+    let raw_filename = disposition
+        .params
+        .get("filename")
+        .filter(|value| !value.is_empty())
+        .or(param("name"));
     part.filename = raw_filename.map(|raw| decode_words(&raw_octets_as_utf8(raw)));
 
-    let is = |value: Option<&str>, expected: &str| value.is_some_and(|value| jsstr::trim(&value.to_lowercase()) == expected);
+    let is =
+        |value: Option<&str>, expected: &str| value.is_some_and(|value| jsstr::trim(&value.to_lowercase()) == expected);
     if is(content_type.params.get("format"), "flowed") {
         part.flowed = true;
         part.del_sp = is(content_type.params.get("delsp"), "yes");
     }
 
-    part.multipart = part.content_type.as_deref().is_some_and(|value| value.starts_with("multipart/"));
+    part.multipart = part
+        .content_type
+        .as_deref()
+        .is_some_and(|value| value.starts_with("multipart/"));
     part.boundary = param("boundary").map(latin1_bytes);
     part.is_rfc822 = part.content_type.as_deref() == Some("message/rfc822");
     part.header_lines = Some(lines);
@@ -981,7 +1015,14 @@ impl MimeParser {
         self.file_counter += 1;
         let path = self.attachment_dir.join(index.to_string());
         self.ops.push(FileOp::Create(index, path.clone()));
-        (FileBody { index, staged: Vec::new(), size: 0 }, path)
+        (
+            FileBody {
+                index,
+                staged: Vec::new(),
+                size: 0,
+            },
+            path,
+        )
     }
 
     /// Longest line that could still be a boundary delimiter of the current part.
@@ -1022,7 +1063,11 @@ impl MimeParser {
             let line = &data[line_start..line_end];
             let continuation = std::mem::take(&mut self.continuing_line);
 
-            let boundary = if continuation { Boundary::None } else { self.check_boundary(line) };
+            let boundary = if continuation {
+                Boundary::None
+            } else {
+                self.check_boundary(line)
+            };
             if boundary == Boundary::None && !self.in_header && !self.current().multipart {
                 group = Some((group.map_or(line_start, |(start, _)| start), line_end));
                 line_start = line_end;
@@ -1064,7 +1109,11 @@ impl MimeParser {
 
     fn end(&mut self) -> Result<ParsedMessage, MimeParseError> {
         let rest = std::mem::take(&mut self.partial);
-        let boundary = if self.continuing_line { Boundary::None } else { self.check_boundary(&rest) };
+        let boundary = if self.continuing_line {
+            Boundary::None
+        } else {
+            self.check_boundary(&rest)
+        };
         if boundary != Boundary::None {
             self.on_boundary(boundary)?;
         } else if self.in_header {
@@ -1091,12 +1140,20 @@ impl MimeParser {
             return Boundary::None;
         }
         let part = self.current();
-        match part.boundary.as_ref().map_or(0, |boundary| compare_boundary(line, start, boundary)) {
+        match part
+            .boundary
+            .as_ref()
+            .map_or(0, |boundary| compare_boundary(line, start, boundary))
+        {
             1 => return Boundary::NextChild,
             2 => return Boundary::OwnEnd,
             _ => {}
         }
-        match part.parent_boundary.as_ref().map_or(0, |boundary| compare_boundary(line, start, boundary)) {
+        match part
+            .parent_boundary
+            .as_ref()
+            .map_or(0, |boundary| compare_boundary(line, start, boundary))
+        {
             1 => Boundary::NextSibling,
             2 => Boundary::ParentEnd,
             _ => Boundary::None,
@@ -1136,7 +1193,11 @@ impl MimeParser {
             return Err(MimeParseError::TooManyParts);
         }
         let parent_boundary = parent.and_then(|parent| self.parts[parent].boundary.clone());
-        self.parts.push(Part { parent, parent_boundary, ..Part::default() });
+        self.parts.push(Part {
+            parent,
+            parent_boundary,
+            ..Part::default()
+        });
         self.part = self.parts.len() - 1;
         self.in_header = true;
         Ok(())
@@ -1210,7 +1271,11 @@ impl MimeParser {
         let text_type = is_text_type(&content_type);
         // Anything but "inline" is an attachment, and so is a part with no
         // disposition that is not text.
-        let inline = match part.disposition.as_deref().filter(|disposition| !disposition.is_empty()) {
+        let inline = match part
+            .disposition
+            .as_deref()
+            .filter(|disposition| !disposition.is_empty())
+        {
             Some(disposition) => disposition == "inline",
             None => text_type,
         };
@@ -1232,8 +1297,20 @@ impl MimeParser {
                 jsstr::trim(content_id.strip_suffix('>').unwrap_or(content_id)).to_string()
             });
             let (file, path) = self.new_file();
-            self.attachments.push((id, ParsedAttachment { path, filename, content_type: attachment_type, size: 0, cid }));
-            self.parts[id].body = Some(PartBody { decoder, sink: BodySink::File(file) });
+            self.attachments.push((
+                id,
+                ParsedAttachment {
+                    path,
+                    filename,
+                    content_type: attachment_type,
+                    size: 0,
+                    cid,
+                },
+            ));
+            self.parts[id].body = Some(PartBody {
+                decoder,
+                sink: BodySink::File(file),
+            });
             return Ok(());
         }
 
@@ -1242,7 +1319,10 @@ impl MimeParser {
         } else {
             self.has_text = true;
         }
-        self.parts[id].body = Some(PartBody { decoder, sink: BodySink::Text(Vec::new()) });
+        self.parts[id].body = Some(PartBody {
+            decoder,
+            sink: BodySink::Text(Vec::new()),
+        });
         Ok(())
     }
 
@@ -1258,7 +1338,11 @@ impl MimeParser {
             // The line break before a boundary belongs to the boundary, so
             // the last one is held until the next line shows it is not
             // followed by one.
-            let break_length = if self.continuing_line { 0 } else { trailing_break_length(bytes) };
+            let break_length = if self.continuing_line {
+                0
+            } else {
+                trailing_break_length(bytes)
+            };
             (content, held) = bytes.split_at(bytes.len() - break_length);
         }
         if !self.pending_break.is_empty() && (!bytes.is_empty() || last) {
@@ -1311,8 +1395,20 @@ impl MimeParser {
             body.sink = BodySink::File(file);
         }
         let content_type = part.content_type.clone().unwrap_or_else(|| "text/plain".to_string());
-        let filename = part.filename.clone().unwrap_or_else(|| spill_filename(&content_type).to_string());
-        self.attachments.push((id, ParsedAttachment { path, filename: Some(filename), content_type, size: 0, cid: None }));
+        let filename = part
+            .filename
+            .clone()
+            .unwrap_or_else(|| spill_filename(&content_type).to_string());
+        self.attachments.push((
+            id,
+            ParsedAttachment {
+                path,
+                filename: Some(filename),
+                content_type,
+                size: 0,
+                cid: None,
+            },
+        ));
     }
 
     fn finish_part(&mut self, id: PartId) {
@@ -1365,7 +1461,10 @@ impl MimeParser {
             date: headers.embedded.date,
             text,
             html,
-            attachments: std::mem::take(&mut self.attachments).into_iter().map(|(_, attachment)| attachment).collect(),
+            attachments: std::mem::take(&mut self.attachments)
+                .into_iter()
+                .map(|(_, attachment)| attachment)
+                .collect(),
         })
     }
 
@@ -1403,7 +1502,10 @@ impl MimeParser {
             let child_alternative = alternative || content_type == "multipart/alternative";
             pending.extend(part.children.iter().rev().map(|&child| (child, child_alternative)));
         }
-        Ok(((!text.is_empty()).then(|| text.join("\n")), (!html.is_empty()).then(|| html.join("<br/>\n"))))
+        Ok((
+            (!text.is_empty()).then(|| text.join("\n")),
+            (!html.is_empty()).then(|| html.join("<br/>\n")),
+        ))
     }
 }
 
@@ -1433,7 +1535,11 @@ fn cid_reference_at(html: &str, at: usize) -> Option<(usize, Option<&str>)> {
         return None;
     }
     // A cut through a pair still ends the match after its first half.
-    let match_end = if whole { end } else { end + html[end..].chars().next().map_or(0, char::len_utf8) };
+    let match_end = if whole {
+        end
+    } else {
+        end + html[end..].chars().next().map_or(0, char::len_utf8)
+    };
     Some((match_end, whole.then(|| &html[id_start..end])))
 }
 
@@ -1465,9 +1571,9 @@ async fn inline_images(html: String, attachments: &[ParsedAttachment]) -> std::i
         if wanted.iter().any(|(seen, _)| *seen == cid) {
             continue;
         }
-        let image = attachments
-            .iter()
-            .find(|attachment| attachment.cid.as_deref() == Some(cid) && is_inline_image_type(&attachment.content_type));
+        let image = attachments.iter().find(|attachment| {
+            attachment.cid.as_deref() == Some(cid) && is_inline_image_type(&attachment.content_type)
+        });
         if let Some(image) = image {
             wanted.push((cid, image));
         }
@@ -1626,7 +1732,10 @@ impl DateToken {
     }
 
     fn is_keyword_z(self) -> bool {
-        self == DateToken::Keyword { keyword: Keyword::Zone(0), length: 1 }
+        self == DateToken::Keyword {
+            keyword: Keyword::Zone(0),
+            length: 1,
+        }
     }
 }
 
@@ -1719,9 +1828,15 @@ impl DateScanner {
                 digits += 1;
                 self.at += 1;
             }
-            return DateToken::Number { value, length: self.at - start };
+            return DateToken::Number {
+                value,
+                length: self.at - start,
+            };
         }
-        if let Some(symbol) = [':', '-', '+', '.', ')'].into_iter().find(|symbol| *symbol as u16 == unit) {
+        if let Some(symbol) = [':', '-', '+', '.', ')']
+            .into_iter()
+            .find(|symbol| *symbol as u16 == unit)
+        {
             self.at += 1;
             return DateToken::Symbol(symbol);
         }
@@ -1982,7 +2097,12 @@ fn parse_es5_date_time(
             day.add(date);
         }
     }
-    if scanner.peek() != (DateToken::Keyword { keyword: Keyword::TimeSeparator, length: 1 }) {
+    if scanner.peek()
+        != (DateToken::Keyword {
+            keyword: Keyword::TimeSeparator,
+            length: 1,
+        })
+    {
         if scanner.peek() != DateToken::End {
             return Es5End::Unhandled(scanner.next());
         }
@@ -2182,14 +2302,17 @@ pub fn date_parse(text: &str) -> Option<i64> {
         return None;
     }
     // Days from the epoch to the first of the month, then the day of the month.
-    let (shifted_year, shifted_month) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+    let (shifted_year, shifted_month) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
     let era = shifted_year.div_euclid(400);
     let year_of_era = shifted_year.rem_euclid(400);
     let day_of_year = (153 * shifted_month + 2) / 5;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     let days = era * 146_097 + day_of_era - 719_468 + (date - 1);
-    let ms = days * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1000 + millisecond
-        - offset * 1000;
+    let ms = days * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1000 + millisecond - offset * 1000;
     (ms.abs() <= MAX_DATE_MILLIS).then_some(ms)
 }
 
@@ -2224,9 +2347,13 @@ mod tests {
     /// Feeds `raw` to the parser in `size`-byte chunks.
     async fn parse_in_chunks(raw: &[u8], size: usize) -> Result<Parsed> {
         let root = tempfile::tempdir()?;
-        let options = ParseOptions { attachment_dir: root.path().join("attachments") };
-        let chunks: Vec<std::io::Result<bytes::Bytes>> =
-            raw.chunks(size).map(|chunk| Ok(bytes::Bytes::copy_from_slice(chunk))).collect();
+        let options = ParseOptions {
+            attachment_dir: root.path().join("attachments"),
+        };
+        let chunks: Vec<std::io::Result<bytes::Bytes>> = raw
+            .chunks(size)
+            .map(|chunk| Ok(bytes::Bytes::copy_from_slice(chunk)))
+            .collect();
         let source = tokio_util::io::StreamReader::new(futures_util::stream::iter(chunks));
         let message = parse_message(source, &options).await?;
         Ok(Parsed { message, _root: root })
@@ -2282,7 +2409,10 @@ mod tests {
         .await;
         assert_eq!(parsed.message_id.as_deref(), Some("<id-1@example.org>"));
         assert_eq!(parsed.subject.as_deref(), Some("Hello"));
-        assert_eq!(parsed.date.map(|date| date.to_iso_string()).as_deref(), Some("2026-10-27T01:00:00.000Z"));
+        assert_eq!(
+            parsed.date.map(|date| date.to_iso_string()).as_deref(),
+            Some("2026-10-27T01:00:00.000Z")
+        );
         assert_eq!(
             parsed.from,
             Some(ParsedAddress {
@@ -2301,8 +2431,12 @@ mod tests {
 
     #[tokio::test]
     async fn decodes_encoded_word_subjects_in_any_charset() {
-        let parsed =
-            parse(message(&["Subject: =?EUC-KR?B?x9Gx2w==?= =?ISO-2022-JP?B?GyRCRnxLXDhsGyhC?=", "", "body"])).await;
+        let parsed = parse(message(&[
+            "Subject: =?EUC-KR?B?x9Gx2w==?= =?ISO-2022-JP?B?GyRCRnxLXDhsGyhC?=",
+            "",
+            "body",
+        ]))
+        .await;
         assert_eq!(parsed.subject.as_deref(), Some("한글日本語"));
     }
 
@@ -2319,12 +2453,18 @@ mod tests {
             "x",
         ]))
         .await;
-        assert_eq!(parsed.from.as_ref().unwrap().value[0].address.as_deref(), Some("two@x.org"));
+        assert_eq!(
+            parsed.from.as_ref().unwrap().value[0].address.as_deref(),
+            Some("two@x.org")
+        );
         assert_eq!(parsed.subject.as_deref(), Some("last"));
         let Some(OneOrMany::Many(to)) = &parsed.to else {
             panic!("repeated To headers are a list");
         };
-        assert_eq!(to.iter().map(|to| to.text.as_str()).collect::<Vec<_>>(), ["a@x.org", "b@x.org"]);
+        assert_eq!(
+            to.iter().map(|to| to.text.as_str()).collect::<Vec<_>>(),
+            ["a@x.org", "b@x.org"]
+        );
     }
 
     #[tokio::test]
@@ -2366,7 +2506,10 @@ mod tests {
         let html = "<h1>Title</h1><p>Para <a href='https://bit.ly/3abc'>link</a> <img src='cid:a' alt='Logo'></p>";
         let parsed = parse(message(&["Content-Type: text/html", "", html])).await;
         assert_eq!(parsed.html, Some(format!("{html}\n")));
-        assert_eq!(parsed.text.as_deref(), Some("TITLE\n\nPara link [https://bit.ly/3abc] Logo [cid:a]"));
+        assert_eq!(
+            parsed.text.as_deref(),
+            Some("TITLE\n\nPara link [https://bit.ly/3abc] Logo [cid:a]")
+        );
     }
 
     #[tokio::test]
@@ -2393,7 +2536,10 @@ mod tests {
             "--m--",
         ]))
         .await;
-        assert_eq!(parsed.text.as_deref(), Some("Main\nInfo: https://lists.example.org/info & more"));
+        assert_eq!(
+            parsed.text.as_deref(),
+            Some("Main\nInfo: https://lists.example.org/info & more")
+        );
         assert_eq!(
             parsed.html.as_deref(),
             Some(
@@ -2569,12 +2715,20 @@ mod tests {
         let encoded = base64_lines(&content);
         let raw = mixed(&[
             &["Content-Type: text/plain", "", "hi"],
-            &["Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", "", &encoded],
+            &[
+                "Content-Type: application/octet-stream",
+                "Content-Transfer-Encoding: base64",
+                "",
+                &encoded,
+            ],
         ]);
         for size in [1, 2, 3, 7, 64] {
             let parsed = parse_in_chunks(raw.as_bytes(), size).await.unwrap();
             assert_eq!(parsed.text.as_deref(), Some("hi"));
-            assert_eq!(sha256(&std::fs::read(&parsed.attachments[0].path).unwrap()), sha256(&content));
+            assert_eq!(
+                sha256(&std::fs::read(&parsed.attachments[0].path).unwrap()),
+                sha256(&content)
+            );
         }
     }
 
@@ -2597,7 +2751,11 @@ mod tests {
             ],
         ]))
         .await;
-        let filenames: Vec<_> = parsed.attachments.iter().map(|attachment| attachment.filename.as_deref()).collect();
+        let filenames: Vec<_> = parsed
+            .attachments
+            .iter()
+            .map(|attachment| attachment.filename.as_deref())
+            .collect();
         assert_eq!(filenames, [Some("보고.pdf"), Some("한글.docx")]);
     }
 
@@ -2611,7 +2769,12 @@ mod tests {
                 "",
                 "jpeg",
             ],
-            &["Content-Type: application/x-custom", "Content-Disposition: attachment", "", "raw"],
+            &[
+                "Content-Type: application/x-custom",
+                "Content-Disposition: attachment",
+                "",
+                "raw",
+            ],
         ]))
         .await;
         let types: Vec<_> = parsed
@@ -2619,7 +2782,10 @@ mod tests {
             .iter()
             .map(|attachment| (attachment.filename.as_deref(), attachment.content_type.as_str()))
             .collect();
-        assert_eq!(types, [(Some("photo.jpg"), "image/jpeg"), (None, "application/x-custom")]);
+        assert_eq!(
+            types,
+            [(Some("photo.jpg"), "image/jpeg"), (None, "application/x-custom")]
+        );
     }
 
     #[tokio::test]
@@ -2701,7 +2867,10 @@ mod tests {
             format!("Content-Transfer-Encoding: {}\r\n\r\nbody", "(".repeat(900_000)),
             format!("To: @@{}\r\n\r\nbody", "a!".repeat(450_000)),
             format!("Subject: a{}\r\n\r\nbody", "\r\n b".repeat(225_000)),
-            format!("Content-Type: text/plain; format=flowed; delsp=yes\r\n\r\n{}", "ab \r\n".repeat(400_000)),
+            format!(
+                "Content-Type: text/plain; format=flowed; delsp=yes\r\n\r\n{}",
+                "ab \r\n".repeat(400_000)
+            ),
         ];
         for raw in inputs {
             let started = Instant::now();
@@ -2718,7 +2887,10 @@ mod tests {
             lines.extend_from_slice(&["--m", "Content-Type: text/plain", "", "x"]);
         }
         lines.push("--m--");
-        let failure = parse_in_chunks(message(&lines).as_bytes(), 64 * 1024).await.err().unwrap();
+        let failure = parse_in_chunks(message(&lines).as_bytes(), 64 * 1024)
+            .await
+            .err()
+            .unwrap();
         assert_eq!(failure.to_string(), "Max allowed child nodes exceeded");
     }
 
@@ -2732,7 +2904,9 @@ mod tests {
     #[tokio::test]
     async fn rejects_when_the_source_fails_with_the_attachment_file_closed() {
         let root = tempfile::tempdir().unwrap();
-        let options = ParseOptions { attachment_dir: root.path().join("attachments") };
+        let options = ParseOptions {
+            attachment_dir: root.path().join("attachments"),
+        };
         let head = message(&[
             "Content-Type: multipart/mixed; boundary=\"m\"",
             "",
@@ -2744,7 +2918,10 @@ mod tests {
         let chunks: Vec<std::io::Result<bytes::Bytes>> = vec![
             Ok(bytes::Bytes::from(head)),
             Ok(bytes::Bytes::from(base64_lines(&pseudo_random(400_000)))),
-            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "connection reset")),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "connection reset",
+            )),
         ];
         let source = tokio_util::io::StreamReader::new(futures_util::stream::iter(chunks));
         let failure = parse_message(source, &options).await.err().unwrap();
@@ -2772,29 +2949,61 @@ mod tests {
 
     #[tokio::test]
     async fn leaves_both_unset_when_the_headers_are_absent_or_empty() {
-        let parsed = parse(message(&["Message-ID: <c@x>", "In-Reply-To: ", "Subject: hi", "", "body"])).await;
+        let parsed = parse(message(&[
+            "Message-ID: <c@x>",
+            "In-Reply-To: ",
+            "Subject: hi",
+            "",
+            "body",
+        ]))
+        .await;
         assert_eq!(parsed.in_reply_to, None);
         assert_eq!(parsed.references, None);
     }
 
     #[test]
     fn reads_dates_the_way_the_typescript_server_does() {
-        let parse = |text: &str| date_parse(text).and_then(MessageDate::from_millis).map(MessageDate::to_iso_string);
-        assert_eq!(parse("Tue, 27 Oct 2026 10:00:00 +0900").as_deref(), Some("2026-10-27T01:00:00.000Z"));
-        assert_eq!(parse("2026-10-27T10:00:00.5+09:00").as_deref(), Some("2026-10-27T01:00:00.500Z"));
-        assert_eq!(parse("Sunday, 06-Nov-94 08:49:37 GMT").as_deref(), Some("1994-11-06T08:49:37.000Z"));
-        assert_eq!(parse("Tue Oct 27 2026 10:00:00 GMT+0900 (KST)").as_deref(), Some("2026-10-27T01:00:00.000Z"));
-        assert_eq!(parse("27 Oct 26 10:00 EST").as_deref(), Some("2026-10-27T15:00:00.000Z"));
+        let parse = |text: &str| {
+            date_parse(text)
+                .and_then(MessageDate::from_millis)
+                .map(MessageDate::to_iso_string)
+        };
+        assert_eq!(
+            parse("Tue, 27 Oct 2026 10:00:00 +0900").as_deref(),
+            Some("2026-10-27T01:00:00.000Z")
+        );
+        assert_eq!(
+            parse("2026-10-27T10:00:00.5+09:00").as_deref(),
+            Some("2026-10-27T01:00:00.500Z")
+        );
+        assert_eq!(
+            parse("Sunday, 06-Nov-94 08:49:37 GMT").as_deref(),
+            Some("1994-11-06T08:49:37.000Z")
+        );
+        assert_eq!(
+            parse("Tue Oct 27 2026 10:00:00 GMT+0900 (KST)").as_deref(),
+            Some("2026-10-27T01:00:00.000Z")
+        );
+        assert_eq!(
+            parse("27 Oct 26 10:00 EST").as_deref(),
+            Some("2026-10-27T15:00:00.000Z")
+        );
         assert_eq!(parse("Tue, 31 Feb 2026").as_deref(), Some("2026-03-03T00:00:00.000Z"));
         assert_eq!(parse("1").as_deref(), Some("2001-01-01T00:00:00.000Z"));
-        assert_eq!(parse("Tue, 27 Oct 2026 23:59:60").as_deref(), Some("2026-10-27T23:59:00.000Z"));
+        assert_eq!(
+            parse("Tue, 27 Oct 2026 23:59:60").as_deref(),
+            Some("2026-10-27T23:59:00.000Z")
+        );
         assert_eq!(parse("Tue, 27 Oct 2026 10:00:00 +0900 trailing"), None);
         assert_eq!(parse("Tue, 27 Oct 2026 10:00:00 JST"), None);
         assert_eq!(parse("not a date"), None);
         assert_eq!(parse(""), None);
         // The vertical tab is white space only beside a character outside ASCII.
         assert_eq!(parse("15 Oct 12:39\u{b} May"), None);
-        assert_eq!(parse("15\u{3000}Oct 12:39\u{b} May").as_deref(), Some("2001-05-15T12:39:00.000Z"));
+        assert_eq!(
+            parse("15\u{3000}Oct 12:39\u{b} May").as_deref(),
+            Some("2001-05-15T12:39:00.000Z")
+        );
     }
 
     #[test]
@@ -2809,7 +3018,10 @@ mod tests {
         assert_eq!(known("photo.jpg/x"), "application/octet-stream");
         assert_eq!(known("unknown.zzz"), "application/octet-stream");
         assert_eq!(known("trailing."), "application/octet-stream");
-        assert!(matches!(mime_type_from_filename("a.b\0c"), Err(MimeParseError::FilenameWithNul(_))));
+        assert!(matches!(
+            mime_type_from_filename("a.b\0c"),
+            Err(MimeParseError::FilenameWithNul(_))
+        ));
         assert!(mime_type_from_filename(&format!("a.{}", "x".repeat(4093))).is_ok());
         assert!(matches!(
             mime_type_from_filename(&format!("a.{}", "x".repeat(4094))),

@@ -242,7 +242,10 @@ mod tests {
 
     #[test]
     fn quoted_printable_drops_whitespace_before_a_line_break_but_keeps_it_inside_a_line() {
-        assert_eq!(decode_in_pieces("quoted-printable", b"a  b   \r\nc \t\nd  ", 4), b"a  b\r\nc\nd");
+        assert_eq!(
+            decode_in_pieces("quoted-printable", b"a  b   \r\nc \t\nd  ", 4),
+            b"a  b\r\nc\nd"
+        );
     }
 
     #[test]

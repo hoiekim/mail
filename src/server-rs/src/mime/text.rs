@@ -70,7 +70,9 @@ fn link_end_at(text: &[char], start: usize) -> Option<usize> {
     if start > 0 && jsstr::is_word(text[start - 1]) {
         return None;
     }
-    let prefix = LINK_PREFIXES.iter().find(|prefix| starts_with_at(text, start, prefix))?;
+    let prefix = LINK_PREFIXES
+        .iter()
+        .find(|prefix| starts_with_at(text, start, prefix))?;
     let after_prefix = start + prefix.len();
     let mut end = after_prefix;
     while end < text.len() && !is_link_end(text[end]) {
@@ -121,8 +123,11 @@ fn find_links(text: &[char]) -> Vec<(usize, usize)> {
                 while run_end < text.len() && is_local_char(text[run_end]) {
                     run_end += 1;
                 }
-                address_end =
-                    if text.get(run_end) == Some(&'@') { domain_end_at(text, run_end + 1) } else { None };
+                address_end = if text.get(run_end) == Some(&'@') {
+                    domain_end_at(text, run_end + 1)
+                } else {
+                    None
+                };
             }
             if let Some(address_end) = address_end {
                 links.push((i, address_end));
@@ -148,7 +153,10 @@ fn starts_with_ignore_ascii_case(text: &str, prefix: &str) -> bool {
 }
 
 fn href_for(link: &str) -> String {
-    if ["http://", "https://", "git://", "mailto:"].iter().any(|scheme| starts_with_ignore_ascii_case(link, scheme)) {
+    if ["http://", "https://", "git://", "mailto:"]
+        .iter()
+        .any(|scheme| starts_with_ignore_ascii_case(link, scheme))
+    {
         link.to_string()
     } else if starts_with_ignore_ascii_case(link, "www.") {
         format!("http://{link}")
@@ -261,7 +269,9 @@ pub struct MessageDate(i64);
 
 const MS_PER_DAY: i64 = 86_400_000;
 const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 impl MessageDate {
     /// The largest time value a `Date` holds, in either direction.
@@ -292,7 +302,11 @@ impl MessageDate {
         let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
         let shifted_month = (5 * day_of_year + 2) / 153;
         let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-        let month = if shifted_month < 10 { shifted_month + 3 } else { shifted_month - 9 };
+        let month = if shifted_month < 10 {
+            shifted_month + 3
+        } else {
+            shifted_month - 9
+        };
         (year_of_era + era * 400 + i64::from(month <= 2), month, day)
     }
 
@@ -355,13 +369,23 @@ fn recipients(list: &Option<OneOrMany<ParsedAddress>>) -> Option<&ParsedAddress>
 fn meta_entries(headers: &EmbeddedHeaders) -> Vec<(&'static str, MetaValue<'_>)> {
     let entries = [
         ("From", headers.from.as_ref().map(MetaValue::Address)),
-        ("Subject", headers.subject.as_deref().filter(|subject| !subject.is_empty()).map(MetaValue::Text)),
+        (
+            "Subject",
+            headers
+                .subject
+                .as_deref()
+                .filter(|subject| !subject.is_empty())
+                .map(MetaValue::Text),
+        ),
         ("Date", headers.date.map(MetaValue::Date)),
         ("To", recipients(&headers.to).map(MetaValue::Address)),
         ("Cc", recipients(&headers.cc).map(MetaValue::Address)),
         ("Bcc", recipients(&headers.bcc).map(MetaValue::Address)),
     ];
-    entries.into_iter().filter_map(|(key, value)| Some((key, value?))).collect()
+    entries
+        .into_iter()
+        .filter_map(|(key, value)| Some((key, value?)))
+        .collect()
 }
 
 /// An embedded message's headers as the lines put before its text body.
@@ -409,7 +433,10 @@ mod tests {
             text_to_html("mail me at a.b+c@d-e.example, ok"),
             "<p>mail me at <a href=\"mailto:a.b+c@d-e.example\">a.b+c@d-e.example</a>, ok</p>"
         );
-        assert_eq!(text_to_html("xhttp://no.example a@nodot"), "<p>xhttp://no.example a@nodot</p>");
+        assert_eq!(
+            text_to_html("xhttp://no.example a@nodot"),
+            "<p>xhttp://no.example a@nodot</p>"
+        );
     }
 
     #[test]

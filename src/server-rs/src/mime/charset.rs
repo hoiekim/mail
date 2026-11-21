@@ -168,18 +168,26 @@ fn decode_utf16(bytes: &[u8]) -> String {
             little_endian_votes += 1;
         }
     }
-    let encoding = if big_endian_votes > little_endian_votes { UTF_16BE } else { UTF_16LE };
+    let encoding = if big_endian_votes > little_endian_votes {
+        UTF_16BE
+    } else {
+        UTF_16LE
+    };
     text_decode(encoding, bytes)
 }
 
 /// `/^(?:utf-?8|7bit)$/i`
 fn is_utf8_label(label: &str) -> bool {
-    ["utf8", "utf-8", "7bit"].iter().any(|known| label.eq_ignore_ascii_case(known))
+    ["utf8", "utf-8", "7bit"]
+        .iter()
+        .any(|known| label.eq_ignore_ascii_case(known))
 }
 
 /// `/^utf[-_]?16$/i`
 fn is_utf16_label(label: &str) -> bool {
-    ["utf16", "utf-16", "utf_16"].iter().any(|known| label.eq_ignore_ascii_case(known))
+    ["utf16", "utf-16", "utf_16"]
+        .iter()
+        .any(|known| label.eq_ignore_ascii_case(known))
 }
 
 /// Decodes header bytes (an RFC 2047 encoded word) in `charset`. Unknown
