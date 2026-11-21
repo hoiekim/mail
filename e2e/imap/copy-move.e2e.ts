@@ -216,6 +216,28 @@ describe("COPY: where each kind of destination puts the copy", () => {
     imap.close();
   });
 
+  test("a copy into a user mailbox makes a per-address mailbox of the same name appear", async () => {
+    // NOTE: looks like a bug. The copy is re-addressed to <mailbox>@<domain>,
+    // and LIST shows one INBOX/accounts/<local part> for every address that
+    // has received mail, so copying into "folder" invents the mailbox
+    // INBOX/accounts/folder. It is selectable and empty: the copy is filed
+    // under "folder" only.
+    const { imap } = await inbox(1);
+    expect((await imap.command('LIST "" "INBOX/accounts/%"')).untagged).toEqual([
+      '* LIST (\\HasNoChildren) "/" "INBOX/accounts/hello"',
+    ]);
+    await imap.command("COPY 1 folder");
+    // Sorted: both addresses' latest mail carries the same Date, which is what LIST orders by.
+    expect((await imap.command('LIST "" "INBOX/accounts/%"')).untagged.sort()).toEqual([
+      '* LIST (\\HasNoChildren) "/" "INBOX/accounts/folder"',
+      '* LIST (\\HasNoChildren) "/" "INBOX/accounts/hello"',
+    ]);
+    expect((await imap.command('STATUS "INBOX/accounts/folder" (MESSAGES)')).untagged).toEqual([
+      '* STATUS "INBOX/accounts/folder" (MESSAGES 0)',
+    ]);
+    imap.close();
+  });
+
   test("into INBOX itself, in any letter case: a second message with the next UID", async () => {
     const { imap, validity } = await inbox(1);
     expect(tail((await imap.command("COPY 1 INBOX")).tagged)).toBe(`OK [COPYUID ${validity} 1 2] COPY completed`);

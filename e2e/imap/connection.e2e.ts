@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { ADMIN_PASSWORD, sleep, type TestServer } from "../harness";
+import { ADMIN_PASSWORD, sleep, waitFor, type TestServer } from "../harness";
 import { ImapClient, lit } from "../harness/imap";
 import { CAPABILITIES, exchange, raws, startImapServer } from "./support";
 
@@ -550,4 +550,57 @@ describe("connection teardown", () => {
     expect(answers.map((answer) => answer.status)).toEqual(Array(20).fill("OK"));
     for (const client of clients) client.close();
   });
+
+  test("the port serves 100 connections at once; the 101st is closed without a greeting", async () => {
+    const limited = await startImapServer();
+    try {
+      const clients: ImapClient[] = [];
+      for (let i = 0; i < 100; i++) clients.push(await ImapClient.connect(limited));
+      const extra = await ImapClient.connect(limited, { greeting: false });
+      expect(raws(await extra.waitForClose())).toEqual([]);
+      expect(extra.transcript).toBe("");
+      // The hundred that got in are served normally.
+      expect((await clients[99]!.command("NOOP")).status).toBe("OK");
+
+      // When one leaves, the next connection is greeted.
+      clients[0]!.close();
+      const next = await waitFor(
+        async () => {
+          const candidate = await ImapClient.connect(limited, { greeting: false });
+          try {
+            return (await candidate.next(2000)).raw === GREETING ? candidate : undefined;
+          } catch {
+            return undefined;
+          }
+        },
+        { what: "a freed connection slot" }
+      );
+      next.close();
+      for (const client of clients) client.close();
+    } finally {
+      await limited.stop();
+    }
+  }, 60_000);
+
+  test("on shutdown every connection is told BYE and closed, idle or not", async () => {
+    const doomed = await startImapServer();
+    try {
+      const fresh = await ImapClient.connect(doomed);
+      const selected = await ImapClient.connect(doomed);
+      await selected.login("admin", ADMIN_PASSWORD);
+      await selected.command("SELECT INBOX");
+      const idling = await ImapClient.connect(doomed);
+      await idling.login("admin", ADMIN_PASSWORD);
+      await idling.command("SELECT INBOX");
+      await idling.idle();
+
+      const exited = doomed.kill("SIGTERM");
+      for (const client of [fresh, selected, idling]) {
+        expect(raws(await client.waitForClose())).toEqual(["* BYE Server shutting down"]);
+      }
+      expect(await exited).toBe(0);
+    } finally {
+      await doomed.stop();
+    }
+  }, 60_000);
 });

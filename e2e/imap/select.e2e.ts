@@ -54,6 +54,45 @@ afterAll(async () => {
   await server?.stop();
 });
 
+describe("signed in, with no mailbox selected", () => {
+  const refusals: [string, string][] = [
+    ["FETCH 1 FLAGS", "BAD No mailbox selected"],
+    ["UID FETCH 1 FLAGS", "BAD No mailbox selected"],
+    ["SEARCH ALL", "BAD No mailbox selected"],
+    ["UID SEARCH ALL", "BAD No mailbox selected"],
+    ["STORE 1 +FLAGS (\\Seen)", "BAD No mailbox selected"],
+    ["UID STORE 1 +FLAGS (\\Seen)", "BAD No mailbox selected"],
+    ["EXPUNGE", "BAD No mailbox selected"],
+    ["CLOSE", "BAD No mailbox selected"],
+    ["UNSELECT", "BAD No mailbox selected"],
+    // COPY, MOVE and IDLE word it differently, and as NO.
+    ["COPY 1 INBOX", "NO Not authenticated or no mailbox selected."],
+    ["UID COPY 1 INBOX", "NO Not authenticated or no mailbox selected."],
+    ["MOVE 1 INBOX", "NO Not authenticated or no mailbox selected."],
+    ["UID MOVE 1 INBOX", "NO Not authenticated or no mailbox selected."],
+    ["IDLE", "NO Not authenticated or no mailbox selected"],
+    ["UID EXPUNGE 1", "BAD UID EXPUNGE not supported"],
+  ];
+
+  test("every command that needs a mailbox is refused with its own text", async () => {
+    const imap = await session(await userWithMail(1));
+    for (const [command, expected] of refusals) {
+      const result = await imap.command(command);
+      expect({ command, lines: result.lines }).toEqual({ command, lines: [`${result.tag} ${expected}`] });
+    }
+    imap.close();
+  });
+
+  test("the commands that need none still work", async () => {
+    const imap = await session(await userWithMail(1));
+    for (const command of ["NOOP", "CHECK", "CAPABILITY", "NAMESPACE", "ID NIL", "ENABLE CONDSTORE", 'LIST "" "*"', 'LSUB "" "*"', "STATUS INBOX (MESSAGES)", "CREATE box", "SUBSCRIBE box", "UNSUBSCRIBE box", "RENAME box box2", "DELETE box2"]) {
+      const result = await imap.command(command);
+      expect({ command, status: result.status }).toEqual({ command, status: "OK" });
+    }
+    imap.close();
+  });
+});
+
 describe("SELECT", () => {
   test("announces EXISTS, RECENT, UNSEEN, UIDVALIDITY, UIDNEXT, HIGHESTMODSEQ, FLAGS and PERMANENTFLAGS, then READ-WRITE", async () => {
     const user = await userWithMail(3);
