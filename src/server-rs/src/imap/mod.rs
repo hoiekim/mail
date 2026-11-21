@@ -8,6 +8,7 @@ pub mod sequence_resolver;
 pub mod session_buffer;
 pub mod session_format;
 pub mod session_registry;
+pub mod store;
 pub mod trace;
 pub mod types;
 pub mod util;

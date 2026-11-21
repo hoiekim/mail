@@ -553,7 +553,7 @@ pub fn set_mail_flags<S: AsRef<str>>(
     use_uid: bool,
     operation: StoreOperationType,
     unchanged_since: Option<f64>,
-) -> impl Future<Output = SetMailFlagsResult> + Send + 'static {
+) -> BoxFuture<'static, SetMailFlagsResult> {
     let set_clause = build_flag_set_clause(operation, flags);
     let conditional = unchanged_since.is_some();
     let mut queries = build_set_mail_flags_queries(
@@ -621,6 +621,7 @@ pub fn set_mail_flags<S: AsRef<str>>(
             SetMailFlagsResult::default()
         })
     }
+    .boxed()
 }
 
 // ---------------------------------------------------------------------------
