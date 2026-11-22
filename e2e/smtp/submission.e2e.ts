@@ -865,11 +865,19 @@ describe("submissions the server refuses itself", () => {
     expect(server.mailgun.requests).toEqual([]);
   }, 60_000);
 
-  test("an account deleted after it signed in", async () => {
+  test("an account deleted after it signed in loses the session at the next MAIL FROM, as on a password change", async () => {
     const { user, smtp, at } = await freshSender();
     await server.db.query("DELETE FROM users WHERE username = $1", [user.username]);
+    expect((await smtp.send(`MAIL FROM:<${at("me")}>`)).raw).toBe("421 4.4.2 Credential changed, please re-authenticate");
+    expect(await smtp.waitForClose(5000)).toBe(true);
+    expect(server.mailgun.requests).toEqual([]);
+  });
+
+  test("an account deleted between RCPT TO and DATA is refused at DATA, and nothing is sent", async () => {
+    const { user, smtp, at } = await freshSender();
     expect((await smtp.send(`MAIL FROM:<${at("me")}>`)).raw).toBe("250 Accepted");
     expect((await smtp.send("RCPT TO:<bob@remote.example>")).raw).toBe("250 Accepted");
+    await server.db.query("DELETE FROM users WHERE username = $1", [user.username]);
     expect((await smtp.data(crlf("Subject: ghost", "", "x"))).raw).toBe("450 User not authenticated");
     expect(server.mailgun.requests).toEqual([]);
   });

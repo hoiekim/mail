@@ -79,7 +79,7 @@ mod verify_credential_version {
         prime(&fixture.session, "fence-alice-1", 1);
         register_authenticated_session(fixture.session.clone());
 
-        let ok = fixture.session.verify_credential_version_with("A1", |_| async { Ok(2) }).await.unwrap();
+        let ok = fixture.session.verify_credential_version_with("A1", |_| async { Ok(Some(2)) }).await.unwrap();
 
         assert!(!ok);
         assert_eq!(fixture.wire().await, "A1 NO [AUTHENTICATIONFAILED] Credential changed, please re-authenticate\r\n");
@@ -94,7 +94,7 @@ mod verify_credential_version {
         let fixture = fixture(false);
         prime(&fixture.session, "fence-alice-2", 2);
 
-        let ok = fixture.session.verify_credential_version_with("A2", |_| async { Ok(2) }).await.unwrap();
+        let ok = fixture.session.verify_credential_version_with("A2", |_| async { Ok(Some(2)) }).await.unwrap();
 
         assert!(ok);
         assert_eq!(fixture.wire().await, "");
@@ -107,8 +107,23 @@ mod verify_credential_version {
         // A row that predates the fence reads back as 1, and so does the
         // stamp of a sign-in on such a row.
         prime(&fixture.session, "fence-alice-3", 1);
-        assert!(fixture.session.verify_credential_version_with("A3", |_| async { Ok(1) }).await.unwrap());
+        assert!(fixture.session.verify_credential_version_with("A3", |_| async { Ok(Some(1)) }).await.unwrap());
         assert!(fixture.session.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn de_authenticates_when_the_account_is_gone() {
+        let fixture = fixture(false);
+        // The credential row was deleted, or soft-deleted, after sign-in.
+        prime(&fixture.session, "fence-alice-7", 1);
+        register_authenticated_session(fixture.session.clone());
+
+        let ok = fixture.session.verify_credential_version_with("A7", |_| async { Ok(None) }).await.unwrap();
+
+        assert!(!ok);
+        assert_eq!(fixture.wire().await, "A7 NO [AUTHENTICATIONFAILED] Credential changed, please re-authenticate\r\n");
+        assert!(!fixture.session.is_authenticated());
+        assert_eq!(evict_imap_sessions("fence-alice-7"), 0);
     }
 
     #[tokio::test]
@@ -133,7 +148,7 @@ mod verify_credential_version {
             .session
             .verify_credential_version_with("A5", |username: &str| {
                 assert_eq!(username, "admin-ro");
-                async { Ok(2) }
+                async { Ok(Some(2)) }
             })
             .await
             .unwrap();

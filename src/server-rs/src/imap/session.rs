@@ -868,8 +868,8 @@ impl ImapSession {
     /// Credential-revocation fence. Compares the generation the connection
     /// was stamped with at sign-in against the credential row's current
     /// version. On a mismatch — the password was rotated after this
-    /// connection signed in — the session is de-authenticated and
-    /// unregistered, and the command is answered `NO
+    /// connection signed in, or the account was deleted — the session is
+    /// de-authenticated and unregistered, and the command is answered `NO
     /// [AUTHENTICATIONFAILED]` so the client signs in again instead of
     /// retrying the same grant. True when the caller may go on.
     ///
@@ -892,7 +892,7 @@ impl ImapSession {
     pub async fn verify_credential_version_with<F, Fut>(&self, tag: &str, current_version: F) -> Result<bool>
     where
         F: FnOnce(&str) -> Fut,
-        Fut: std::future::Future<Output = Result<i64>>,
+        Fut: std::future::Future<Output = Result<Option<i64>>>,
     {
         let (authenticated_as, stamped) = {
             let state = self.state();
@@ -902,7 +902,8 @@ impl ImapSession {
             }
         };
         let current = current_version(&authenticated_as).await?;
-        if current <= stamped {
+        // A credential whose row is gone is revoked, as a rotated one is.
+        if current.is_some_and(|current| current <= stamped) {
             return Ok(true);
         }
         {
@@ -915,7 +916,11 @@ impl ImapSession {
             unregister_session(&registered);
         }
         logger::info(
-            "IMAP session de-authenticated: credential rotated after auth",
+            if current.is_none() {
+                "IMAP session de-authenticated: account removed after auth"
+            } else {
+                "IMAP session de-authenticated: credential rotated after auth"
+            },
             json!({ "component": "imap", "authenticatedAs": authenticated_as, "sessionId": self.session_id }),
         );
         self.write(&format!("{tag} NO [AUTHENTICATIONFAILED] Credential changed, please re-authenticate\r\n"));

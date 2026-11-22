@@ -426,6 +426,16 @@ async fn refuses_mail_from_with_421_when_the_credential_rotated_after_auth() {
 }
 
 #[tokio::test]
+async fn refuses_mail_from_with_421_when_the_account_is_gone() {
+    // Deleted, or soft-deleted (which the lookup leaves out), after AUTH.
+    let (handler, directory) = handler(Directory::serving("test.com"));
+    let mut orphaned = signed_in(&fresh_ip(), "alice", Some(1));
+    let refused = handler.on_mail_from(&address("x@alice.test.com"), &mut orphaned).await;
+    assert_eq!(refused, Err(SmtpHookError::with_code(421, "4.4.2 Credential changed, please re-authenticate")));
+    assert_eq!(directory.lookups(), vec!["alice".to_string()]);
+}
+
+#[tokio::test]
 async fn answers_mail_from_transiently_when_the_version_lookup_fails() {
     let (handler, _) = handler(Directory::serving("test.com").failing("alice"));
     let mut session = signed_in(&fresh_ip(), "alice", Some(1));

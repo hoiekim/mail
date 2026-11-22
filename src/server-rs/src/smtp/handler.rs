@@ -292,7 +292,8 @@ impl<D: MailDirectory> MailHandler<D> {
     /// Credential-revocation fence: the generation stamped at AUTH is
     /// compared against the credential row's current version, so a
     /// connection a sweep could not reach loses its grant at its next
-    /// command. Unauthenticated sessions carry no grant and are not checked;
+    /// command, as does one whose account was deleted. Unauthenticated
+    /// sessions carry no grant and are not checked;
     /// a lookup fault is answered transient, since a grant that cannot be
     /// proven current is not exercised.
     async fn check_credential_version(&self, session: &SmtpSession) -> Result<(), SmtpHookError> {
@@ -311,8 +312,15 @@ impl<D: MailDirectory> MailHandler<D> {
                 return Err(refusals::lookup_failed());
             }
         };
-        if user.and_then(|user| user.password_version).unwrap_or(1) > stamped {
-            logger::info("SMTP: refused a command on a rotated credential", json!({ "authenticatedAs": username }));
+        // A credential whose row is gone (deleted, or soft-deleted, which the
+        // read leaves out) is revoked, as a rotated one is.
+        let current = user.map(|user| user.password_version.unwrap_or(1));
+        if current.is_none_or(|current| current > stamped) {
+            let message = match current {
+                Some(_) => "SMTP: refused a command on a rotated credential",
+                None => "SMTP: refused a command on a removed account",
+            };
+            logger::info(message, json!({ "authenticatedAs": username }));
             return Err(refusals::credential_changed());
         }
         Ok(())

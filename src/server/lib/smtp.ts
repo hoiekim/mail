@@ -368,7 +368,8 @@ interface VersionStampedSmtpSession extends SmtpSession {
  * at AUTH time is compared against the credential row's current version on
  * every authenticated command, so a connection a sweep could not reach —
  * another process's registry, or an AUTH that straddled the rotation — loses
- * its grant at its next command instead of at the life of its socket.
+ * its grant at its next command instead of at the life of its socket. So
+ * does one whose account was deleted.
  * Unauthenticated sessions carry no grant and are not checked. A lookup
  * fault is answered transient (LookupFailedError): a grant that cannot be
  * proven current is not exercised.
@@ -391,10 +392,15 @@ const checkSmtpCredentialVersion = async (
     );
     throw new LookupFailedError();
   }
-  if ((user?.passwordVersion ?? 1) > stamped) {
-    logger.info("SMTP: refused a command on a rotated credential", {
-      authenticatedAs: username,
-    });
+  // A credential whose row is gone (deleted, or soft-deleted, which the read
+  // leaves out) is revoked, as a rotated one is.
+  if (!user || (user.passwordVersion ?? 1) > stamped) {
+    logger.info(
+      user
+        ? "SMTP: refused a command on a rotated credential"
+        : "SMTP: refused a command on a removed account",
+      { authenticatedAs: username }
+    );
     throw new CredentialChangedError();
   }
 };

@@ -508,6 +508,7 @@ describe("onMailFrom handler", () => {
     // username with any other username must not trip it. `every(p)` on a
     // list of one user would hide a `!==` typo; asserting the pass path
     // with a distinct username is the discriminator.
+    mockGetUser.mockResolvedValueOnce({ passwordVersion: 1 } as never);
     const session = {
       user: "alice",
       remoteAddress: "10.0.0.2",
@@ -530,6 +531,31 @@ describe("onMailFrom handler", () => {
       user: "alice",
       passwordVersion: 1,
       remoteAddress: "10.0.0.3",
+    } as unknown as SmtpSession;
+    const address = { address: "alice@test.com" } as never;
+
+    const err = await new Promise<Error | null>((resolve) => {
+      onMailFrom!(address, session, (e) => resolve(e || null));
+    });
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.message).toBe(
+      "4.4.2 Credential changed, please re-authenticate"
+    );
+    expect(
+      (err as Error & { responseCode?: number }).responseCode
+    ).toBe(421);
+  });
+
+  it("refuses MAIL FROM with 421 when the account is gone", async () => {
+    // Deleted, or soft-deleted (which the lookup leaves out), after AUTH: the
+    // grant goes with the row, as it does on a rotation. A missing row used
+    // to read as generation 1 and let the session go on.
+    mockGetUser.mockResolvedValueOnce(null);
+    const session = {
+      user: "alice",
+      passwordVersion: 1,
+      remoteAddress: "10.0.0.6",
     } as unknown as SmtpSession;
     const address = { address: "alice@test.com" } as never;
 

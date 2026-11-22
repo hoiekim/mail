@@ -366,6 +366,17 @@ describe("a credential that changes under an open session", () => {
     expect(await smtp.waitForClose(5000)).toBe(true);
   });
 
+  test("a deleted or soft-deleted account is refused at MAIL FROM the same way", async () => {
+    for (const remove of ["DELETE FROM users WHERE username = $1", "UPDATE users SET is_deleted = TRUE WHERE username = $1"]) {
+      const user = await createUser(server, uniqueName("gone"));
+      const smtp = await signedIn(user);
+      await server.db.query(remove, [user.username]);
+      expect((await smtp.send("NOOP")).raw).toBe("250 OK");
+      expect({ remove, reply: (await smtp.send(`MAIL FROM:<x@${user.username}.mail.test>`)).raw }).toEqual({ remove, reply: CHANGED });
+      expect(await smtp.waitForClose(5000)).toBe(true);
+    }
+  });
+
   test("RCPT TO is answered 451, not 421, when the change lands after MAIL FROM", async () => {
     // NOTE: looks like a bug. The recipient check does notice the changed
     // credential, but its own catch-all turns that refusal into the transient

@@ -278,6 +278,27 @@ describe("a credential changed after sign-in", () => {
     imap.close();
   });
 
+  test("deleting or soft-deleting the account refuses the next command the same way", async () => {
+    for (const [name, remove] of [
+      ["gina", "DELETE FROM users WHERE username = 'gina'"],
+      ["hank", "UPDATE users SET is_deleted = TRUE WHERE username = 'hank'"],
+    ] as const) {
+      const user = await createUser(server, name);
+      const imap = await ImapClient.connect(server);
+      await imap.login(name, user.password);
+      await imap.command("SELECT INBOX");
+
+      await server.db.query(remove);
+
+      expect({ name, lines: (await imap.command("NOOP")).lines }).toEqual({
+        name,
+        lines: ["A3 NO [AUTHENTICATIONFAILED] Credential changed, please re-authenticate"],
+      });
+      expect((await imap.command("FETCH 1:* FLAGS")).lines).toEqual(["A4 NO Not authenticated."]);
+      imap.close();
+    }
+  });
+
   test("LOGOUT is still answered normally", async () => {
     const erin = await createUser(server, "erin");
     const imap = await ImapClient.connect(server);
