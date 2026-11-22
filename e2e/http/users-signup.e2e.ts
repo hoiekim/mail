@@ -4,7 +4,6 @@ import {
   MAILGUN_KEY,
   adminUser,
   createUser,
-  waitFor,
   type MailgunRequest,
   type TestServer,
   type TestUser,
@@ -351,27 +350,40 @@ describe("POST /api/users/token — a new address (sign-up)", () => {
     }
   });
 
-  // NOTE: known defect. The placeholder row has no password, and the user
-  // lookup throws on such a row ("User has no password set") instead of
-  // finding it, so asking again for the same new address is a 500.
-  test("answers 500 when the same new address asks a second time", async () => {
+  test("asking again for the same new address re-issues the token onto the same row", async () => {
     const email = "twice@elsewhere.example";
     expect((await requestToken(email)).body).toEqual(SUCCESS);
     const first = (await userRowByEmail(server, email))!;
+    const users = await userCount();
 
     const second = await requestToken(email);
-    expect(second.status).toBe(500);
-    expect(second.body).toEqual(INTERNAL_ERROR);
+    expect(second.status).toBe(200);
+    expect(second.text).toBe('{"status":"success"}');
     expect(second.setCookies).toEqual([]);
 
-    // The first token stands, and no second mail went out.
     const row = (await userRowByEmail(server, email))!;
-    expect(row.token).toBe(first.token);
-    expect(row.expiry).toEqual(first.expiry);
-    expect(mailsTo(email)).toHaveLength(1);
+    expect(await userCount()).toBe(users);
+    expect(row.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.token).not.toBe(first.token);
+    expect(isAbout(row.expiry!, HOUR)).toBe(true);
+    expect(row).toMatchObject({
+      user_id: first.user_id,
+      username: first.username,
+      password: null,
+      password_version: 1,
+      email,
+    });
+
+    // The row exists now, so the second link names it the way a reset link
+    // names a registered account: by the placeholder's username.
+    const [, again, ...others] = mailsTo(email);
+    expect(others).toEqual([]);
+    expect(again!.fields.html).toEqual([
+      authenticationHtml(`https://app.mail.test/set-info/${email}?t=${row.token}&u=${first.username}`),
+    ]);
   });
 
-  test("answers 500 and keeps the placeholder row when Mailgun refuses the mail", async () => {
+  test("answers 500 and keeps the placeholder row when Mailgun refuses the mail; asking again mails a new token", async () => {
     const email = "bounced@elsewhere.example";
     server.mailgun.replyOnce(() => Response.json({ message: "Forbidden" }, { status: 401 }));
     const { status, body } = await requestToken(email);
@@ -381,6 +393,14 @@ describe("POST /api/users/token — a new address (sign-up)", () => {
     const row = (await userRowByEmail(server, email))!;
     expect(row.token).toMatch(/^[0-9a-f]{64}$/);
     expect(row.password).toBeNull();
+
+    // The address is not stranded: the next request reuses the row.
+    expect((await requestToken(email)).body).toEqual(SUCCESS);
+    const retried = (await userRowByEmail(server, email))!;
+    expect(retried.user_id).toBe(row.user_id);
+    expect(retried.token).not.toBe(row.token);
+    expect(mailsTo(email)).toHaveLength(2);
+    expect(mailsTo(email)[1]!.fields.html![0]).toContain(`?t=${retried.token}&u=${row.username}"`);
   });
 });
 
@@ -788,23 +808,73 @@ describe("POST /api/users/set-info — the username", () => {
 });
 
 describe("POST /api/users/set-info — completing a new sign-up", () => {
-  // NOTE: known defect. The placeholder row a sign-up token is issued against
-  // has no password, and the user lookup throws on such a row, so the sign-up
-  // can never be completed: every attempt is a 500, right token or not.
-  test("answers 500, with the right token or a wrong one", async () => {
-    const email = "hopeful@elsewhere.example";
+  /** A sign-up as the token route leaves it: the placeholder row and its token. */
+  const signUp = async (email: string) => {
     expect((await requestToken(email)).body).toEqual(SUCCESS);
     const placeholder = (await userRowByEmail(server, email))!;
+    expect(placeholder.password).toBeNull();
+    return placeholder;
+  };
 
-    for (const token of [placeholder.token!, "wrong", undefined]) {
+  test("sets the first password on the placeholder row with the mailed token, and signs the caller in", async () => {
+    const email = "hopeful@elsewhere.example";
+    const placeholder = await signUp(email);
+    const { user_id: id, username } = placeholder;
+
+    const client = server.client();
+    const result = await client.post("/api/users/set-info", {
+      email,
+      username: "hopeful",
+      password: "a-first-password",
+      token: placeholder.token,
+    });
+    expect(result.status).toBe(200);
+    expect(result.text).toBe(
+      `{"status":"success","body":{"id":"${id}","email":"${email}","username":"${username}","passwordVersion":2}}`
+    );
+
+    // The same row, now with a password. The placeholder already has a
+    // username, so the one asked for is not taken (see "the username" above).
+    const row = (await userRowByEmail(server, email))!;
+    expect(row.password).toMatch(/^\$2b\$10\$[./A-Za-z0-9]{53}$/);
+    expect(row).toMatchObject({ user_id: id, username, password_version: 2, token: null, expiry: null });
+    expect(await userRow(server, "hopeful")).toBeUndefined();
+
+    const cookie = onlySetCookie(result);
+    expectSessionCookie(cookie, { secure: true });
+    expect((await sessionRow(server, sessionIdOfValue(cookie.value)))!).toMatchObject({
+      session_user_id: id,
+      session_username: username,
+      session_email: email,
+      session_password_version: 2,
+    });
+    expect((await client.get("/api/users/login")).body.body.user).toEqual({ id, email, username, passwordVersion: 2 });
+
+    // The password signs in from now on, and the token is spent.
+    const login = await server.client().post("/api/users/login", { username, password: "a-first-password" });
+    expect(login.body.body).toEqual({ id, email, username, passwordVersion: 2 });
+    const again = await server.client().post("/api/users/set-info", {
+      email,
+      username: "hopeful",
+      password: "a-second-password",
+      token: placeholder.token,
+    });
+    expect(again.status).toBe(500);
+    expect(again.body).toEqual(INTERNAL_ERROR);
+  });
+
+  test("a wrong, empty or missing token is a 500 and leaves the sign-up waiting", async () => {
+    const email = "doubtful@elsewhere.example";
+    const placeholder = await signUp(email);
+
+    for (const token of ["wrong", `${placeholder.token}x`, "", undefined]) {
       const result = await server.client().post("/api/users/set-info", {
         email,
-        username: "hopeful",
+        username: "doubtful",
         password: "a-first-password",
         token,
       });
-      expect(result.status).toBe(500);
-      expect(result.body).toEqual(INTERNAL_ERROR);
+      expect({ token, status: result.status, body: result.body }).toEqual({ token, status: 500, body: INTERNAL_ERROR });
       expect(result.setCookies).toEqual([]);
     }
     const after = (await userRowByEmail(server, email))!;
@@ -814,58 +884,49 @@ describe("POST /api/users/set-info — completing a new sign-up", () => {
       password_version: 1,
       token: placeholder.token,
     });
-    expect(await userRow(server, "hopeful")).toBeUndefined();
+    expect(after.expiry).toEqual(placeholder.expiry);
+
+    // The right token still completes it.
+    const result = await server.client().post("/api/users/set-info", {
+      email,
+      username: "doubtful",
+      password: "a-first-password",
+      token: placeholder.token,
+    });
+    expect(result.body.status).toBe("success");
   });
 
-  // The same defect on a row seeded directly, the way the token route leaves
-  // one, on a server that has raised no alarm yet: only the first alarm per
-  // title per minute is sent.
-  test("both routes answer 500 for a placeholder row and raise a route alarm naming the cause", async () => {
-    const fresh = await startServer({ production: true });
-    try {
-      const email = "seeded@elsewhere.example";
-      await fresh.db.query(
-        "INSERT INTO users (username, email, token, expiry) VALUES ('user_0a1b2c3d', $1, 'seeded-token', NOW() + INTERVAL '1 hour')",
-        [email]
-      );
+  test("only the latest token completes a sign-up that asked twice", async () => {
+    const email = "twice-then-set@elsewhere.example";
+    const first = await signUp(email);
+    expect((await requestToken(email)).body).toEqual(SUCCESS);
+    const second = (await userRowByEmail(server, email))!;
+    expect(second.token).not.toBe(first.token);
 
-      const token = await fresh.client().post("/api/users/token", { email });
-      expect(token.status).toBe(500);
-      expect(token.body).toEqual(INTERNAL_ERROR);
-      const setInfo = await fresh.client().post("/api/users/set-info", {
-        email,
-        username: "seeded",
-        password: "a-first-password",
-        token: "seeded-token",
-      });
-      expect(setInfo.status).toBe(500);
-      expect(setInfo.body).toEqual(INTERNAL_ERROR);
-      expect(setInfo.setCookies).toEqual([]);
+    const body = { email, username: "twice", password: "a-first-password" };
+    expect((await server.client().post("/api/users/set-info", { ...body, token: first.token })).status).toBe(500);
+    expect((await server.client().post("/api/users/set-info", { ...body, token: second.token })).body.status).toBe("success");
+  });
 
-      await waitFor(() => fresh.alarms.alarms.length >= 2, { what: "both route alarms" });
-      expect(fresh.alarms.alarms.map(({ title, description, color }) => ({ title, description, color }))).toEqual([
-        {
-          title: "🚨 Mail Server Error: Route Error: POST /token",
-          description: "**Error:** User has no password set",
-          color: 0xff0000,
-        },
-        {
-          title: "🚨 Mail Server Error: Route Error: POST /set-info",
-          description: "**Error:** User has no password set",
-          color: 0xff0000,
-        },
-      ]);
-      expect(fresh.mailgun.requests).toEqual([]);
-      expect(await userRowByEmail(fresh, email)).toMatchObject({
-        username: "user_0a1b2c3d",
-        password: null,
-        token: "seeded-token",
-      });
-      expect(await fresh.db.query("SELECT 1 FROM sessions")).toEqual([]);
-    } finally {
-      await fresh.stop();
-    }
-  }, 90_000);
+  test("an expired sign-up is a 500, and its row is removed so the address can start again", async () => {
+    const email = "late@elsewhere.example";
+    const placeholder = await signUp(email);
+    await server.db.query("UPDATE users SET expiry = NOW() - INTERVAL '1 second' WHERE user_id = $1", [placeholder.user_id]);
+
+    const result = await server.client().post("/api/users/set-info", {
+      email,
+      username: "late",
+      password: "a-first-password",
+      token: placeholder.token,
+    });
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual(INTERNAL_ERROR);
+    expect(result.setCookies).toEqual([]);
+    expect(await userRowByEmail(server, email)).toBeUndefined();
+
+    const fresh = await signUp(email);
+    expect(fresh.user_id).not.toBe(placeholder.user_id);
+  });
 });
 
 describe("the sign-up routes — methods and paths", () => {

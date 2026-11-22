@@ -97,10 +97,8 @@ describe("security headers", () => {
     await add("a body that is not JSON outside the API", 400, client.request("POST", "/x", { body: "{", headers: { "Content-Type": "application/json" } }));
     for (let i = 0; i < 5; i++) await client.post("/api/client-error", {});
     await add("a rate-limit refusal", 429, client.post("/api/client-error", {}));
-    await server.db.query(
-      "INSERT INTO users (username, email, token) VALUES ('user_headers', 'headers@elsewhere.example', 't') ON CONFLICT DO NOTHING"
-    );
-    await add("a server error", 500, server.client().post("/api/users/login", { username: "user_headers", password: "x" }));
+    // set-info for an address that never asked for a token throws inside the route.
+    await add("a server error", 500, server.client().post("/api/users/set-info", { email: "headers@elsewhere.example", username: "x", password: "x", token: "t" }));
     return responses;
   };
 

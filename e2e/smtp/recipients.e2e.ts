@@ -429,19 +429,25 @@ describe("unknown local recipients", () => {
     expect((await other.send("RCPT TO:<x@alice.mail.test>")).raw).toBe(ACCEPTED);
   }, 30_000);
 
-  test("a recipient whose account row cannot be read is 451, and is not charged to the budget", async () => {
-    // NOTE: an account with no password yet (a sign-up in progress) makes the
-    // lookup throw; the recipient is told to retry rather than refused.
+  test("an account with no password yet (a sign-up in progress) has a mailbox, and is not charged to the budget", async () => {
+    // The row holds the name from the first token request; the sign-up
+    // completes on the same row, so what is delivered now is kept for it.
     const name = uniqueName("pending");
-    await proxied.db.query("INSERT INTO users (username, email) VALUES ($1, $2)", [name, `${name}@elsewhere.example`]);
+    const [row] = await proxied.db.query<{ user_id: string }>(
+      "INSERT INTO users (username, email) VALUES ($1, $2) RETURNING user_id",
+      [name, `${name}@elsewhere.example`]
+    );
+    const id = messageId("pending");
     const smtp = await from(freshAddress());
     await smtp.send("MAIL FROM:<bounce@remote.example>");
     const started = Date.now();
     for (let i = 0; i < 12; i++) {
-      expect((await smtp.rcptTo(`x${i}@${name}.mail.test`)).raw).toBe("451 4.3.0 Error: temporary lookup failure");
+      expect((await smtp.rcptTo(`x${i}@${name}.mail.test`)).raw).toBe(ACCEPTED);
     }
     expect(Date.now() - started).toBeLessThan(3000);
-    expect((await smtp.send("RCPT TO:<x@alice.mail.test>")).raw).toBe(ACCEPTED);
+    expect((await smtp.data(plain({ messageId: id }))).raw).toBe("250 OK: message queued");
+    const mail = await mailByMessageId(proxied, id);
+    expect({ user_id: mail.user_id, username: mail.username }).toEqual({ user_id: row!.user_id, username: name });
   });
 
   test("recipients that resolve are never charged to the budget", async () => {

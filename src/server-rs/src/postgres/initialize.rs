@@ -253,7 +253,7 @@ pub async fn initialize_admin_read_only_user() -> Result<()> {
         search_user(&UserFilter { username: Some(ADMIN_RO_USERNAME.into()), ..Default::default() }).await?;
     // Compared before the write, which replaces the hash it is compared against.
     let password_rotated = match &existing {
-        Some(user) => !verify_password(Some(&password), Some(&user.password)).await,
+        Some(user) => !verify_password(Some(&password), user.password.as_deref()).await,
         None => false,
     };
 

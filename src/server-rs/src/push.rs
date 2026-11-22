@@ -123,8 +123,8 @@ pub async fn delete_subscription_for_user(push_subscription_id: &str, user_id: &
     repo::delete_subscription_for_user(push_subscription_id, user_id).await
 }
 
-pub async fn refresh_subscription(push_subscription_id: &str) -> bool {
-    repo::refresh_subscription(push_subscription_id).await
+pub async fn refresh_subscription(push_subscription_id: &str, user_id: &str) -> bool {
+    repo::refresh_subscription(push_subscription_id, user_id).await
 }
 
 const ONE_DAY: Duration = Duration::from_secs(60 * 60 * 24);

@@ -105,12 +105,18 @@ pub async fn get_subscriptions(users: &[SignedUser]) -> Vec<ComputedPushSubscrip
     absorbed("Failed to get push subscriptions", Vec::new(), result)
 }
 
-/// Marks the subscription as still in use. Returns whether it exists.
-///
-/// The Bun repository issues an UPDATE with nothing to set, which its query
-/// builder turns into no statement at all: the answer is always "not found".
-pub async fn refresh_subscription(_push_subscription_id: &str) -> bool {
-    false
+/// Marks the caller's subscription as still in use: moves `updated`, the
+/// column the weekly sweep reads, to now. `false` for an unknown id or one
+/// that belongs to someone else.
+pub async fn refresh_subscription(push_subscription_id: &str, user_id: &str) -> bool {
+    let result = pool()
+        .query(
+            "UPDATE push_subscriptions SET updated = CURRENT_TIMESTAMP WHERE push_subscription_id = $1 AND user_id = $2 RETURNING push_subscription_id",
+            &params![push_subscription_id, user_id],
+        )
+        .await
+        .map(|result| result.any());
+    absorbed("Failed to refresh push subscription", false, result)
 }
 
 pub async fn update_last_notified(push_subscription_id: &str) -> bool {

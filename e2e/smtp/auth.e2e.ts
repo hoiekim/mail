@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { ADMIN_PASSWORD, createUser, type TestServer, type TestUser } from "../harness";
 import { b64, plainToken, proxyLine, type SmtpClient } from "../harness/smtp";
+import { withDatabaseOffline } from "../http/core-helpers";
 import { bootAll, closeClients, ehloReply, open, session, uniqueName, type Listener } from "./support";
 
 // Failed AUTH attempts are counted per client address, so the main server
@@ -286,22 +287,18 @@ describe("credentials", () => {
     expect((await smtp.authPlain(user.username, user.password)).raw).toBe(INVALID);
   });
 
-  test("an account that has no password yet answers 451 instead of 535", async () => {
-    // NOTE: looks like a bug. A sign-up that has not set its password yet is a
-    // users row with a NULL password; reading it throws, and the failure is
-    // reported as a transient lookup error. The answer differs from the 535 an
-    // unknown name gets, comes without the half-second wait, and is not
-    // counted as a failed attempt — so it tells such accounts apart for free.
+  test("an account that has no password yet (a sign-up in progress) is refused as a wrong password is", async () => {
+    // A sign-up is a users row with a NULL password until set-info writes one:
+    // the same 535 an unknown name gets, after the same wait, and counted.
     const name = uniqueName("pending");
     await server.db.query("INSERT INTO users (username, email) VALUES ($1, $2)", [name, `${name}@elsewhere.example`]);
     const smtp = await connect("smtps");
     const started = Date.now();
-    for (let i = 0; i < 12; i++) {
-      expect((await smtp.authPlain(name, "anything")).raw).toBe("451 4.3.0 Error: temporary lookup failure");
-    }
-    expect(Date.now() - started).toBeLessThan(3000);
-    expect((await smtp.authPlain("alice", alice.password)).raw).toBe(SUCCESS);
-  });
+    expect((await smtp.authPlain(name, "anything")).raw).toBe(INVALID);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(450);
+    for (let i = 0; i < 9; i++) expect((await smtp.authLogin(name, `anything-${i}`)).raw).toBe(INVALID);
+    expect((await smtp.authPlain("alice", alice.password)).raw).toBe("535 Too many failed authentication attempts");
+  }, 30_000);
 });
 
 describe("once authenticated", () => {
@@ -400,14 +397,16 @@ describe("a credential that changes under an open session", () => {
     expect(server.mailgun.requests.length).toBe(sent);
   });
 
-  test("MAIL FROM is answered 451 when the account can no longer be read", async () => {
+  test("MAIL FROM is answered 451 while the account cannot be read", async () => {
     const user = await createUser(server, uniqueName("rot"));
     const smtp = await signedIn(user);
-    await server.db.query("UPDATE users SET password = NULL WHERE username = $1", [user.username]);
-    expect((await smtp.send(`MAIL FROM:<x@${user.username}.mail.test>`)).raw).toBe("451 4.3.0 Error: temporary lookup failure");
-    // Transient: the connection stays open.
-    expect((await smtp.send("NOOP")).raw).toBe("250 OK");
-  });
+    await withDatabaseOffline(server, async () => {
+      expect((await smtp.send(`MAIL FROM:<x@${user.username}.mail.test>`)).raw).toBe("451 4.3.0 Error: temporary lookup failure");
+      // Transient: the connection stays open.
+      expect((await smtp.send("NOOP")).raw).toBe("250 OK");
+    });
+    expect((await smtp.send(`MAIL FROM:<x@${user.username}.mail.test>`)).raw).toBe("250 Accepted");
+  }, 60_000);
 
   test("a new sign-in with the same password works after the change", async () => {
     const user = await createUser(server, uniqueName("rot"));

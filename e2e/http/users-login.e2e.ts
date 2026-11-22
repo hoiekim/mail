@@ -4,7 +4,6 @@ import {
   adminUser,
   createUser,
   hashPassword,
-  waitFor,
   type TestServer,
   type TestUser,
 } from "../harness";
@@ -12,7 +11,6 @@ import { startServer } from "./core-helpers";
 import {
   ANONYMOUS_LOGIN_TEXT,
   BAD_REQUEST,
-  INTERNAL_ERROR,
   INVALID_BODY,
   INVALID_CREDENTIALS,
   JSON_TYPE,
@@ -387,29 +385,27 @@ describe("POST /api/users/login — who signs in", () => {
     expect((await sessionRow(server, sessionIdOf(again)))!.session_password_version).toBe(1);
   });
 
-  // NOTE: a sign-up that has not set a password yet is a row with a NULL
-  // password, and the user lookup throws on such a row ("User has no password
-  // set") instead of treating it as "no such account". Pinned as it is today.
-  test("answers 500 for an account that has no password yet (a pending sign-up)", async () => {
+  test("refuses an account that has no password yet (a sign-up in progress) as it refuses a wrong password", async () => {
+    // A sign-up is a row with a NULL password until set-info writes one.
     await server.db.query(
       "INSERT INTO users (username, email, token, expiry) VALUES ('user_pending1', 'pending@elsewhere.example', 'tok', NOW() + INTERVAL '1 hour')"
     );
     const before = await sessionCount(server);
+    const unknown = await server.client().post("/api/users/login", { username: "user_nobody1", password: "anything" });
     for (const identity of [{ username: "user_pending1" }, { email: "pending@elsewhere.example" }]) {
-      const { status, body, setCookies } = await server.client().post("/api/users/login", {
-        ...identity,
-        password: "anything",
-      });
-      expect(status).toBe(500);
-      expect(body).toEqual(INTERNAL_ERROR);
-      expect(setCookies).toEqual([]);
+      for (const password of ["anything", "tok"]) {
+        const { status, text, headers, setCookies } = await server.client().post("/api/users/login", {
+          ...identity,
+          password,
+        });
+        // Nothing tells the account apart from one that does not exist.
+        expect({ identity, password, status, text }).toEqual({ identity, password, status: 200, text: unknown.text });
+        expect(headers.get("content-type")).toBe(JSON_TYPE);
+        expect(setCookies).toEqual([]);
+      }
     }
+    expect(JSON.parse(unknown.text)).toEqual(INVALID_CREDENTIALS);
     expect(await sessionCount(server)).toBe(before);
-    const alarm = await waitFor(
-      () => server.alarms.alarms.find((entry) => entry.title === "🚨 Mail Server Error: Route Error: POST /login"),
-      { what: "the route error alarm" }
-    );
-    expect(alarm.description).toBe("**Error:** User has no password set");
   });
 
   test("a soft-deleted account cannot sign in", async () => {

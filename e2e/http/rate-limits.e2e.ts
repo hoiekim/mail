@@ -18,6 +18,7 @@ import {
   NOT_FOUND,
   rawRequest,
   userRowByEmail,
+  withDatabaseOffline,
 } from "./core-helpers";
 
 const LOGIN_LIMITED = { status: "failed", message: "Too many login attempts, try again later" };
@@ -178,15 +179,25 @@ describe("login: five failures per address in fifteen minutes", () => {
   });
 
   test("a 500 does not count", async () => {
+    const client = prod.client();
+    await withDatabaseOffline(prod, async () => {
+      for (let i = 0; i < 7; i++) {
+        const result = await login(client, "alice", "x");
+        expect({ i, status: result.status, body: result.body }).toEqual({ i, status: 500, body: INTERNAL_ERROR });
+      }
+    });
+    expect((await login(client, "alice", alice.password)).body.status).toBe("success");
+  }, 60_000);
+
+  test("an account with no password yet (a sign-up in progress) counts as a wrong password does", async () => {
     await prod.db.query(
       "INSERT INTO users (username, email, token) VALUES ('user_ratelimit', 'pending-rl@elsewhere.example', 't') ON CONFLICT DO NOTHING"
     );
     const client = prod.client();
-    for (let i = 0; i < 7; i++) {
-      const result = await login(client, "user_ratelimit", "x");
-      expect({ i, status: result.status, body: result.body }).toEqual({ i, status: 500, body: INTERNAL_ERROR });
+    for (let i = 0; i < 5; i++) {
+      expect((await login(client, "user_ratelimit", "x")).body).toEqual(INVALID_CREDENTIALS);
     }
-    expect((await login(client, "alice", alice.password)).body.status).toBe("success");
+    expectLimited(await login(client, "alice", alice.password), LOGIN_LIMITED);
   });
 
   test("once limited, the refusal comes before the body is looked at", async () => {
@@ -309,16 +320,17 @@ describe("token: three requests per address in fifteen minutes", () => {
     expectLimited(await token(client, "rl-ok-4@elsewhere.example"), TOKEN_LIMITED);
   });
 
-  test("the 500 for an unfinished sign-up does not count", async () => {
+  test("asking again for an unfinished sign-up mails it again, and counts as any send does", async () => {
     await prod.db.query(
       "INSERT INTO users (username, email, token) VALUES ('user_tokenlimit', 'pending-token-rl@elsewhere.example', 't') ON CONFLICT DO NOTHING"
     );
     const client = prod.client();
-    for (let i = 0; i < 5; i++) {
-      const result = await token(client, "pending-token-rl@elsewhere.example");
-      expect({ i, status: result.status, body: result.body }).toEqual({ i, status: 500, body: INTERNAL_ERROR });
+    const sent = prod.mailgun.requests.length;
+    for (let i = 0; i < 3; i++) {
+      expect((await token(client, "pending-token-rl@elsewhere.example")).body).toEqual(SUCCESS);
     }
-    expect((await token(client, "anything@mail.test")).body).toEqual(SUCCESS);
+    expectLimited(await token(client, "pending-token-rl@elsewhere.example"), TOKEN_LIMITED);
+    expect(prod.mailgun.requests.length).toBe(sent + 3);
   });
 
   test("a malformed body does not count", async () => {
