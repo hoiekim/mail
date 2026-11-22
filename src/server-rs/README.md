@@ -107,3 +107,36 @@ client mistake with a `failed` body; an `Err` becomes the generic 500.
 
 **Environment.** Read settings through `env::var` / `env::non_empty` when they
 are needed, not once at start.
+
+## Known differences from the Bun server
+
+Everything the black-box suite pins is identical. These differences are
+deliberate or unavoidable, and no test pins them:
+
+- **TLS.** The mail listeners use rustls (TLS 1.2 and 1.3). It has no CBC
+  cipher suites, so a mail server that offers only AES-CBC at TLS 1.2 cannot
+  connect, where Bun's OpenSSL accepts it. The certificate is read at every
+  handshake rather than once at boot, so a renewed certificate is served
+  without a restart.
+- **HTTP parsing.** A `#` inside a request target is dropped by the HTTP
+  library before the server sees it. Answers given by the parser itself
+  differ in their headers: the 400 for an HTTP/1.1 request without `Host`, a
+  431 for oversized headers, and an unknown method containing digits or `_`
+  (Bun answers 400, Rust closes the connection).
+- **Passwords.** Only bcrypt digests are verified. Bun would also verify an
+  argon2 digest, which nothing in the app ever writes.
+- **Ordering where Bun's is a race.** A FETCH over several comma-separated
+  ranges answers in range order; Bun's order depends on which concurrent read
+  finishes first.
+- **Deep nesting.** SEARCH and UID nesting are bounded by fixed limits
+  (22,000 and 27,000 levels) instead of the JavaScript stack, and JSON bodies
+  are kept to 4,096 levels. Inside the protocols' own size limits both
+  servers accept the same input.
+- **Wire chunking.** Base64 bodies are written in different chunk sizes; the
+  octets are the same.
+- **Timing and logs.** An IMAP client that disconnects mid-command is noticed
+  once the command finishes. Some log lines differ in wording (socket and TLS
+  errors, the IMAP per-command diagnostic has no heap fields); alarm titles
+  and the warn-versus-page split are the same.
+- **Time zone.** Dates without an offset are read as UTC, the zone the server
+  runs in.
