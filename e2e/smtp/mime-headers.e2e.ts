@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { TestServer } from "../harness";
-import { FIXED_DATE, Mailer, boot, crlf, octets, type Row } from "./support";
+import { ADMIN_PASSWORD, type TestServer } from "../harness";
+import { FIXED_DATE, Mailer, boot, crlf, messageId, octets, uniqueName, type Row } from "./support";
 
 // How the headers of a delivered message end up in the mails row: subject,
 // address lists, date, Message-ID and the threading headers.
@@ -464,17 +464,52 @@ describe("Message-ID, In-Reply-To and References", () => {
     );
   });
 
-  test("a Message-ID of 512 characters is stored; one more fails the delivery with the database's own error", async () => {
-    // NOTE: looks like a bug. The column is VARCHAR(512) and nothing checks the
-    // length first, so the INSERT fails and PostgreSQL's message is sent to
-    // the SMTP client under a transient 450: the sender retries a message that
-    // can never be stored. (In-Reply-To and References drop such ids instead.)
+  test("a Message-ID of 512 characters is stored; a longer one is dropped, as it is from the threading headers", async () => {
     const fits = `<${"x".repeat(495)}@remote.example>`;
     expect(fits.length).toBe(512);
     expect((await idsOf(`Message-ID: ${fits}`)).id).toBe(fits);
+    // The column holds 512: one more and the mail is stored as one without a
+    // Message-ID. The length is counted with the brackets the id is stored in.
+    expect((await idsOf(`Message-ID: <${"x".repeat(496)}@remote.example>`)).id).toMatch(/^[0-9a-f]{8}$/);
+    expect((await idsOf(`Message-ID: ${"x".repeat(496)}@remote.example`)).id).toMatch(/^[0-9a-f]{8}$/);
+    // Dropped like a header that is not there, so an earlier one stands.
+    expect((await idsOf("Message-ID: <kept@remote.example>", `Message-ID: <${"x".repeat(496)}@remote.example>`)).id).toBe(
+      "<kept@remote.example>"
+    );
+  });
 
-    const { final } = await mailer.send(crlf(...BASE, "Subject: ids", `Message-ID: <${"x".repeat(496)}@remote.example>`, "", "body"));
-    expect(final.raw).toBe("450 value too long for type character varying(512)");
+  test("a mail whose Message-ID was dropped still threads by its own headers, and cannot be reached by that id", async () => {
+    const long = `<${"y".repeat(496)}@remote.example>`;
+    const subject = `Plan ${uniqueName("thread")}`;
+    const parentId = messageId("parent");
+    const parent = await withHeaders("From: sender@remote.example", "Date: Tue, 03 Mar 2026 10:00:00 +0000", `Subject: ${subject}`, `Message-ID: ${parentId}`);
+    const dropped = await withHeaders(
+      "From: sender@remote.example",
+      "Date: Tue, 03 Mar 2026 11:00:00 +0000",
+      `Subject: Re: ${subject}`,
+      `Message-ID: ${long}`,
+      `In-Reply-To: ${parentId}`,
+      `References: ${parentId}`
+    );
+    expect(dropped.message_id).toMatch(/^[0-9a-f]{8}$/);
+    expect([dropped.in_reply_to, dropped.reference_ids]).toEqual([parentId, [parentId]]);
+    // A reply that names it by the long id loses that id in the same way.
+    const answer = await withHeaders(
+      "From: other@remote.example",
+      "Date: Tue, 03 Mar 2026 12:00:00 +0000",
+      `Subject: Answer ${uniqueName("thread")}`,
+      `Message-ID: ${messageId("answer")}`,
+      `In-Reply-To: ${long}`,
+      `References: ${long}`
+    );
+    expect([answer.in_reply_to, answer.reference_ids]).toEqual([null, null]);
+
+    const client = server.client();
+    await client.login("admin", ADMIN_PASSWORD);
+    const thread = async (mail: Row) => ((await client.get(`/api/mails/thread/${mail.mail_id}`)).body.body as { id: string }[]).map((row) => row.id);
+    expect(await thread(dropped)).toEqual([parent.mail_id, dropped.mail_id]);
+    expect(await thread(parent)).toEqual([parent.mail_id, dropped.mail_id]);
+    expect(await thread(answer)).toEqual([answer.mail_id]);
   });
 
   test("In-Reply-To keeps one id: the last bracketed one", async () => {

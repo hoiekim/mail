@@ -2130,6 +2130,64 @@ describe("onData transaction files", () => {
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(directories[0])).toBe(false);
   });
+
+  it("hands an outgoing submission's attachments to the send, then removes them", async () => {
+    // Regression: the parsed attachments were written here and never passed
+    // on, so a submission went out and into Sent without its files.
+    parseWritingAFile();
+    mockGetUser.mockResolvedValue({ getSigned: () => ({ username: "admin" }) });
+    let seenWhileSending: boolean | undefined;
+    mockSendMail.mockImplementation(((...args: unknown[]) => {
+      const files = args[2] as { tempFilePath: string }[];
+      seenWhileSending = fs.existsSync(files[0].tempFilePath);
+      return Promise.resolve();
+    }) as () => Promise<void>);
+    const err = await deliver({
+      user: "admin",
+      envelope: {
+        mailFrom: { address: "admin@test.com" },
+        rcptTo: [{ address: "recipient@other.com" }]
+      },
+      remoteAddress: "1.2.3.4"
+    } as unknown as SmtpSession);
+    await settled();
+    expect(err).toBeUndefined();
+    // The files an HTTP send uploads, in the shape it hands them on.
+    expect((mockSendMail.mock.calls[0] as unknown[])[2]).toEqual([
+      {
+        name: "a.bin",
+        mimetype: "application/octet-stream",
+        size: 16,
+        tempFilePath: path.join(directories[0], "0")
+      }
+    ]);
+    expect(seenWhileSending).toBe(true);
+    expect(fs.existsSync(directories[0])).toBe(false);
+  });
+
+  it("names an outgoing attachment that has no file name as a received one is named", async () => {
+    mockParseMessage.mockImplementation(async (stream) => {
+      for await (const _chunk of stream as Readable) {
+        // read the message out
+      }
+      return {
+        subject: "unnamed",
+        attachments: [{ path: "/nonexistent/0", contentType: "image/png", size: 3 }]
+      };
+    });
+    mockGetUser.mockResolvedValue({ getSigned: () => ({ username: "admin" }) });
+    await deliver({
+      user: "admin",
+      envelope: {
+        mailFrom: { address: "admin@test.com" },
+        rcptTo: [{ address: "recipient@other.com" }]
+      },
+      remoteAddress: "1.2.3.4"
+    } as unknown as SmtpSession);
+    expect((mockSendMail.mock.calls[0] as unknown[])[2]).toEqual([
+      { name: "attachment", mimetype: "image/png", size: 3, tempFilePath: "/nonexistent/0" }
+    ]);
+  });
 });
 
 describe("splitEnvelopeRecipients", () => {

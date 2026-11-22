@@ -490,35 +490,83 @@ describe("the DATA stream", () => {
     expect(mail.text).toBe("café \x01\x7f tab:\t:end\n");
   });
 
-  test("a NUL byte anywhere in the stored text fails the delivery with the database's own error", async () => {
-    // NOTE: looks like a bug. PostgreSQL refuses NUL in text, the INSERT fails,
-    // and the database's message goes to the SMTP client verbatim under a
-    // transient 450 — so the sender retries a message that can never be stored,
-    // and reads an internal error. An alarm is posted and the mail is dumped
-    // into `<cwd>/error/`.
+  test("a NUL character is left out of everything stored, and the delivery is accepted", async () => {
+    // PostgreSQL text cannot hold one, nor JSONB `\u0000`: kept, it would fail
+    // the save on every retry of the delivery.
     const dumpDir = path.join(server.cwd, "error");
     const dumpsBefore = fs.existsSync(dumpDir) ? fs.readdirSync(dumpDir).length : 0;
-    const refusal = '450 invalid byte sequence for encoding "UTF8": 0x00';
-    const inBody = await mailer.send("Subject: nul\r\nMessage-ID: <nul-body@remote.example>\r\n\r\na\0b\r\n");
-    expect(inBody.final.raw).toBe(refusal);
-    const inSubject = await mailer.send("Subject: nu\0l\r\nMessage-ID: <nul-subject@remote.example>\r\n\r\nab\r\n");
-    expect(inSubject.final.raw).toBe(refusal);
-    expect(await server.db.query("SELECT 1 FROM mails WHERE message_id LIKE '<nul-%'")).toEqual([]);
+    const alarmsBefore = server.alarms.alarms.length;
 
-    const alarm = await waitFor(() => server.alarms.alarms.find((entry) => entry.title.includes("Mail Receive Failed")), {
-      what: "the receive-failure alarm",
-    });
-    expect(alarm.title).toBe("🚨 Mail Server Error: Mail Receive Failed");
-    expect(alarm.description).toBe('**Error:** invalid byte sequence for encoding "UTF8": 0x00');
+    const inBody = await mailer.store("Subject: nul\r\nMessage-ID: <nul-body@remote.example>\r\n\r\na\0b\r\n");
+    expect([inBody.subject, inBody.text, inBody.html]).toEqual(["nul", "ab\n", "ab\n"]);
+    const inHtml = await mailer.store("Subject: nul\r\nContent-Type: text/html\r\n\r\n<p>c\0d</p>\r\n");
+    expect([inHtml.html, inHtml.text]).toEqual(["<p>cd</p>\n", "cd"]);
+    const inSubject = await mailer.store("Subject: nu\0l\r\nMessage-ID: <nul-sub\0ject@remote.example>\r\n\r\nab\r\n");
+    expect([inSubject.subject, inSubject.message_id]).toEqual(["nul", "<nul-subject@remote.example>"]);
+    const inHeaders = await mailer.store(
+      crlf("From: Jo\0e <jo@remote.example>", "Cc: Ca\0rol <carol@remote.example>", "In-Reply-To: <pa\0rent@remote.example>", "Subject: headers", "", "x")
+    );
+    expect([inHeaders.from_address, inHeaders.from_text]).toEqual([[{ name: "Joe", address: "jo@remote.example" }], '"Joe" <jo@remote.example>']);
+    expect([inHeaders.cc_address, inHeaders.cc_text]).toEqual([[{ name: "Carol", address: "carol@remote.example" }], '"Carol" <carol@remote.example>']);
+    expect(inHeaders.in_reply_to).toBe("<parent@remote.example>");
+    const inFilename = await mailer.store(
+      crlf(
+        "Subject: file",
+        'Content-Type: multipart/mixed; boundary="mix"',
+        "",
+        "--mix",
+        "Content-Type: text/plain",
+        "",
+        "See attached.",
+        "--mix",
+        "Content-Type: application/pdf",
+        'Content-Disposition: attachment; filename="re\0port.pdf"',
+        "",
+        "%PDF",
+        "--mix--"
+      )
+    );
+    expect(inFilename.attachments).toEqual([{ filename: "report.pdf", contentType: "application/pdf", size: 4, content: { data: expect.any(String) } }]);
+    expect(attachmentBytes(server, inFilename.attachments[0].content.data).toString()).toBe("%PDF");
 
-    const dumps = fs.readdirSync(dumpDir);
-    expect(dumps.length).toBe(dumpsBefore + 2);
-    for (const name of dumps) expect(name).toMatch(/^\d{13}$/);
-    const dumped = dumps.map((name) => JSON.parse(fs.readFileSync(path.join(dumpDir, name), "utf8")).messageId);
-    expect(dumped).toEqual(expect.arrayContaining(["<nul-body@remote.example>", "<nul-subject@remote.example>"]));
+    // Nothing failed: no alarm, no dump.
+    expect(server.alarms.alarms.slice(alarmsBefore)).toEqual([]);
+    expect(fs.existsSync(dumpDir) ? fs.readdirSync(dumpDir).length : 0).toBe(dumpsBefore);
+  });
 
-    // The session survives it.
-    expect((await mailer.store(plain())).subject).toBe("Test message");
+  test("a database fault the message is not to blame for is a transient 450, alarmed and dumped", async () => {
+    // A trigger stands in for a fault nobody foresaw. The message itself is
+    // storable, so the sender's retry may well succeed.
+    await server.db.query(
+      "CREATE FUNCTION e2e_refuse_mail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN " +
+        "IF NEW.subject = 'refused by the database' THEN RAISE EXCEPTION 'the database is unwell'; END IF; RETURN NEW; END $$"
+    );
+    await server.db.query("CREATE TRIGGER e2e_refuse_mail BEFORE INSERT ON mails FOR EACH ROW EXECUTE FUNCTION e2e_refuse_mail()");
+    try {
+      const dumpDir = path.join(server.cwd, "error");
+      const dumpsBefore = fs.existsSync(dumpDir) ? fs.readdirSync(dumpDir).length : 0;
+      const { final } = await mailer.send("Subject: refused by the database\r\nMessage-ID: <unwell@remote.example>\r\n\r\nbody\r\n");
+      expect(final.raw).toBe("450 the database is unwell");
+      expect(await server.db.query("SELECT 1 FROM mails WHERE message_id = '<unwell@remote.example>'")).toEqual([]);
+
+      const alarm = await waitFor(() => server.alarms.alarms.find((entry) => entry.title.includes("Mail Receive Failed")), {
+        what: "the receive-failure alarm",
+      });
+      expect(alarm.title).toBe("🚨 Mail Server Error: Mail Receive Failed");
+      expect(alarm.description).toBe("**Error:** the database is unwell");
+
+      const dumps = fs.readdirSync(dumpDir);
+      expect(dumps.length).toBe(dumpsBefore + 1);
+      for (const name of dumps) expect(name).toMatch(/^\d{13}$/);
+      const dumped = dumps.map((name) => JSON.parse(fs.readFileSync(path.join(dumpDir, name), "utf8")).messageId);
+      expect(dumped).toContain("<unwell@remote.example>");
+
+      // The session survives it.
+      expect((await mailer.store(plain())).subject).toBe("Test message");
+    } finally {
+      await server.db.query("DROP TRIGGER e2e_refuse_mail ON mails");
+      await server.db.query("DROP FUNCTION e2e_refuse_mail()");
+    }
   });
 
   test("a connection dropped before the terminator stores nothing and frees its delivery slot", async () => {
