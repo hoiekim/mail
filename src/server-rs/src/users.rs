@@ -43,8 +43,8 @@ impl UserQuery {
     }
 }
 
-/// The registered account matching `query`. A matching row that has no
-/// password yet (an unfinished sign-up) is an error, not an absence.
+/// The account matching `query`. A row with no password yet (an unfinished
+/// sign-up) is found without one: it cannot sign in or be signed.
 pub async fn get_user(query: &UserQuery) -> Result<Option<User>> {
     let found = search_user(&UserFilter {
         user_id: query.id.clone(),
@@ -56,7 +56,7 @@ pub async fn get_user(query: &UserQuery) -> Result<Option<User>> {
         id: Some(record.user_id),
         username: Some(record.username),
         email: record.email,
-        password: Some(record.password),
+        password: record.password,
         token: record.token,
         expiry: record.expiry,
         // Rows that predate the revocation fence read back NULL: generation 1.

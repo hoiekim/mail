@@ -35,7 +35,9 @@ export const getUser = async (
     id: pgUser.user_id,
     username: pgUser.username,
     email: pgUser.email ?? undefined,
-    password: pgUser.password,
+    // Absent on a sign-up that has not set one yet: such an account is found,
+    // but cannot sign in or be signed.
+    password: pgUser.password ?? undefined,
     token: pgUser.token ?? undefined,
     expiry: pgUser.expiry ?? undefined,
     // Rows that predate the revocation fence read back null; the migration's
@@ -130,8 +132,6 @@ export const isValidEmail = (email: string) => {
  * reset in flight. A null `password` is what distinguishes them, so an expired
  * placeholder is reclaimed by deleting the row while a registered account
  * keeps its data and loses only the stale token.
- *
- * Reads the row as a model because `toUser` throws on a null password.
  */
 export const reclaimExpiredToken = async (userId: string): Promise<void> => {
   const model = await usersTable.queryOne({ [USER_ID]: userId });

@@ -396,4 +396,15 @@ describe("the failed sign-in limit", () => {
     expect((await imap.command("LOGIN alice password-of-alice")).status).toBe("OK");
     imap.close();
   });
+
+  test("an account with no password yet (a sign-up in progress) is refused as a wrong password is, and counted", async () => {
+    // A sign-up is a users row with a NULL password until set-info writes one.
+    await proxied.db.query(
+      "INSERT INTO users (username, email, token, expiry) VALUES ('user_pending1', 'pending@elsewhere.example', 'tok', NOW() + INTERVAL '1 hour')"
+    );
+    const { imap, answers } = await fail(address(), 9, "user_pending1");
+    expect(answers).toEqual(Array(9).fill("[AUTHENTICATIONFAILED] Invalid credentials."));
+    expect((await imap.command(`AUTHENTICATE PLAIN ${saslPlain("user_pending1", "tok")}`)).lines).toEqual([`A10 ${LOCKED}`]);
+    expect(await imap.waitForClose()).toEqual([]);
+  }, 30_000);
 });

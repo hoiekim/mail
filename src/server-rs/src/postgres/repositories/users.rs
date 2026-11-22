@@ -41,28 +41,29 @@ impl UserModel {
         }
     }
 
-    /// A registered account. A sign-up that has not set a password is not one,
-    /// and reading it as one is an error, as it is in the Bun server.
-    pub fn to_user(&self) -> Result<UserRecord> {
-        let password = self.password.clone().ok_or_else(|| anyhow!("User has no password set"))?;
-        Ok(UserRecord {
+    /// The row as an account, a sign-up still waiting for its password
+    /// included: that one is found without a password, so its token can be
+    /// issued again and set-info can complete it. Nothing signs in on it.
+    pub fn to_user(&self) -> UserRecord {
+        UserRecord {
             user_id: self.user_id.clone(),
             username: self.username.clone(),
-            password,
+            password: self.password.clone(),
             password_version: self.password_version,
             email: self.email.clone(),
             token: self.token.clone(),
             expiry: self.expiry.clone(),
-        })
+        }
     }
 }
 
-/// A registered account as the repository returns it.
+/// An account as the repository returns it.
 #[derive(Debug, Clone)]
 pub struct UserRecord {
     pub user_id: String,
     pub username: String,
-    pub password: String,
+    /// `None` on a sign-up that has not set a password yet.
+    pub password: Option<String>,
     pub password_version: Option<i64>,
     pub email: Option<String>,
     pub token: Option<String>,
@@ -96,8 +97,8 @@ async fn query_one(filters: &[(&str, &str)]) -> Result<Option<UserModel>, DbErro
     Ok(result.rows.first().map(UserModel::from_row))
 }
 
-/// The registered account matching `filter`, or `None`. With no filter at
-/// all there is nothing to look for.
+/// The account matching `filter`, an unfinished sign-up included, or `None`.
+/// With no filter at all there is nothing to look for.
 pub async fn search_user(filter: &UserFilter) -> Result<Option<UserRecord>> {
     let non_empty = |field: &Option<String>| field.clone().filter(|v| !v.is_empty());
     let mut filters: Vec<(&str, String)> = Vec::new();
@@ -114,10 +115,7 @@ pub async fn search_user(filter: &UserFilter) -> Result<Option<UserRecord>> {
         return Ok(None);
     }
     let borrowed: Vec<(&str, &str)> = filters.iter().map(|(c, v)| (*c, v.as_str())).collect();
-    match query_one(&borrowed).await? {
-        Some(model) => Ok(Some(model.to_user()?)),
-        None => Ok(None),
-    }
+    Ok(query_one(&borrowed).await?.map(|model| model.to_user()))
 }
 
 /// The row with this id, registered or not.
@@ -331,4 +329,35 @@ pub async fn bump_password_version_by_auth_sub(sub: &str) -> Result<Option<(Stri
         )
         .await?;
     Ok(result.rows.first().map(|row| (row.text("user_id"), row.text("username"))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending_sign_up() -> UserModel {
+        UserModel {
+            user_id: "u-1".into(),
+            username: "user_abc12345".into(),
+            password: None,
+            password_version: Some(1),
+            email: Some("a@b.c".into()),
+            expiry: None,
+            token: Some("tok".into()),
+            updated: None,
+            is_deleted: Some(false),
+            imap_uid_validity: None,
+            auth_sub: None,
+        }
+    }
+
+    #[test]
+    fn a_sign_up_without_a_password_reads_as_an_account_without_one() {
+        // It used to be an error, which made every route that met the row a
+        // 500 and left the sign-up impossible to finish.
+        let record = pending_sign_up().to_user();
+        assert_eq!(record.password, None);
+        assert_eq!(record.username, "user_abc12345");
+        assert_eq!(record.token.as_deref(), Some("tok"));
+    }
 }
