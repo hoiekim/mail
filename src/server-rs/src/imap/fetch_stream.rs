@@ -96,6 +96,11 @@ impl<'a> Sink<'a> {
                 self.gone = true;
                 return false;
             }
+            #[cfg(test)]
+            probe(|probe| {
+                probe.pushes.push(piece.len());
+                probe.command_slots.push(super::command_budget::command_budget_in_flight());
+            });
             self.session.write_chunked(Bytes::copy_from_slice(piece)).await;
         }
         !self.window.as_ref().is_some_and(StreamWindow::is_done)
@@ -269,6 +274,8 @@ async fn emit_attachment(sink: &mut Sink<'_>, data_id: &str, raw_size: u64, file
     let read: std::io::Result<()> = async {
         let mut file = tokio::fs::File::open(get_attachment_file_path(Some(data_id))).await?;
         file.seek(SeekFrom::Start(start_raw)).await?;
+        #[cfg(test)]
+        probe(|probe| probe.attachment_reads_from.push(start_raw));
         let mut scratch = vec![0u8; SLICE_RAW_BYTES];
         loop {
             let read = fill(&mut file, &mut scratch).await?;
@@ -304,6 +311,27 @@ async fn emit_attachment(sink: &mut Sink<'_>, data_id: &str, raw_size: u64, file
         let padding = vec![b'\n'; (advertised - emitted) as usize];
         sink.push(&padding).await;
     }
+}
+
+/// What the emitters did, for tests: the size of each chunk handed to the
+/// socket, how many command-budget slots were taken as it was, and the file
+/// offset each attachment read started at.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct Probe {
+    pub(crate) pushes: Vec<usize>,
+    pub(crate) command_slots: Vec<usize>,
+    pub(crate) attachment_reads_from: Vec<u64>,
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static PROBE: std::cell::RefCell<Probe>;
+}
+
+#[cfg(test)]
+fn probe(record: impl FnOnce(&mut Probe)) {
+    let _ = PROBE.try_with(|probe| record(&mut probe.borrow_mut()));
 }
 
 #[cfg(test)]

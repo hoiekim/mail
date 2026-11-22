@@ -240,3 +240,53 @@ impl AuthBackend for FakeAuthBackend {
         Ok(self.app_password.clone().unwrap_or(AppPasswordCheck::Rejected))
     }
 }
+
+/// A session on an in-memory socket, with what it wrote collected.
+pub(crate) struct WireSession {
+    pub(crate) session: Arc<super::session::ImapSession>,
+    received: Arc<Mutex<Vec<u8>>>,
+    _read: tokio::io::ReadHalf<super::socket::BoxedStream>,
+}
+
+/// A fresh session, not signed in, on a plain (non-TLS) socket.
+pub(crate) fn wire_session() -> WireSession {
+    use tokio::io::AsyncReadExt;
+
+    let (socket, read, mut client) = super::socket::SocketHandle::for_test("203.0.113.7");
+    let session = super::session::ImapSession::new(socket, false);
+    let received: Arc<Mutex<Vec<u8>>> = Arc::default();
+    tokio::spawn({
+        let received = received.clone();
+        async move {
+            let mut chunk = vec![0u8; 64 * 1024];
+            while let Ok(read) = client.read(&mut chunk).await {
+                if read == 0 {
+                    break;
+                }
+                received.lock().unwrap().extend_from_slice(&chunk[..read]);
+            }
+        }
+    });
+    WireSession { session, received, _read: read }
+}
+
+impl WireSession {
+    /// Everything written so far, once the writer has caught up.
+    pub(crate) async fn wire_bytes(&self) -> Vec<u8> {
+        let mut seen = usize::MAX;
+        // Settled when two looks 20 ms apart agree.
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let now = self.received.lock().unwrap().len();
+            if now == seen {
+                return self.received.lock().unwrap().clone();
+            }
+            seen = now;
+        }
+    }
+
+    /// Everything written so far, as text.
+    pub(crate) async fn wire(&self) -> String {
+        String::from_utf8_lossy(&self.wire_bytes().await).into_owned()
+    }
+}

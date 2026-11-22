@@ -402,32 +402,57 @@ fn js_string_order(a: &str, b: &str) -> std::cmp::Ordering {
 // ---------------------------------------------------------------------------
 
 pub async fn list_mailboxes(tag: &str, reference: &str, pattern: &str, store: &Store, session: &ImapSession) {
+    // An empty pattern reads nothing.
+    let boxes = if pattern.is_empty() { Vec::new() } else { store.list_mailboxes().await };
+    for line in list_response(tag, reference, pattern, &boxes) {
+        session.write(&line);
+    }
+}
+
+/// The lines LIST answers with, given every listable mailbox.
+pub fn list_response<S: AsRef<str>>(tag: &str, reference: &str, pattern: &str, boxes: &[S]) -> Vec<String> {
     // An empty pattern asks for the hierarchy delimiter and the root name of
     // the reference (RFC 3501 §6.3.8); no mailboxes are returned.
     if pattern.is_empty() {
-        session.write(&format!("* LIST (\\Noselect) \"/\" {}\r\n", quote_string(reference)));
-        session.write(&format!("{tag} OK LIST completed\r\n"));
-        return;
+        return vec![
+            format!("* LIST (\\Noselect) \"/\" {}\r\n", quote_string(reference)),
+            format!("{tag} OK LIST completed\r\n"),
+        ];
     }
-    let boxes = store.list_mailboxes().await;
     // Ancestors come from the unfiltered set: a child the pattern excludes
     // still makes its parent \HasChildren.
-    let parent_paths = collect_ancestors(&boxes);
+    let parent_paths = collect_ancestors(boxes);
     let matches = create_list_pattern_matcher(reference, pattern);
-    for mailbox in boxes.iter().filter(|mailbox| matches(mailbox)) {
-        let attributes = get_mailbox_attributes(mailbox, &parent_paths);
-        session.write(&format!("* LIST ({attributes}) \"/\" {}\r\n", quote_string(mailbox)));
-    }
-    session.write(&format!("{tag} OK LIST completed\r\n"));
+    let mut lines: Vec<String> = boxes
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|mailbox| matches(mailbox))
+        .map(|mailbox| {
+            let attributes = get_mailbox_attributes(mailbox, &parent_paths);
+            format!("* LIST ({attributes}) \"/\" {}\r\n", quote_string(mailbox))
+        })
+        .collect();
+    lines.push(format!("{tag} OK LIST completed\r\n"));
+    lines
 }
 
 pub async fn list_subscribed_mailboxes(tag: &str, reference: &str, pattern: &str, store: &Store, session: &ImapSession) {
-    if pattern.is_empty() {
-        session.write(&format!("* LSUB (\\Noselect) \"/\" {}\r\n", quote_string(reference)));
-        session.write(&format!("{tag} OK LSUB completed\r\n"));
-        return;
+    // An empty pattern reads nothing.
+    let entries = if pattern.is_empty() { Vec::new() } else { store.list_mailbox_entries().await };
+    for line in lsub_response(tag, reference, pattern, entries) {
+        session.write(&line);
     }
-    let entries = store.list_mailbox_entries().await;
+}
+
+/// The lines LSUB answers with, given every listable mailbox and whether it
+/// is subscribed.
+pub fn lsub_response(tag: &str, reference: &str, pattern: &str, entries: Vec<MailboxEntry>) -> Vec<String> {
+    if pattern.is_empty() {
+        return vec![
+            format!("* LSUB (\\Noselect) \"/\" {}\r\n", quote_string(reference)),
+            format!("{tag} OK LSUB completed\r\n"),
+        ];
+    }
     let matches = create_list_pattern_matcher(reference, pattern);
     // Hierarchy is a property of the full listable set, not of the
     // subscribed subset.
@@ -452,7 +477,8 @@ pub async fn list_subscribed_mailboxes(tag: &str, reference: &str, pattern: &str
     synthesized.sort_by(|a, b| js_string_order(a, b));
     let synthesized = synthesized.into_iter().map(|name| MailboxEntry { name, subscribed: false });
 
-    for entry in entries.into_iter().chain(synthesized) {
+    let mut lines = Vec::new();
+    for entry in entries.iter().cloned().chain(synthesized) {
         if !(entry.subscribed || ancestors_of_subscribed.contains(&entry.name)) || !matches(&entry.name) {
             continue;
         }
@@ -462,9 +488,10 @@ pub async fn list_subscribed_mailboxes(tag: &str, reference: &str, pattern: &str
         } else {
             "\\HasChildren \\Noselect".to_string()
         };
-        session.write(&format!("* LSUB ({attributes}) \"/\" {}\r\n", quote_string(&entry.name)));
+        lines.push(format!("* LSUB ({attributes}) \"/\" {}\r\n", quote_string(&entry.name)));
     }
-    session.write(&format!("{tag} OK LSUB completed\r\n"));
+    lines.push(format!("{tag} OK LSUB completed\r\n"));
+    lines
 }
 
 // ---------------------------------------------------------------------------
@@ -576,3 +603,7 @@ async fn select_from_store(
     session.write(&format!("{tag} OK [{mode}] {command} completed\r\n"));
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "mailbox_ops_tests.rs"]
+mod tests;
