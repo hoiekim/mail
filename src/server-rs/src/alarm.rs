@@ -90,6 +90,30 @@ pub fn spawn_alarm_keyed(title: impl Into<String>, detail: impl Into<String>, ke
     tokio::spawn(async move { send_alarm(&title, &detail, Some(&key)).await });
 }
 
+/// Pages a panic the way the Bun server pages an uncaught exception: an
+/// "Uncaught Exception" alarm with the message and where it happened, and an
+/// error line in the log format operators query. A panic ends only the task it
+/// happens in (usually one connection), so without this it reaches nothing but
+/// a plain-text line on stderr. The default hook still prints afterwards.
+pub fn install_panic_alarm() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|message| message.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        let location = info.location().map(ToString::to_string).unwrap_or_default();
+        crate::logger::error_with("Uncaught exception", json!({ "location": location }), &message);
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let detail = format!("**Message:** {message}\n```\n{location}\n```");
+            runtime.spawn(async move { send_alarm("Uncaught Exception", &detail, None).await });
+        }
+        default_hook(info);
+    }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
