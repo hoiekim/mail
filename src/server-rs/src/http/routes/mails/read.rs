@@ -80,10 +80,13 @@ pub async fn get_attachment(req: &mut HttpRequest) -> anyhow::Result<Reply> {
     };
     let attachment_id = req.param("id").to_string();
 
-    // One query: the attachment is on one of this user's mails.
+    // One query: the attachment is on one of this user's mails. An expunged
+    // mail is gone for every by-id route, its files with it; a copy of it that
+    // is still live (an IMAP MOVE) names the same id and serves it.
     let filters = [
         ("user_id", SelectFilter::from(user.id.as_str())),
         ("attachments", SelectFilter::Contains(json!([{ "content": { "data": attachment_id } }]))),
+        ("expunged", SelectFilter::from(false)),
     ];
     if mails_table().query_one(&filters, None).await?.is_none() {
         return Ok(ApiResponse::failed("Not found").into());

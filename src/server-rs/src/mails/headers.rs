@@ -10,6 +10,7 @@ use crate::postgres::repositories::mails::http::{
     self as repository, GetMailHeadersOptions, ListCursor, MailHeaderResult, UnifiedMailHeadersOptions,
 };
 use crate::postgres::DbResult;
+use crate::util::{get_domain, recipient_username};
 
 /// Which per-account list to read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -93,10 +94,39 @@ fn snippet_of(row: &Map<String, Value>) -> Option<Value> {
     build_snippet(column(row, "text_prefix").as_str()).map(Value::String)
 }
 
-/// The `envelopeTo` field: the stored envelope with an empty text.
-fn envelope_to_of(row: &Map<String, Value>) -> Option<Value> {
+fn is_recipient_of(entry: &Value, username: &str, domain: &str) -> bool {
+    entry
+        .get("address")
+        .and_then(Value::as_str)
+        .is_some_and(|address| recipient_username(address, domain).as_deref() == Some(username))
+}
+
+/// The `envelopeTo` field as `username`, the row's owner, may see it: the
+/// stored envelope with an empty text. There is no envelope text column; the
+/// envelope recipient is an SMTP-time value, never rendered, only read for
+/// account resolution.
+///
+/// A received row stores the transaction's whole envelope: every other local
+/// user it was delivered to, and any foreign recipient. Shown as stored, it
+/// would name a Bcc'd recipient to the other recipients and them to it, so it
+/// is cut, here at read time to cover rows already stored, to the addresses
+/// delivery files under the owner. Those are all the client reads it for. A
+/// sent row's envelope is the recipients the owner addressed, theirs to see.
+fn envelope_to_of(row: &Map<String, Value>, username: &str) -> Option<Value> {
     let value = column(row, "envelope_to");
-    js::is_truthy(value).then(|| json!({ "value": value, "text": "" }))
+    if !js::is_truthy(value) {
+        return None;
+    }
+    if js::is_truthy(column(row, "sent")) {
+        return Some(json!({ "value": value, "text": "" }));
+    }
+    let domain = get_domain();
+    let entries = match value {
+        Value::Array(entries) => entries.as_slice(),
+        entry => std::slice::from_ref(entry),
+    };
+    let own: Vec<&Value> = entries.iter().filter(|entry| is_recipient_of(entry, username, &domain)).collect();
+    Some(json!({ "value": own, "text": "" }))
 }
 
 /// `value?.length` read as a truthy number: a non-empty list or string.
@@ -108,10 +138,11 @@ fn has_length(value: &Value) -> bool {
     }
 }
 
-/// A list row in the shape and key order the client reads:
-/// `id, subject, date, from?, to?, cc?, bcc?, envelopeTo?, read, saved, sent,
-/// insight, snippet?, messageId?, inReplyTo?, references?`.
-pub fn to_mail_header_data(row: &MailHeaderResult) -> Map<String, Value> {
+/// A list row as `username`, the row's owner, sees it, in the shape and key
+/// order the client reads: `id, subject, date, from?, to?, cc?, bcc?,
+/// envelopeTo?, read, saved, sent, insight, snippet?, messageId?, inReplyTo?,
+/// references?`.
+pub fn to_mail_header_data(row: &MailHeaderResult, username: &str) -> Map<String, Value> {
     let mut header = Map::new();
     header.insert("id".into(), column(row, "mail_id").clone());
     header.insert("subject".into(), subject_of(row));
@@ -120,7 +151,7 @@ pub fn to_mail_header_data(row: &MailHeaderResult) -> Map<String, Value> {
     insert_some(&mut header, "to", address_field(row, "to_address", "to_text"));
     insert_some(&mut header, "cc", address_field(row, "cc_address", "cc_text"));
     insert_some(&mut header, "bcc", address_field(row, "bcc_address", "bcc_text"));
-    insert_some(&mut header, "envelopeTo", envelope_to_of(row));
+    insert_some(&mut header, "envelopeTo", envelope_to_of(row, username));
     header.insert("read".into(), bool_or_false(column(row, "read")));
     header.insert("saved".into(), bool_or_false(column(row, "saved")));
     header.insert("sent".into(), bool_or_false(column(row, "sent")));
@@ -141,9 +172,10 @@ pub fn to_mail_header_data(row: &MailHeaderResult) -> Map<String, Value> {
     header
 }
 
-/// A search row: `id, subject, date, from?, to?, read, saved, sent, insight,
-/// cc?, bcc?, envelopeTo?, highlight, snippet?, spam?`, with no thread ids.
-pub fn to_search_header_data(row: &MailHeaderResult, highlight: &Map<String, Value>) -> Map<String, Value> {
+/// A search row as `username`, its owner, sees it: `id, subject, date, from?,
+/// to?, read, saved, sent, insight, cc?, bcc?, envelopeTo?, highlight,
+/// snippet?, spam?`, with no thread ids.
+pub fn to_search_header_data(row: &MailHeaderResult, highlight: &Map<String, Value>, username: &str) -> Map<String, Value> {
     let mut header = Map::new();
     header.insert("id".into(), column(row, "mail_id").clone());
     header.insert("subject".into(), subject_of(row));
@@ -156,7 +188,7 @@ pub fn to_search_header_data(row: &MailHeaderResult, highlight: &Map<String, Val
     header.insert("insight".into(), column(row, "insight").clone());
     insert_some(&mut header, "cc", address_field(row, "cc_address", "cc_text"));
     insert_some(&mut header, "bcc", address_field(row, "bcc_address", "bcc_text"));
-    insert_some(&mut header, "envelopeTo", envelope_to_of(row));
+    insert_some(&mut header, "envelopeTo", envelope_to_of(row, username));
     header.insert("highlight".into(), Value::Object(highlight.clone()));
     insert_some(&mut header, "snippet", snippet_of(row));
     if js::is_truthy(column(row, "is_spam")) {
@@ -218,7 +250,7 @@ pub async fn get_unified_mail_header_ids(user: &SignedUser, addresses: &[String]
 pub async fn for_each_mail_header(user: &SignedUser, ids: &[String], mut sink: impl FnMut(Map<String, Value>)) -> DbResult<()> {
     repository::get_mail_headers_by_ids(&user.id, ids, |rows| {
         for row in &rows {
-            sink(to_mail_header_data(row));
+            sink(to_mail_header_data(row, &user.username));
         }
     })
     .await
@@ -233,7 +265,7 @@ pub async fn get_mail_headers_delta(
     let delta = repository::get_mail_headers_delta(&user.id, address, &header_options(options), since).await;
     MailHeadersDelta {
         as_of: delta.as_of,
-        headers: delta.headers.iter().map(|row| Value::Object(to_mail_header_data(row))).collect(),
+        headers: delta.headers.iter().map(|row| Value::Object(to_mail_header_data(row, &user.username))).collect(),
         expunged_ids: delta.expunged_ids,
     }
 }
@@ -242,7 +274,7 @@ pub async fn get_unified_mail_headers_delta(user: &SignedUser, addresses: &[Stri
     let delta = repository::get_unified_mail_headers_delta(&user.id, addresses, since).await;
     MailHeadersDelta {
         as_of: delta.as_of,
-        headers: delta.headers.iter().map(|row| Value::Object(to_mail_header_data(row))).collect(),
+        headers: delta.headers.iter().map(|row| Value::Object(to_mail_header_data(row, &user.username))).collect(),
         expunged_ids: delta.expunged_ids,
     }
 }
@@ -257,30 +289,36 @@ mod tests {
 
     #[test]
     fn a_list_row_keeps_the_client_key_order_and_drops_absent_fields() {
-        let header = to_mail_header_data(&row(json!({
-            "mail_id": "m", "user_id": "u", "subject": "Hi", "date": "2026-01-01T00:00:00.000Z",
-            "from_address": [{ "name": "A", "address": "a@x.test" }], "from_text": null,
-            "to_address": null, "to_text": "ignored",
-            "cc_address": [], "cc_text": "c",
-            "bcc_address": null, "bcc_text": null,
-            "envelope_to": [{ "address": "me@x.test" }],
-            "read": true, "saved": false, "sent": false, "is_spam": false, "insight": null,
-            "text_prefix": "Hello there\n> quoted",
-            "message_id": "<m@x>", "in_reply_to": null, "reference_ids": [],
-        })));
+        let header = to_mail_header_data(
+            &row(json!({
+                "mail_id": "m", "user_id": "u", "subject": "Hi", "date": "2026-01-01T00:00:00.000Z",
+                "from_address": [{ "name": "A", "address": "a@x.test" }], "from_text": null,
+                "to_address": null, "to_text": "ignored",
+                "cc_address": [], "cc_text": "c",
+                "bcc_address": null, "bcc_text": null,
+                "envelope_to": [{ "address": "me@x.test" }],
+                "read": true, "saved": false, "sent": true, "is_spam": false, "insight": null,
+                "text_prefix": "Hello there\n> quoted",
+                "message_id": "<m@x>", "in_reply_to": null, "reference_ids": [],
+            })),
+            "me",
+        );
         assert_eq!(
             serde_json::to_string(&header).unwrap(),
-            r#"{"id":"m","subject":"Hi","date":"2026-01-01T00:00:00.000Z","from":{"value":[{"name":"A","address":"a@x.test"}],"text":""},"cc":{"value":[],"text":"c"},"envelopeTo":{"value":[{"address":"me@x.test"}],"text":""},"read":true,"saved":false,"sent":false,"insight":null,"snippet":"Hello there","messageId":"<m@x>"}"#
+            r#"{"id":"m","subject":"Hi","date":"2026-01-01T00:00:00.000Z","from":{"value":[{"name":"A","address":"a@x.test"}],"text":""},"cc":{"value":[],"text":"c"},"envelopeTo":{"value":[{"address":"me@x.test"}],"text":""},"read":true,"saved":false,"sent":true,"insight":null,"snippet":"Hello there","messageId":"<m@x>"}"#
         );
     }
 
     #[test]
     fn a_null_subject_and_flags_take_their_defaults() {
-        let header = to_mail_header_data(&row(json!({
-            "mail_id": "m", "subject": null, "date": "d", "read": null, "saved": null, "sent": null,
-            "insight": { "summary": ["s"] }, "text_prefix": "", "message_id": "",
-            "in_reply_to": "<p@x>", "reference_ids": ["<a>", "<b>"],
-        })));
+        let header = to_mail_header_data(
+            &row(json!({
+                "mail_id": "m", "subject": null, "date": "d", "read": null, "saved": null, "sent": null,
+                "insight": { "summary": ["s"] }, "text_prefix": "", "message_id": "",
+                "in_reply_to": "<p@x>", "reference_ids": ["<a>", "<b>"],
+            })),
+            "me",
+        );
         assert_eq!(
             serde_json::to_string(&header).unwrap(),
             r#"{"id":"m","subject":"","date":"d","read":false,"saved":false,"sent":false,"insight":{"summary":["s"]},"inReplyTo":"<p@x>","references":["<a>","<b>"]}"#
@@ -300,11 +338,76 @@ mod tests {
                 "text_prefix": "Body", "message_id": "<m@x>",
             })),
             &highlight,
+            "me",
         );
         let keys: Vec<&str> = header.keys().map(String::as_str).collect();
         assert_eq!(
             keys,
             vec!["id", "subject", "date", "from", "read", "saved", "sent", "insight", "cc", "highlight", "snippet", "spam"]
         );
+    }
+
+    // Regression: a received row stores the whole SMTP envelope, and the
+    // lists returned it as is, so a recipient Bcc'd alone was named to every
+    // other local recipient of the same delivery.
+
+    fn at(local: &str, label: Option<&str>) -> Value {
+        let domain = get_domain();
+        match label {
+            Some(label) => json!({ "address": format!("{local}@{label}.{domain}") }),
+            None => json!({ "address": format!("{local}@{domain}") }),
+        }
+    }
+
+    fn envelope(envelope_to: Value, sent: bool, username: &str) -> Option<Value> {
+        envelope_to_of(&row(json!({ "envelope_to": envelope_to, "sent": sent })), username)
+    }
+
+    #[test]
+    fn a_received_envelope_keeps_only_the_addresses_delivered_to_its_owner() {
+        let stored = json!([
+            at("one", Some("alice")),
+            at("hidden", Some("bob")),
+            { "address": "x@remote.example" },
+            at("two", Some("alice")),
+        ]);
+        assert_eq!(
+            envelope(stored.clone(), false, "alice"),
+            Some(json!({ "value": [at("one", Some("alice")), at("two", Some("alice"))], "text": "" }))
+        );
+        assert_eq!(envelope(stored, false, "bob"), Some(json!({ "value": [at("hidden", Some("bob"))], "text": "" })));
+    }
+
+    #[test]
+    fn admin_owns_the_bare_domain_and_its_own_label() {
+        let stored = json!([at("hello", None), at("x", Some("admin")), at("y", Some("alice"))]);
+        assert_eq!(
+            envelope(stored, false, "admin"),
+            Some(json!({ "value": [at("hello", None), at("x", Some("admin"))], "text": "" }))
+        );
+    }
+
+    #[test]
+    fn an_emptied_envelope_is_an_empty_list_and_a_missing_one_is_left_out() {
+        assert_eq!(envelope(json!([at("x", Some("bob"))]), false, "alice"), Some(json!({ "value": [], "text": "" })));
+        assert_eq!(envelope(json!([]), false, "alice"), Some(json!({ "value": [], "text": "" })));
+        assert_eq!(envelope(Value::Null, false, "alice"), None);
+    }
+
+    #[test]
+    fn entries_that_are_not_addresses_are_dropped_and_a_bare_object_is_one_entry() {
+        let stored = json!(["a", 1, null, { "address": 5 }, at("me", Some("alice"))]);
+        assert_eq!(envelope(stored, false, "alice"), Some(json!({ "value": [at("me", Some("alice"))], "text": "" })));
+        assert_eq!(
+            envelope(at("me", Some("alice")), false, "alice"),
+            Some(json!({ "value": [at("me", Some("alice"))], "text": "" }))
+        );
+        assert_eq!(envelope(at("me", Some("bob")), false, "alice"), Some(json!({ "value": [], "text": "" })));
+    }
+
+    #[test]
+    fn a_sent_envelope_is_left_whole() {
+        let stored = json!([{ "address": "friend@remote.example" }, at("hidden", Some("bob"))]);
+        assert_eq!(envelope(stored.clone(), true, "alice"), Some(json!({ "value": stored, "text": "" })));
     }
 }

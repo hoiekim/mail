@@ -186,6 +186,32 @@ describe("GET /api/mails/headers/:account — stored shapes", () => {
     expect(emptyTo.to).toEqual({ value: [], text: "" });
   });
 
+  test("envelopeTo names only the user's own envelope recipients, whatever the row stores", async () => {
+    const me = box.address();
+    const [header] = await listed(box, {
+      to: [addr("list@remote.example")],
+      envelope_to: [
+        { address: "x@remote.example" },
+        { address: me },
+        { address: "y@someone-else.mail.test" },
+        { address: "z@mail.test" },
+        { address: box.address("second").toUpperCase() },
+      ],
+    });
+    expect(header.envelopeTo).toEqual({ value: [{ address: me }, { address: box.address("second").toUpperCase() }], text: "" });
+
+    const admin = await adminMailbox(server);
+    const adminRow = await admin.mail({
+      to: [addr("list@remote.example")],
+      envelope_to: [{ address: "hello@mail.test" }, { address: me }, { address: "x@admin.mail.test" }],
+    });
+    const adminList = await list(admin, "", "hello@mail.test");
+    expect(adminList.find((row) => row.id === adminRow.mail_id)!.envelopeTo).toEqual({
+      value: [{ address: "hello@mail.test" }, { address: "x@admin.mail.test" }],
+      text: "",
+    });
+  });
+
   test("no envelope recipient leaves envelopeTo out; an empty one is kept", async () => {
     const me = box.address();
     const [none, noneMail] = await listed(box, { to_address: [{ address: me }], to_text: me });
@@ -557,7 +583,8 @@ describe("GET /api/mails/headers/:account — whose account", () => {
       expect({ account, status, outcome: body.status }).toEqual({ account, status: 200, outcome: "success" });
     }
     const rows = (await admin.client.get(`/api/mails/headers/${box.address()}`)).body.body;
-    expect(rows).toEqual([headerOf(adminCopy)]);
+    // The row's envelope names only the other user's address, none of admin's.
+    expect(rows).toEqual([headerOf(adminCopy, { envelopeTo: { value: [], text: "" } })]);
   });
 
   test("an account of 5000 characters is answered", async () => {

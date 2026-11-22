@@ -8,7 +8,10 @@ export const getMailBody = async (
 ): Promise<MailBodyData | undefined> => {
   const mailModel = await getMailById(userId, mailId);
 
-  if (!mailModel) return undefined;
+  // An expunged row is kept only so the delta can report it gone; every list
+  // already hides it, so by id it is as missing as a mail that never existed.
+  // The body, mark and delete routes all look a mail up here.
+  if (!mailModel || mailModel.expunged) return undefined;
 
   return new MailBodyData({
     id: mailModel.mail_id,

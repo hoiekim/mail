@@ -278,11 +278,7 @@ describe("one delivery to several recipients", () => {
     expect((await second.client.get(`/api/mails/body/${firstRow.mail_id}`)).body).toEqual({ status: "failed", message: "No email is found." });
   });
 
-  // NOTE: the row stored for each user carries the whole SMTP envelope, and
-  // the list routes return it as `envelopeTo`. A recipient who was only Bcc'd
-  // — named in no header — is thereby disclosed to every other recipient on
-  // this server.
-  test("a Bcc'd recipient's address is shown to the other recipients through envelopeTo", async () => {
+  test("a Bcc'd recipient's address is not shown to the other recipients through envelopeTo", async () => {
     const visible = await newMailbox(server);
     const hidden = await newMailbox(server);
     const messageId = nextId();
@@ -290,9 +286,77 @@ describe("one delivery to several recipients", () => {
     const row = await deliver(visible, [visible.address(), hidden.address()], data, messageId);
     const listed = await listRow(visible, visible.address(), row.mail_id);
     expect(listed!.to).toEqual({ value: [{ name: "", address: visible.address() }], text: visible.address() });
-    expect(listed!.envelopeTo).toEqual({ value: [{ address: visible.address() }, { address: hidden.address() }], text: "" });
+    expect(listed!.envelopeTo).toEqual({ value: [{ address: visible.address() }], text: "" });
     const thread = (await visible.client.get(`/api/mails/thread/${row.mail_id}`)).body.body;
-    expect(thread[0].envelopeTo.value).toContainEqual({ address: hidden.address() });
+    expect(thread[0].envelopeTo).toEqual({ value: [{ address: visible.address() }], text: "" });
+  });
+
+  test("a mail Bcc'd to two local users: each sees only their own address, in every list", async () => {
+    const first = await newMailbox(server);
+    const second = await newMailbox(server);
+    const messageId = nextId();
+    const recipients = [first.address(), second.address(), "outsider@remote.example"];
+    const data = rfc822({ from: SENDER, to: "list@remote.example", subject: "Bcc'd quince", text: "quince", messageId });
+    const firstRow = await deliver(first, recipients, data, messageId);
+    const secondRow = await waitFor(
+      async () => (await server.db.query("SELECT * FROM mails WHERE user_id = $1 AND message_id = $2", [second.id, messageId]))[0]
+    );
+    // The rows still store the whole envelope; what a user is shown of it is cut when it is read.
+    expect(secondRow.envelope_to).toEqual(recipients.map((address) => ({ address })));
+
+    const since = new Date(Date.now() - 600_000).toISOString();
+    for (const [box, row] of [
+      [first, firstRow],
+      [second, secondRow],
+    ] as const) {
+      const me = box.address();
+      const own = { value: [{ address: me }], text: "" };
+      const find = (headers: Record<string, any>[]) => headers.find((header) => header.id === row.mail_id)?.envelopeTo;
+      const get = async (route: string) => (await box.client.get(route)).body.body;
+      expect({ me, list: find(await get(`/api/mails/headers/${me}`)) }).toEqual({ me, list: own });
+      expect(find((await get(`/api/mails/headers/${me}?limit=5`)).headers)).toEqual(own);
+      expect(find((await get(`/api/mails/headers/${me}?since=${since}`)).headers)).toEqual(own);
+      expect(find(await get("/api/mails/unified"))).toEqual(own);
+      expect(find((await get("/api/mails/unified?limit=5")).headers)).toEqual(own);
+      expect(find((await get(`/api/mails/unified?since=${since}`)).headers)).toEqual(own);
+      expect(find(await get(`/api/mails/thread/${row.mail_id}`))).toEqual(own);
+      expect(find(await get("/api/mails/search/quince"))).toEqual(own);
+    }
+  });
+
+  test("a user with several addresses on the envelope sees all of theirs and no one else's", async () => {
+    const box = await newMailbox(server);
+    const other = await newMailbox(server);
+    const messageId = nextId();
+    const recipients = [box.address("one"), other.address(), box.address("two")];
+    const data = rfc822({ from: SENDER, to: "list@remote.example", subject: "To two of mine", text: "x", messageId });
+    const row = await deliver(box, recipients, data, messageId);
+    const mine = { value: [{ address: box.address("one") }, { address: box.address("two") }], text: "" };
+    for (const account of [box.address("one"), box.address("two")]) {
+      expect({ account, envelopeTo: (await listRow(box, account, row.mail_id))!.envelopeTo }).toEqual({ account, envelopeTo: mine });
+    }
+    expect((await box.client.get("/api/mails/unified")).body.body[0].envelopeTo).toEqual(mine);
+    const theirs = await waitFor(
+      async () => (await server.db.query("SELECT mail_id FROM mails WHERE user_id = $1 AND message_id = $2", [other.id, messageId]))[0]
+    );
+    expect((await listRow(other, other.address(), theirs.mail_id))!.envelopeTo).toEqual({ value: [{ address: other.address() }], text: "" });
+  });
+
+  test("a sent row keeps its whole envelope: the recipients its sender chose", async () => {
+    const box = await newMailbox(server);
+    const other = await newMailbox(server);
+    const me = box.address();
+    const sent = await box.client.post("/api/mails/send", {
+      sender: "box",
+      to: "friend@remote.example",
+      bcc: other.address(),
+      subject: "Sent with a Bcc",
+      html: "<p>x</p>",
+    });
+    expect(sent.body).toEqual({ status: "success" });
+    const [row] = (await box.client.get(`/api/mails/headers/${me}?sent=1`)).body.body;
+    expect(row.bcc).toEqual({ value: [{ address: other.address() }], text: other.address() });
+    expect(row.envelopeTo).toEqual({ value: [{ address: "friend@remote.example" }, { address: other.address() }], text: "" });
   });
 
   test("recipient addresses are stored in lower case whatever case they arrive in", async () => {

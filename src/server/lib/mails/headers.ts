@@ -3,6 +3,7 @@ import {
   MaskedUser,
   Pagination,
   SignedUser,
+  MailAddressType,
   MailAddressValueType,
   Insight,
 } from "common";
@@ -19,6 +20,7 @@ import {
   MailHeaderResult,
 } from "../postgres/repositories/mails";
 import { buildSnippet } from "./snippet";
+import { getDomain, recipientUsername } from "../util";
 
 export interface GetMailsOptions {
   sent: boolean;
@@ -52,8 +54,41 @@ const resolveUserId = (user: MaskedUser | SignedUser): string | undefined =>
 
 async function* noBatches(): AsyncGenerator<MailHeaderResult[]> {}
 
-export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
-  new MailHeaderData({
+const isRecipientOf = (entry: unknown, username: string, domain: string) => {
+  const address = (entry as { address?: unknown } | null)?.address;
+  return typeof address === "string" && recipientUsername(address, domain) === username;
+};
+
+/**
+ * A row's `envelopeTo`, as `username`, its owner, may see it. There is no
+ * envelope text column — the envelope recipient is an SMTP-time value, never
+ * rendered, only read for account resolution.
+ *
+ * A received row stores the transaction's whole envelope: every other local
+ * user it was delivered to, and any foreign recipient. Shown as stored, it
+ * would name a Bcc'd recipient to the other recipients and them to it, so it
+ * is cut, here at read time to cover rows already stored, to the addresses
+ * delivery files under the owner. Those are all the client reads it for. A
+ * sent row's envelope is the recipients the owner addressed, theirs to see.
+ */
+export const envelopeToOf = (
+  m: { envelope_to?: unknown; sent?: unknown },
+  username: string
+): MailAddressType | undefined => {
+  if (!m.envelope_to) return undefined;
+  if (m.sent) return { value: m.envelope_to as MailAddressValueType[], text: "" };
+  const domain = getDomain();
+  const entries = Array.isArray(m.envelope_to) ? m.envelope_to : [m.envelope_to];
+  return {
+    value: entries.filter((entry) => isRecipientOf(entry, username, domain)),
+    text: "",
+  };
+};
+
+/** A list row as `username`, the row's owner, sees it. */
+export const toMailHeaderData = (m: MailHeaderResult, username: string): MailHeaderData => {
+  const envelopeTo = envelopeToOf(m, username);
+  return new MailHeaderData({
     id: m.mail_id,
     subject: m.subject,
     date: m.date,
@@ -69,16 +104,7 @@ export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
     bcc: m.bcc_address
       ? { value: m.bcc_address as MailAddressValueType[], text: m.bcc_text || "" }
       : undefined,
-    // No envelope text column exists — the envelope recipient is an SMTP-time
-    // value, never rendered, only read for account resolution.
-    ...(m.envelope_to
-      ? {
-          envelopeTo: {
-            value: m.envelope_to as MailAddressValueType[],
-            text: "",
-          },
-        }
-      : {}),
+    ...(envelopeTo ? { envelopeTo } : {}),
     read: m.read,
     saved: m.saved,
     sent: m.sent,
@@ -88,6 +114,7 @@ export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
     ...(m.in_reply_to ? { inReplyTo: m.in_reply_to } : {}),
     ...(m.reference_ids?.length ? { references: m.reference_ids } : {}),
   });
+};
 
 export const getMailHeaders = async (
   user: MaskedUser | SignedUser,
@@ -177,7 +204,11 @@ export const getMailHeadersDelta = async (
     since
   );
 
-  return { as_of, headers: headers.map(toMailHeaderData), expunged_ids };
+  return {
+    as_of,
+    headers: headers.map((row) => toMailHeaderData(row, user.username ?? "")),
+    expunged_ids,
+  };
 };
 
 export const getUnifiedMailHeaders = async (
@@ -205,5 +236,9 @@ export const getUnifiedMailHeadersDelta = async (
   const { as_of, headers, expunged_ids } =
     await pgGetUnifiedMailHeadersDelta(userId, addresses, since);
 
-  return { as_of, headers: headers.map(toMailHeaderData), expunged_ids };
+  return {
+    as_of,
+    headers: headers.map((row) => toMailHeaderData(row, user.username ?? "")),
+    expunged_ids,
+  };
 };
