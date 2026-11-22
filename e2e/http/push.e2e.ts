@@ -19,6 +19,7 @@ import {
   NOT_FOUND,
   NOT_LOGGED_IN,
   UUID,
+  isAbout,
   rawRequest,
 } from "./core-helpers";
 
@@ -187,28 +188,60 @@ describe("VAPID keys at boot", () => {
 });
 
 describe("GET /api/push/refresh/:id", () => {
-  // NOTE: the route is meant to mark a subscription as still in use, but the
-  // update it issues sets no column, which the query builder turns into no
-  // statement at all — so it answers "No subscription found" for every id,
-  // and `updated` never moves. Pinned as it is.
-  test("answers 'No subscription found' even for a subscription that exists", async () => {
-    const id = await subscribe(aliceClient, "refresh-existing");
+  /** A subscription of `client`'s, last marked in use three days ago (the sweep takes those older than seven). */
+  const agedSubscription = async (client: ApiClient, suffix: string) => {
+    const id = await subscribe(client, suffix);
     await server.db.query("UPDATE push_subscriptions SET updated = NOW() - INTERVAL '3 days' WHERE push_subscription_id = $1", [id]);
-    const before = (await rowOf(id))!;
-    for (const client of [aliceClient, bobClient, server.client()]) {
+    return { id, before: (await rowOf(id))! };
+  };
+
+  test("marks the caller's own subscription as in use: `updated` moves to now, and nothing else", async () => {
+    const { id, before } = await agedSubscription(aliceClient, "refresh-existing");
+    const { status, text } = await aliceClient.get(`/api/push/refresh/${id}`);
+    expect(status).toBe(200);
+    expect(text).toBe('{"status":"success"}');
+    const after = (await rowOf(id))!;
+    expect(isAbout(after.updated, 0)).toBe(true);
+    expect(after).toEqual({ ...before, updated: after.updated });
+  });
+
+  test("can be repeated, and takes the id in any spelling PostgreSQL reads as the same UUID", async () => {
+    const { id } = await agedSubscription(aliceClient, "refresh-again");
+    for (const spelled of [id, id, id.toUpperCase(), `{${id}}`, id.replace(/-/g, "")]) {
+      const { body } = await aliceClient.get(`/api/push/refresh/${encodeURIComponent(spelled)}`);
+      expect({ spelled, body }).toEqual({ spelled, body: SUCCESS });
+    }
+    expect(isAbout((await rowOf(id))!.updated, 0)).toBe(true);
+  });
+
+  test("leaves someone else's subscription alone, and so does a caller without a session", async () => {
+    const { id, before } = await agedSubscription(aliceClient, "refresh-foreign");
+    for (const client of [bobClient, server.client()]) {
       const { status, body } = await client.get(`/api/push/refresh/${id}`);
       expect(status).toBe(200);
       expect(body).toEqual(NO_SUBSCRIPTION);
     }
-    const after = (await rowOf(id))!;
-    expect(after.updated).toEqual(before.updated);
-    expect(after.last_notified).toEqual(before.last_notified);
+    expect(await rowOf(id)).toEqual(before);
+  });
+
+  test("a read-only session owns no subscription, not even admin's", async () => {
+    const admin = await adminUser(server);
+    const adminClient = server.client();
+    await adminClient.login("admin", ADMIN_PASSWORD);
+    const { id, before } = await agedSubscription(adminClient, "refresh-admins");
+    expect(before.user_id).toBe(admin.id);
+
+    expect((await readOnly.get(`/api/push/refresh/${id}`)).body).toEqual(NO_SUBSCRIPTION);
+    expect(await rowOf(id)).toEqual(before);
+    expect((await adminClient.get(`/api/push/refresh/${id}`)).body).toEqual(SUCCESS);
   });
 
   test("answers the same for an unknown id and for one that is not a UUID", async () => {
-    for (const id of [missingId(), "not-a-uuid", "1", "%20", "a%2Fb", "null", "'; DROP TABLE users; --"]) {
-      const { status, text } = await server.client().get(`/api/push/refresh/${encodeURIComponent(id)}`);
-      expect({ id, status, text }).toEqual({ id, status: 200, text: '{"status":"failed","message":"No subscription found"}' });
+    for (const client of [server.client(), aliceClient]) {
+      for (const id of [missingId(), "not-a-uuid", "1", "%20", "a%2Fb", "null", "'; DROP TABLE users; --"]) {
+        const { status, text } = await client.get(`/api/push/refresh/${encodeURIComponent(id)}`);
+        expect({ id, status, text }).toEqual({ id, status: 200, text: '{"status":"failed","message":"No subscription found"}' });
+      }
     }
   });
 

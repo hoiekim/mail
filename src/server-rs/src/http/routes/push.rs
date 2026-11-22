@@ -21,8 +21,16 @@ async fn get_public_key(_req: &mut HttpRequest) -> anyhow::Result<Reply> {
     .into())
 }
 
+// Public, but scoped to the caller: the service worker's fetch carries the
+// session cookie, and the id alone is a bearer capability. A read-only
+// session may not subscribe, so it owns none; its id is admin's.
 async fn get_refresh(req: &mut HttpRequest) -> anyhow::Result<Reply> {
-    Ok(if push::refresh_subscription(req.param("id")).await {
+    let owner = req.session.user.as_ref().filter(|user| user.is_read_only != Some(true)).map(|user| user.id.clone());
+    let refreshed = match owner {
+        Some(user_id) => push::refresh_subscription(req.param("id"), &user_id).await,
+        None => false,
+    };
+    Ok(if refreshed {
         ApiResponse::success()
     } else {
         ApiResponse::failed("No subscription found")
