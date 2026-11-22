@@ -38,6 +38,18 @@ export interface SClientResult {
   output: string;
 }
 
+// OpenSSL 3.2 and later name the signature scheme (`rsa_pkcs1_sha1`) where 3.0 names the key type (`RSA`).
+const SCHEME_KEY_TYPES: [RegExp, string][] = [
+  [/^rsa_pkcs1_/, "RSA"],
+  [/^rsa_pss_/, "RSA-PSS"],
+  [/^ecdsa_/, "ECDSA"],
+  [/^ed25519$/, "Ed25519"],
+  [/^ed448$/, "Ed448"],
+];
+
+const keyTypeOf = (signatureType: string | undefined): string | undefined =>
+  SCHEME_KEY_TYPES.find(([scheme]) => signatureType && scheme.test(signatureType))?.[1] ?? signatureType;
+
 /**
  * Connects to `port` with `openssl s_client`, offering what `args` set, and
  * ends the session with QUIT or LOGOUT once the handshake is through.
@@ -71,13 +83,13 @@ export const sClient = async (port: number, args: string[], options: SClientOpti
   if (!sent) child.stdin.end();
 
   const field = (name: string) => err.match(new RegExp(`^${name}: (.+)$`, "m"))?.[1]?.trim();
-  const signatureType = field("Signature type");
+  const signatureType = keyTypeOf(field("Signature type"));
   const hash = field("Hash used");
   return {
     protocol: field("Protocol version"),
     cipher: field("Ciphersuite"),
     signature: signatureType && hash ? `${signatureType}/${hash}` : undefined,
-    serverTempKey: field("Server Temp Key"),
+    serverTempKey: field("Server Temp Key") ?? field("Peer Temp Key"),
     roundTrip: /^(221 |\* BYE )/m.test(out),
     output: `${err}${out}`,
   };
