@@ -101,17 +101,7 @@ fn is_recipient_of(entry: &Value, username: &str, domain: &str) -> bool {
         .is_some_and(|address| recipient_username(address, domain).as_deref() == Some(username))
 }
 
-/// The `envelopeTo` field as `username`, the row's owner, may see it: the
-/// stored envelope with an empty text. There is no envelope text column; the
-/// envelope recipient is an SMTP-time value, never rendered, only read for
-/// account resolution.
-///
-/// A received row stores the transaction's whole envelope: every other local
-/// user it was delivered to, and any foreign recipient. Shown as stored, it
-/// would name a Bcc'd recipient to the other recipients and them to it, so it
-/// is cut, here at read time to cover rows already stored, to the addresses
-/// delivery files under the owner. Those are all the client reads it for. A
-/// sent row's envelope is the recipients the owner addressed, theirs to see.
+/// A row's `envelopeTo` as its owner may see it: a received row stores every recipient, Bcc included.
 fn envelope_to_of(row: &Map<String, Value>, username: &str) -> Option<Value> {
     let value = column(row, "envelope_to");
     if !js::is_truthy(value) {

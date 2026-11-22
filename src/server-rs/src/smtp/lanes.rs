@@ -170,11 +170,7 @@ pub(crate) fn outgoing_mail(
     }
 }
 
-/// The parsed attachments of a submission as the files of an HTTP send, so
-/// they go out and onto the Sent copy the same way. The parser has already
-/// written each into the transaction's directory. An image the HTML names by
-/// `cid:` is among them: the parser inlines it as a `data:` URL and keeps it
-/// an attachment too, as it does for received mail.
+/// A submission's parsed attachments as the files of an HTTP send.
 pub(crate) fn outgoing_files(parsed: &ParsedMessage) -> Vec<UploadedFile> {
     parsed
         .attachments

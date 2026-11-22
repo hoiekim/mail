@@ -100,9 +100,7 @@ pub async fn create_token(email: &str) -> Result<CreatedToken> {
                 &[("token", Param::from(&token)), ("expiry", Param::from(&expiry))],
             )
             .await?;
-            // A row with no password is a sign-up still in progress: its
-            // username is the placeholder, not a chosen one, so the link
-            // leaves it out, as from the first sign-up mail.
+            // A pending sign-up's username is the placeholder, which nobody chose.
             let username = existing.password.is_some().then_some(existing.username).flatten();
             return Ok(CreatedToken { id, token, username });
         }
@@ -208,15 +206,11 @@ pub async fn set_user_info(email: &str, username: &str, password: &str, token: O
         }
     }
 
-    // A sign-up still in progress (no password yet) carries only its
-    // placeholder name, so it takes the one asked for, as a row with no
-    // username does. A registered account keeps its own.
     let registered_name = existing.username.as_deref().filter(|name| !name.is_empty() && existing.password.is_some());
     let username = match registered_name {
         Some(existing_name) => existing_name.to_string(),
         None => {
-            // Refused even where no row holds it yet: a sign-up named
-            // `admin-ro` would sign in as the read-only view of admin.
+            // `admin-ro` has no row until it is configured, and would sign in as admin's read-only view.
             if is_reserved_username(Some(username)) {
                 bail!("`setUserInfo` failed because username is reserved.");
             }

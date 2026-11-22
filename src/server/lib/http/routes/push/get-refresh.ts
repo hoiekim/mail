@@ -3,11 +3,7 @@ import { Route } from "../route";
 
 export type RefreshGetResponse = undefined;
 
-// Public, but user-scoped: the service worker's same-origin fetch carries the
-// session cookie, and only the caller's own subscription is kept alive (the
-// :id alone is a bearer capability, as for the delete). An anonymous caller
-// has no subscription of its own, and neither has a read-only session, which
-// may not subscribe: its id is admin's, whose subscriptions it must not touch.
+// A read-only session carries admin's id, so it must not refresh admin's subscriptions.
 export const getRefreshRoute = new Route<RefreshGetResponse>(
   "GET",
   "/refresh/:id",

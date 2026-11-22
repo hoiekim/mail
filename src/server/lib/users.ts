@@ -100,9 +100,7 @@ export const createToken = async (
   const existing = await getUser({ email });
   if (existing?.id) {
     await usersTable.update(existing.id, { [TOKEN]: token, [EXPIRY]: expiry });
-    // A row with no password is a sign-up still in progress: its username is
-    // the placeholder below, not one anybody chose, so the link leaves it out
-    // and the person picks one, as from the first sign-up mail.
+    // A pending sign-up's username is the placeholder below, which nobody chose.
     const username = existing.password === undefined ? undefined : existing.username;
     return { id: existing.id, username, token };
   }
@@ -196,13 +194,8 @@ export const setUserInfo = async (
     throw new Error("Setting userInfo failed because user token is expired.");
   }
 
-  // A sign-up still in progress (no password yet) carries only the
-  // placeholder name `createToken` gave it, so it takes the name asked for, as
-  // a row with no username does. A registered account keeps its own: a reset
-  // never renames it.
   if (!existingUser.username || existingUser.password === undefined) {
-    // The reserved names are refused even where no row holds them yet: a
-    // sign-up named `admin-ro` would sign in as the read-only view of admin.
+    // `admin-ro` has no row until it is configured, and would sign in as admin's read-only view.
     if (isReservedUsername(username)) {
       throw new Error("`setUserInfo` failed because username is reserved.");
     }

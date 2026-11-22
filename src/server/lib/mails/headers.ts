@@ -59,18 +59,7 @@ const isRecipientOf = (entry: unknown, username: string, domain: string) => {
   return typeof address === "string" && recipientUsername(address, domain) === username;
 };
 
-/**
- * A row's `envelopeTo`, as `username`, its owner, may see it. There is no
- * envelope text column — the envelope recipient is an SMTP-time value, never
- * rendered, only read for account resolution.
- *
- * A received row stores the transaction's whole envelope: every other local
- * user it was delivered to, and any foreign recipient. Shown as stored, it
- * would name a Bcc'd recipient to the other recipients and them to it, so it
- * is cut, here at read time to cover rows already stored, to the addresses
- * delivery files under the owner. Those are all the client reads it for. A
- * sent row's envelope is the recipients the owner addressed, theirs to see.
- */
+/** A row's `envelopeTo` as its owner may see it: a received row stores every recipient, Bcc included. */
 export const envelopeToOf = (
   m: { envelope_to?: unknown; sent?: unknown },
   username: string
