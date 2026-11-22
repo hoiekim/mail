@@ -161,6 +161,20 @@ mod web_push {
     const VAPID_EXPIRATION_SECONDS: i64 = 12 * 60 * 60;
     const RECORD_SIZE: u32 = 4096;
 
+    /// The client pushes go out on. A redirect from the push service is its
+    /// answer, not followed, as the Bun server's push library answers it: the
+    /// endpoint is a URL a user chose, checked only as it was given.
+    fn push_client() -> &'static reqwest::Client {
+        static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        CLIENT.get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("the push HTTP client builds")
+        })
+    }
+
     /// Why a send did not happen.
     #[derive(Debug)]
     pub enum PushError {
@@ -269,7 +283,7 @@ mod web_push {
         let body = encrypt(p256dh, auth, payload.as_bytes())?;
         let (subject, public_key, private_key) = vapid;
         let authorization = vapid_authorization(&url, subject, public_key, private_key)?;
-        let response = crate::alarm::http_client()
+        let response = push_client()
             .post(url)
             .header("TTL", TTL_SECONDS)
             .header("Content-Type", "application/octet-stream")

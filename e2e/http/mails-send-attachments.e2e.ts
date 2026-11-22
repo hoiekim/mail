@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import fs from "fs";
+import net from "net";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { startServer, type TestServer } from "../harness";
 import {
@@ -435,6 +436,69 @@ describe("POST /api/mails/send as multipart — size limits", () => {
     expect(body).toEqual(failed("ERR_FR_MAX_BODY_LENGTH_EXCEEDED"));
     expect(server.mailgun.requests).toEqual([]);
     expect(await countMails(server, box.id)).toBe(before);
+  }, 120_000);
+});
+
+describe("POST /api/mails/send as multipart — the limit on the whole body", () => {
+  // Every file the parser keeps at full size, plus 64 MiB for the rest.
+  const MAX_REQUEST_BODY_SIZE = 21 * 25 * MIB + 64 * MIB;
+
+  /** The status line of what the server answers to `head` followed by `body`, written as the server takes it. */
+  const statusFor = (head: string, body: Iterable<Uint8Array> = []) =>
+    new Promise<string>((resolve) => {
+      const socket = net.createConnection({ port: server.ports.http, host: "127.0.0.1" });
+      let received = "";
+      const done = () => {
+        clearTimeout(timer);
+        socket.destroy();
+        resolve(/^HTTP\/1\.1 (\d{3})/.exec(received)?.[1] ?? `no answer: ${received.slice(0, 80)}`);
+      };
+      const timer = setTimeout(done, 60_000);
+      socket.on("error", () => undefined);
+      socket.on("close", done);
+      socket.on("data", (chunk) => {
+        received += chunk.toString("latin1");
+        if (/\r\n\r\n/.test(received)) done();
+      });
+      socket.on("connect", async () => {
+        socket.write(head);
+        for (const piece of body) {
+          if (socket.destroyed || received) return;
+          if (!socket.write(piece)) await new Promise((drained) => socket.once("drain", drained));
+        }
+      });
+    });
+
+  test("a declared length over the limit is refused with 413 before the body arrives", async () => {
+    const head = (cookie: string) =>
+      `POST /api/mails/send HTTP/1.1\r\nHost: localhost\r\n${cookie}Content-Type: multipart/form-data; boundary=b\r\n` +
+      `Content-Length: ${MAX_REQUEST_BODY_SIZE + 1}\r\n\r\n--b\r\n`;
+    expect(await statusFor(head(`Cookie: ${box.client.cookieHeader()}\r\n`))).toBe("413");
+    expect(await statusFor(head(""))).toBe("413");
+    expect(server.mailgun.requests).toEqual([]);
+  }, 120_000);
+
+  test("a body streamed past the limit is refused with 413, however little of it the parser keeps", async () => {
+    // Parts that are not form data are read and thrown away, so only the
+    // limit on the whole body can stop this one.
+    const piece = Buffer.concat([
+      Buffer.from("--b\r\nContent-Disposition: attachment\r\n\r\n"),
+      Buffer.alloc(8 * MIB, 0x61),
+      Buffer.from("\r\n"),
+    ]);
+    const chunk = Buffer.concat([Buffer.from(`${piece.length.toString(16)}\r\n`), piece, Buffer.from("\r\n")]);
+    function* body() {
+      for (let sent = 0; sent <= MAX_REQUEST_BODY_SIZE; sent += piece.length) yield chunk;
+      const end = Buffer.from("--b--\r\n");
+      yield Buffer.concat([Buffer.from(`${end.length.toString(16)}\r\n`), end, Buffer.from("\r\n0\r\n\r\n")]);
+    }
+    const head =
+      `POST /api/mails/send HTTP/1.1\r\nHost: localhost\r\nCookie: ${box.client.cookieHeader()}\r\n` +
+      "Content-Type: multipart/form-data; boundary=b\r\nTransfer-Encoding: chunked\r\n\r\n";
+    expect(await statusFor(head, body())).toBe("413");
+    expect(server.mailgun.requests).toEqual([]);
+    // The server keeps answering.
+    expect((await sendForm(fields(TEXT))).body).toEqual(SUCCESS);
   }, 120_000);
 });
 
