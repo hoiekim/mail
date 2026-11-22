@@ -227,6 +227,10 @@ impl HttpApp {
                     Ok(response) => response,
                     Err(error) => failed(Some(req.session.session_id()), &error),
                 };
+                // A body the route never read is read out before the answer,
+                // as the Bun server does: closing on a client that is still
+                // sending would reset the connection under its reply.
+                drain_unread(std::mem::replace(&mut req.raw, RawBody::Taken)).await;
                 (response, req.session)
             }
         };
@@ -251,6 +255,27 @@ impl HttpApp {
         }
         conditional(method, request_headers, response)
     }
+}
+
+/// How long reading out an unread request body may take.
+const BODY_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Reads and discards what is left of a request body, up to the largest body
+/// the server accepts and for at most [`BODY_DRAIN_TIMEOUT`].
+async fn drain_unread(raw: RawBody) {
+    let RawBody::Unread(mut body) = raw else { return };
+    let drain = async {
+        let mut read: u64 = 0;
+        while let Some(Ok(frame)) = body.frame().await {
+            if let Ok(data) = frame.into_data() {
+                read += data.len() as u64;
+                if read > upload::MAX_REQUEST_BODY_SIZE {
+                    return;
+                }
+            }
+        }
+    };
+    let _ = tokio::time::timeout(BODY_DRAIN_TIMEOUT, drain).await;
 }
 
 /// The path and query string a request asked for.
