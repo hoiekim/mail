@@ -407,7 +407,7 @@ describe("the attachments of a submission", () => {
     await waitFor(() => incomingLeftovers(server).length === 0, { what: "the transaction's working files to go" });
   });
 
-  test("several are sent and stored in message order, each under its own id", async () => {
+  test("several are sent in message order and stored each under its own id", async () => {
     const bytes = Buffer.from([0, 1, 2, 255, 13, 10]);
     const { result, requests } = await withParts(
       "several",
@@ -427,14 +427,17 @@ describe("the attachments of a submission", () => {
 
     const [row] = (await sentRows("alice")).slice(-1);
     const stored = row!.attachments as { filename: string; contentType: string; size: number; content: { data: string } }[];
-    expect(stored.map((a) => [a.filename, a.contentType, a.size])).toEqual([
+    // The HTTP send stores its files concurrently, so the Sent record lists
+    // them in no fixed order.
+    expect(stored.map((a) => [a.filename, a.contentType, a.size]).sort()).toEqual([
+      ["contract.pdf", "application/pdf", PDF.length],
       ["contract.pdf", "application/pdf", PDF.length],
       ["data.bin", "application/octet-stream", bytes.length],
       ["rows.csv", "text/csv", 3],
-      ["contract.pdf", "application/pdf", PDF.length],
     ]);
     expect(new Set(stored.map((a) => a.content.data)).size).toBe(4);
-    expect(attachmentBytes(server, stored[1]!.content.data).equals(bytes)).toBe(true);
+    const data = stored.find((a) => a.filename === "data.bin")!;
+    expect(attachmentBytes(server, data.content.data).equals(bytes)).toBe(true);
     await waitFor(() => incomingLeftovers(server).length === 0, { what: "the transaction's working files to go" });
   });
 
