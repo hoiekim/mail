@@ -409,9 +409,9 @@ mod tests {
 
     #[test]
     fn sweeps_several_times_before_the_timeout_cutoff() {
-        assert!(IDLE_TIMEOUT_MS / IDLE_HEARTBEAT_INTERVAL_MS >= 3);
-        assert!(IDLE_SOCKET_TIMEOUT_MS > IDLE_TIMEOUT_MS);
-        assert!(IDLE_SOCKET_TIMEOUT_MS > SOCKET_TIMEOUT_MS);
+        const { assert!(IDLE_TIMEOUT_MS / IDLE_HEARTBEAT_INTERVAL_MS >= 3) };
+        const { assert!(IDLE_SOCKET_TIMEOUT_MS > IDLE_TIMEOUT_MS) };
+        const { assert!(IDLE_SOCKET_TIMEOUT_MS > SOCKET_TIMEOUT_MS) };
     }
 
     #[tokio::test(start_paused = true)]

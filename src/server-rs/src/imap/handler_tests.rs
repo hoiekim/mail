@@ -1523,7 +1523,7 @@ mod literal_chain_ceiling {
         let wire = Wire::open_authenticated(Recorder::default()).await;
         // The link count is still single digits: only the byte ceiling can
         // end this one.
-        assert!(LINKS_BESIDE_MESSAGE + 1 < CHAIN_CAP);
+        const { assert!(LINKS_BESIDE_MESSAGE + 1 < CHAIN_CAP) };
         send_message_and_links(&wire).await;
         assert!(!wire.closed());
 
@@ -2124,7 +2124,7 @@ mod idle_done {
     async fn raises_the_socket_timeout_past_the_idle_managers_force_terminate() {
         let wire = idling().await;
         assert_eq!(wire.session.socket().timeout_ms(), IDLE_SOCKET_TIMEOUT_MS);
-        assert!(IDLE_SOCKET_TIMEOUT_MS > SOCKET_TIMEOUT_MS);
+        const { assert!(IDLE_SOCKET_TIMEOUT_MS > SOCKET_TIMEOUT_MS) };
     }
 
     #[tokio::test]
