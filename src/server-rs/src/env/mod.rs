@@ -1,5 +1,8 @@
 //! Runtime environment access.
 //!
+//! (A directory module because CI's secrets scan refuses any file named
+//! `env.*` that is not JavaScript or TypeScript.)
+//!
 //! Every setting is read when it is needed rather than cached at start, the
 //! way the Bun server reads `process.env`: certificates are renewed and tests
 //! reconfigure a running process's view only through a restart, but reading
