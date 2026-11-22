@@ -622,13 +622,17 @@ pub fn parse_message_id_list(value: &str) -> Vec<String> {
 }
 
 /// Wraps a message id in angle brackets, or answers `None` for an empty one.
+/// An id longer than the column holds is dropped too, as it is from
+/// `In-Reply-To` and `References`: the message is then stored as one without
+/// a Message-ID, where keeping it would fail the save every time.
 pub fn ensure_message_id_format(value: &str) -> Option<String> {
     if value.is_empty() {
         return None;
     }
     let open = if value.starts_with('<') { "" } else { "<" };
     let close = if value.ends_with('>') { "" } else { ">" };
-    Some(format!("{open}{value}{close}"))
+    let id = format!("{open}{value}{close}");
+    (jsstr::len(&id) <= MAX_MESSAGE_ID_LENGTH).then_some(id)
 }
 
 #[cfg(test)]
@@ -724,6 +728,20 @@ mod tests {
         assert_eq!(ensure_message_id_format("abc@x").as_deref(), Some("<abc@x>"));
         assert_eq!(ensure_message_id_format("<abc@x>").as_deref(), Some("<abc@x>"));
         assert_eq!(ensure_message_id_format(""), None);
+    }
+
+    #[test]
+    fn drops_an_id_longer_than_the_column_holds() {
+        let fits = format!("<{}@remote.example>", "x".repeat(495));
+        assert_eq!(fits.len(), 512);
+        assert_eq!(ensure_message_id_format(&fits).as_deref(), Some(fits.as_str()));
+        // Counted once the brackets are added.
+        assert_eq!(ensure_message_id_format(&fits[1..fits.len() - 1]).as_deref(), Some(fits.as_str()));
+        assert_eq!(ensure_message_id_format(&format!("<{}@remote.example>", "x".repeat(496))), None);
+        assert_eq!(ensure_message_id_format(&format!("{}@remote.example", "x".repeat(496))), None);
+        // In UTF-16 code units, as JavaScript counts.
+        assert_eq!(ensure_message_id_format(&format!("<{}@x>", "😀".repeat(255))), None);
+        assert!(ensure_message_id_format(&format!("<{}@x>", "😀".repeat(254))).is_some());
     }
 
     #[test]
