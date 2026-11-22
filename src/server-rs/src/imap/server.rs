@@ -11,7 +11,6 @@ use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
-use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use super::close_socket::CLOSE_FLUSH_TIMEOUT_MS;
@@ -21,7 +20,7 @@ use super::session_registry::shutdown_imap_sessions;
 use super::socket::BoxedStream;
 use crate::alarm::spawn_alarm_keyed;
 use crate::proxy_protocol::{is_proxy_protocol_enabled, read_proxy_header, unmapped, Peer, Prefixed};
-use crate::tls::{get_tls_credentials, TlsCredentials};
+use crate::tls::{get_tls_credentials, Preference, TlsAcceptor, TlsCredentials};
 use crate::{env, js, logger};
 
 /// How long an implicit-TLS client behind a TCP proxy may take to complete
@@ -113,6 +112,9 @@ async fn accept_connection(
         let Ok(acceptor) = tls() else {
             return;
         };
+        // Bun serves this port with its own TLS listener, which picks a TLS
+        // 1.2 suite by its order; everywhere else it takes the client's.
+        let acceptor = acceptor.with_preference(Preference::Server);
         if let Ok(Ok(stream)) = tokio::time::timeout(DIRECT_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
             serve(Box::new(stream), peer, true).await;
         }
@@ -228,7 +230,7 @@ pub async fn initialize_imap() -> Result<ImapServers> {
         TlsCredentials::Available { .. } => {
             // A pair that is there but is not a key pair stops the start,
             // as it does when the Bun server builds its TLS listener.
-            crate::tls::server_config().context("IMAP could not load its TLS certificate")?;
+            crate::tls::acceptor().context("IMAP could not load its TLS certificate")?;
             let port = get_imap_tls_port()?;
             servers.push(listen(port, Some(Arc::new(crate::tls::acceptor))).await?);
             logger::info("IMAP server listening over TLS", json!({ "component": "imap", "port": port }));

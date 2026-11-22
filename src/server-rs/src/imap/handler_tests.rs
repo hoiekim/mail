@@ -2154,29 +2154,31 @@ mod idle_done {
 mod socket_errors {
     use std::io;
 
-    use rustls::AlertDescription;
-
     use super::super::super::socket::{is_peer_cert_rejection, socket_error_context};
+    use crate::tls::TlsError;
 
-    fn alert(description: AlertDescription) -> io::Error {
-        io::Error::new(io::ErrorKind::InvalidData, rustls::Error::AlertReceived(description))
+    /// What the TLS stream reports for an alert the peer sent, as OpenSSL
+    /// names it.
+    fn alert(reason: &str) -> io::Error {
+        let message = format!("error:0A000000:SSL routines:ssl3_read_bytes:{reason}");
+        io::Error::new(io::ErrorKind::InvalidData, TlsError { reason: reason.to_string(), message })
     }
 
     #[test]
     fn names_the_peer_that_rejected_the_certificate() {
         let remote = "203.0.113.7:50123";
-        for description in [
-            AlertDescription::BadCertificate,
-            AlertDescription::UnsupportedCertificate,
-            AlertDescription::CertificateRevoked,
-            AlertDescription::CertificateExpired,
-            AlertDescription::CertificateUnknown,
-            AlertDescription::UnknownCA,
+        for reason in [
+            "sslv3 alert bad certificate",
+            "sslv3 alert unsupported certificate",
+            "sslv3 alert certificate revoked",
+            "sslv3 alert certificate expired",
+            "sslv3 alert certificate unknown",
+            "tlsv1 alert unknown ca",
         ] {
             assert_eq!(
-                socket_error_context(&alert(description), remote),
+                socket_error_context(&alert(reason), remote),
                 serde_json::json!({ "component": "imap", "remote": remote }),
-                "{description:?}"
+                "{reason}"
             );
         }
         // The OpenSSL wording the Bun server matches on.
@@ -2188,7 +2190,7 @@ mod socket_errors {
     fn keeps_the_peer_out_of_every_other_socket_error() {
         let remote = "203.0.113.7:50123";
         let expected = serde_json::json!({ "component": "imap" });
-        assert_eq!(socket_error_context(&alert(AlertDescription::DecodeError), remote), expected);
+        assert_eq!(socket_error_context(&alert("tlsv1 alert decode error"), remote), expected);
         let openssl = io::Error::other("error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER");
         assert_eq!(socket_error_context(&openssl, remote), expected);
         assert_eq!(socket_error_context(&io::Error::from(io::ErrorKind::TimedOut), remote), expected);

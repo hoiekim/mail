@@ -46,8 +46,6 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use tokio_rustls::server::TlsStream;
-use tokio_rustls::TlsAcceptor;
 
 use super::address_command::{parse_address_command, split_whitespace};
 use super::data_stream::{data_stream, DataWriter};
@@ -57,6 +55,7 @@ use super::types::{
     SmtpSession, SmtpSessionState,
 };
 use crate::proxy_protocol::Prefixed;
+use crate::tls::{TlsAcceptor, TlsStream};
 use crate::{js, logger};
 
 const DEFAULT_SOCKET_TIMEOUT: Duration = Duration::from_secs(60);

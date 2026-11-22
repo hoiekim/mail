@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import net from "net";
 import tls from "tls";
 import { ADMIN_PASSWORD, createUser, freePort, sleep, type TestServer, type TestUser } from "../harness";
+import { handshakeWithoutSignatureAlgorithms, sClient, type StartTls } from "../harness/handshake";
 import { ImapClient, saslPlain } from "../harness/imap";
 import { CAPABILITIES, CAPABILITIES_STARTTLS, raws, startImapServer } from "./support";
 
@@ -221,6 +222,95 @@ describe("STARTTLS on the plain port", () => {
     } finally {
       await plain.stop();
     }
+  });
+});
+
+// What an old mail client's TLS 1.2 stack offers, and what is refused, on
+// both ports. Outlook on Windows 7 and 8 offers CBC suites only.
+describe("the TLS a mail client may offer", () => {
+  type Port = "imaps" | "imap";
+  const PORTS: [Port, StartTls | undefined][] = [
+    ["imaps", undefined],
+    ["imap", "imap"],
+  ];
+  const offer = (port: Port, starttls: StartTls | undefined, args: string[]) =>
+    sClient(secure.ports[port], args, { starttls, protocol: "imap" });
+
+  const CBC_ONLY = ["-tls1_2", "-cipher", "ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA:AES128-SHA:AES256-SHA"];
+  const RSA_KEY_EXCHANGE_ONLY = ["-tls1_2", "-cipher", "AES128-SHA:AES256-SHA"];
+  const SHA1_SIGNATURES_ONLY = ["-tls1_2", "-sigalgs", "RSA+SHA1", "-cipher", "ECDHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0"];
+
+  for (const [port, starttls] of PORTS) {
+    test(`${port}: TLS 1.2 with CBC suites only`, async () => {
+      const result = await offer(port, starttls, CBC_ONLY);
+      expect([result.protocol, result.cipher, result.roundTrip]).toEqual(["TLSv1.2", "ECDHE-RSA-AES128-SHA", true]);
+    });
+
+    test(`${port}: TLS 1.2 with RSA key exchange only`, async () => {
+      const result = await offer(port, starttls, RSA_KEY_EXCHANGE_ONLY);
+      expect([result.protocol, result.cipher, result.signature, result.roundTrip]).toEqual(["TLSv1.2", "AES128-SHA", undefined, true]);
+    });
+
+    test(`${port}: TLS 1.2 with SHA-1 signatures only`, async () => {
+      const result = await offer(port, starttls, SHA1_SIGNATURES_ONLY);
+      expect([result.protocol, result.signature, result.roundTrip]).toEqual(["TLSv1.2", "RSA/SHA1", true]);
+    });
+
+    test(`${port}: TLS 1.2 without signature_algorithms is signed for with SHA-1`, async () => {
+      const result = await handshakeWithoutSignatureAlgorithms(secure.ports[port], starttls);
+      expect(result.cipher).toBe("ECDHE-RSA-AES128-GCM-SHA256");
+      expect(result.signatureScheme).toBe(0x0201);
+      expect(result.firstLine).toBe(
+        starttls ? `* CAPABILITY ${CAPABILITIES}` : `* OK [CAPABILITY ${CAPABILITIES}] IMAP4rev1 Service Ready`
+      );
+    });
+
+    test(`${port}: TLS 1.0 and 1.1 are refused`, async () => {
+      for (const version of ["-tls1", "-tls1_1"]) {
+        const result = await offer(port, starttls, [version, "-cipher", "ALL:@SECLEVEL=0"]);
+        expect(result.protocol).toBeUndefined();
+        expect(result.output).toContain("alert protocol version");
+      }
+    });
+  }
+
+  test("STARTTLS negotiates what the implicit-TLS port negotiates", async () => {
+    const offers = [
+      [],
+      CBC_ONLY,
+      RSA_KEY_EXCHANGE_ONLY,
+      SHA1_SIGNATURES_ONLY,
+      ["-tls1_2", "-cipher", "ECDHE-RSA-CHACHA20-POLY1305"],
+      ["-tls1_2", "-groups", "P-256", "-cipher", "ECDHE-RSA-AES256-GCM-SHA384"],
+      ["-tls1_2", "-cipher", "ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0"],
+      ["-tls1_3", "-ciphersuites", "TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"],
+      ["-tls1_3", "-groups", "P-256"],
+    ];
+    const negotiated = async (port: Port, starttls: StartTls | undefined) => {
+      const results = [];
+      for (const args of offers) {
+        const { protocol, cipher, signature, serverTempKey, roundTrip } = await offer(port, starttls, args);
+        results.push({ args: args.join(" "), protocol, cipher, signature, serverTempKey, roundTrip });
+      }
+      return results;
+    };
+    const implicit = await negotiated("imaps", undefined);
+    expect(implicit.filter((result) => !result.protocol).map((result) => result.args)).toEqual([
+      "-tls1_2 -cipher ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0",
+    ]);
+    expect(await negotiated("imap", "imap")).toEqual(implicit);
+  });
+
+  test("at TLS 1.2 the implicit-TLS port picks the suite and group by its own order, STARTTLS by the client's", async () => {
+    // The implicit-TLS port is a TLS listener of its own; STARTTLS wraps a
+    // socket that is already open, which takes the client's order, as every
+    // SMTP listener does.
+    const suites = ["-tls1_2", "-cipher", "AES256-SHA:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256"];
+    expect((await offer("imaps", undefined, suites)).cipher).toBe("ECDHE-RSA-AES128-GCM-SHA256");
+    expect((await offer("imap", "imap", suites)).cipher).toBe("AES256-SHA");
+    const groups = ["-tls1_2", "-groups", "P-384:X25519"];
+    expect((await offer("imaps", undefined, groups)).serverTempKey).toBe("X25519, 253 bits");
+    expect((await offer("imap", "imap", groups)).serverTempKey).toBe("ECDH, secp384r1, 384 bits");
   });
 });
 

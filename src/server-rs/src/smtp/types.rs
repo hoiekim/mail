@@ -358,7 +358,7 @@ impl fmt::Debug for SharedSmtpHandler {
 /// Where a listener gets its TLS acceptor: called for every handshake, so a
 /// renewed certificate is served without a restart. The listeners of this
 /// server pass [`crate::tls::acceptor`].
-pub type SmtpTlsSource = Arc<dyn Fn() -> anyhow::Result<tokio_rustls::TlsAcceptor> + Send + Sync>;
+pub type SmtpTlsSource = Arc<dyn Fn() -> anyhow::Result<crate::tls::TlsAcceptor> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct SmtpServerOptions {

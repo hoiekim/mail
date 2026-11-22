@@ -473,37 +473,40 @@ mod tests {
         assert!(detail(false, &error("unexpected internal failure")).is_some());
     }
 
-    fn rustls_error(error: rustls::Error) -> SmtpServerError {
+    /// What the TLS stream reports for an OpenSSL failure, by its reason.
+    fn openssl_error(reason: &str) -> SmtpServerError {
+        let message = format!("error:0A000000:SSL routines:ssl3_read_bytes:{reason}");
+        let error = crate::tls::TlsError { reason: reason.to_string(), message };
         SmtpServerError::from_io("read", &std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
 
     #[test]
-    fn sorts_what_rustls_reports_the_way_the_bun_server_sorts_openssl() {
-        use rustls::AlertDescription as Alert;
-
+    fn sorts_what_openssl_reports_the_way_the_bun_server_does() {
         // A client that speaks no TLS, or none this server shares: noise.
-        let garbage = rustls_error(rustls::Error::InvalidMessage(rustls::InvalidMessage::InvalidContentType));
+        let garbage = openssl_error("wrong version number");
         assert_eq!(garbage.library.as_deref(), Some("SSL routines"));
-        assert_eq!(garbage.code.as_deref(), Some("ERR_SSL_INVALID_MESSAGE"));
+        assert_eq!(garbage.code.as_deref(), Some("ERR_SSL_WRONG_VERSION_NUMBER"));
+        assert_eq!(garbage.reason.as_deref(), Some("WRONG_VERSION_NUMBER"));
         assert!(warns(false, &garbage));
-        assert!(warns(false, &rustls_error(rustls::Error::AlertReceived(Alert::HandshakeFailure))));
-        assert!(warns(false, &rustls_error(rustls::Error::AlertReceived(Alert::ProtocolVersion))));
+        assert!(warns(false, &openssl_error("no shared cipher")));
+        assert!(warns(false, &openssl_error("sslv3 alert handshake failure")));
+        assert!(warns(false, &openssl_error("tlsv1 alert protocol version")));
 
         // A client that refuses this server's certificate: a defect here.
-        for alert in [
-            Alert::BadCertificate,
-            Alert::UnsupportedCertificate,
-            Alert::CertificateRevoked,
-            Alert::CertificateExpired,
-            Alert::CertificateUnknown,
-            Alert::UnknownCA,
+        for reason in [
+            "sslv3 alert bad certificate",
+            "sslv3 alert unsupported certificate",
+            "sslv3 alert certificate revoked",
+            "sslv3 alert certificate expired",
+            "sslv3 alert certificate unknown",
+            "tlsv1 alert unknown ca",
         ] {
-            let rejected = rustls_error(rustls::Error::AlertReceived(alert));
-            assert!(is_peer_cert_rejection(&rejected), "{alert:?}");
-            assert!(!warns(false, &rejected), "{alert:?}");
-            assert!(!warns(true, &rejected), "{alert:?}");
+            let rejected = openssl_error(reason);
+            assert!(is_peer_cert_rejection(&rejected), "{reason}");
+            assert!(!warns(false, &rejected), "{reason}");
+            assert!(!warns(true, &rejected), "{reason}");
         }
-        assert!(!is_peer_cert_rejection(&rustls_error(rustls::Error::AlertReceived(Alert::HandshakeFailure))));
+        assert!(!is_peer_cert_rejection(&openssl_error("sslv3 alert handshake failure")));
     }
 
     #[test]

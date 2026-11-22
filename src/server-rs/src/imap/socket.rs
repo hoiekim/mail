@@ -258,20 +258,7 @@ const PEER_CERT_REJECTION_ALERTS: [&str; 6] = [
 /// unknown CA) is a server-side defect even though it surfaces as a TLS
 /// error (lib/peer-cert-rejection.ts).
 pub fn is_peer_cert_rejection(error: &std::io::Error) -> bool {
-    use rustls::AlertDescription as Alert;
-
-    let tls_error = error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>());
-    if let Some(rustls::Error::AlertReceived(alert)) = tls_error {
-        return matches!(
-            alert,
-            Alert::BadCertificate
-                | Alert::UnsupportedCertificate
-                | Alert::CertificateRevoked
-                | Alert::CertificateExpired
-                | Alert::CertificateUnknown
-                | Alert::UnknownCA
-        );
-    }
+    // OpenSSL names the alert it received: `sslv3 alert bad certificate`.
     let text = error.to_string().to_uppercase().replace(' ', "_");
     PEER_CERT_REJECTION_ALERTS.iter().any(|alert| text.contains(alert))
 }

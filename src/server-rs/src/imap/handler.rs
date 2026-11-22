@@ -15,7 +15,6 @@ use bytes::{Bytes, BytesMut};
 use futures_util::FutureExt;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, ReadHalf};
-use tokio_rustls::TlsAcceptor;
 
 use super::body_budget::{get_body_budget_wait_ms, run_in_body_budget_context};
 use super::capabilities::get_capabilities;
@@ -33,6 +32,7 @@ use super::trace::{clip, imap_trace, redact_credentials, Direction};
 use super::types::{BodySection, FetchDataItem, ImapRequest, Literal, MessageLiteral, SequenceRange, UidRequest};
 use super::util::{js_is_whitespace, js_trim};
 use crate::proxy_protocol::Peer;
+use crate::tls::TlsAcceptor;
 use crate::{js, logger, sso};
 
 #[cfg(test)]
