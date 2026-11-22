@@ -34,7 +34,7 @@ import {
 } from "./imap-query";
 import { buildSetMailFlagsQueries } from "./set-flags-query";
 import { singleFlight } from "./inflight";
-import { usesDomainUidSpace } from "./views";
+import { expungeScope, usesDomainUidSpace } from "./views";
 
 // Part of this module's public surface through the repository barrel; the
 // definitions live beside the queries that consume them.
@@ -617,8 +617,8 @@ export const expungeDeletedMails = async (
   sent: boolean
 ): Promise<number[]> => {
   try {
-    if (usesDomainUidSpace(mailbox)) {
-      // Domain-wide expunge — still on uid_domain, unchanged.
+    if (expungeScope(mailbox, sent) === undefined) {
+      // Domain-wide expunge of the unified Sent view — still on uid_domain.
       const rows = await mailsTable.updateWhere(
         buildExpungeDeletedFilters(user_id, mailbox, sent),
         // Bump modseq so the expunge advances HIGHESTMODSEQ (RFC 7162) — a
@@ -629,11 +629,13 @@ export const expungeDeletedMails = async (
       return rows.map((row: Record<string, unknown>) => row.uid as number);
     }
 
-    // Per-mailbox expunge: JOIN `mail_mailbox_uid` to resolve the
-    // mail_ids that belong to this mailbox, then framework updateWhere
-    // with an IN filter so the data-bag pattern bumps `updated`. The
-    // RETURNING side reads x.uid from a second SELECT that fetches the
-    // per-mailbox UIDs for the just-expunged rows.
+    // Scoped expunge: JOIN `mail_mailbox_uid` to resolve the mail_ids
+    // filed into this mailbox — its own rows, or INBOX's scope rows for
+    // INBOX and the utility views, so a copy the user put in Trash is not
+    // destroyed by an EXPUNGE in a view that merely shows it (see
+    // `expungeScope`) — then framework updateWhere with an IN filter so the
+    // data-bag pattern bumps `updated`. The RETURNING side reads the UIDs
+    // from the SELECT that resolved the just-expunged rows.
     const deletedQuery = buildExpungeDeletedSelectQuery(user_id, mailbox, sent);
     const selectResult = await pool.query(deletedQuery.sql, deletedQuery.values);
     if (selectResult.rows.length === 0) return [];

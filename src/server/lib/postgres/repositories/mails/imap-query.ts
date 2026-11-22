@@ -28,6 +28,7 @@ import {
   UID,
 } from "../../models";
 import {
+  expungeScope,
   membershipCondition,
   membershipExpression,
   membershipFilter,
@@ -550,10 +551,9 @@ export const buildFirstUnseenUidQuery = (
 };
 
 /**
- * Rows an EXPUNGE addresses on a domain-scoped view. EXPUNGE removes
- * `\Deleted` messages *from the selected mailbox*, so a mail the box does not
- * show is out of reach here too — otherwise an INBOX EXPUNGE would collect
- * spam the client never saw and could not have flagged.
+ * Rows an EXPUNGE addresses on a domain-scoped view with no `expungeScope` —
+ * the unified `Sent Messages`. EXPUNGE removes `\Deleted` messages *from the
+ * selected mailbox*, so a mail the box does not show is out of reach here too.
  */
 export const buildExpungeDeletedFilters = (
   user_id: string,
@@ -567,14 +567,21 @@ export const buildExpungeDeletedFilters = (
   ...membershipFilter(mailbox, sent),
 });
 
-/** The mapped-box twin: resolves the mail_ids and their per-mailbox UIDs. */
+/**
+ * The twin for every box with an `expungeScope`: resolves the mail_ids and the
+ * UIDs they hold in the box. A mapped box joins its own rows and numbers by
+ * them; INBOX and the utility views join the INBOX tree's scope rows, keep
+ * their predicate on top — an INBOX EXPUNGE must not collect spam the client
+ * never saw and could not have flagged — and number by `uid_domain`.
+ */
 export const buildExpungeDeletedSelectQuery = (
   user_id: string,
   mailbox: string | null,
   sent: boolean
 ): { sql: string; values: ParamValue[] } => {
+  const uid = usesDomainUidSpace(mailbox) ? `m.${UID_DOMAIN}` : `x.${UID}`;
   const selectSql = `
-      SELECT m.${MAIL_ID} as mail_id, x.${UID} as uid FROM mails m
+      SELECT m.${MAIL_ID} as mail_id, ${uid} as uid FROM mails m
       JOIN ${MAIL_MAILBOX_UID} x
         ON x.${USER_ID} = m.${USER_ID}
         AND x.${MAILBOX} = $3
@@ -582,7 +589,7 @@ export const buildExpungeDeletedSelectQuery = (
       WHERE m.${USER_ID} = $1 AND m.${SENT} = $2
         AND m.${DELETED} = TRUE AND m.${EXPUNGED} = FALSE${membershipCondition(mailbox, sent, "m.")}
     `;
-  return { sql: selectSql, values: [user_id, sent, mailbox] };
+  return { sql: selectSql, values: [user_id, sent, expungeScope(mailbox, sent) ?? null] };
 };
 
 /**

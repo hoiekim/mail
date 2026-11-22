@@ -376,8 +376,12 @@ describe("buildAllUidsQuery / buildFirstUnseenUidQuery", () => {
 
 describe("expunge filters and lookups", () => {
   it("restricts a domain EXPUNGE to \\Deleted rows the box still shows", () => {
-    // Without the membership rule an INBOX EXPUNGE would collect quarantined
-    // spam the client never saw and could not have flagged.
+    expect(buildExpungeDeletedFilters(USER, null, true)).toEqual({
+      user_id: USER,
+      sent: true,
+      deleted: true,
+      expunged: false,
+    });
     expect(buildExpungeDeletedFilters(USER, null, false)).toEqual({
       user_id: USER,
       sent: false,
@@ -408,7 +412,26 @@ describe("expunge filters and lookups", () => {
       if (expression !== "TRUE") expect(sql).toContain(expression);
       expect(sql).toContain("m.deleted = TRUE AND m.expunged = FALSE");
       expect(sql).toContain("AND x.mailbox = $3");
+      expect(sql).toContain("x.uid as uid");
       expect(values).toEqual([USER, false, mailbox]);
+    }
+  });
+
+  it("confines an INBOX, Drafts or Junk EXPUNGE to the INBOX tree's scope rows, under the view's own rule", () => {
+    // INBOX shows every received mail, so a copy filed into Trash is listed
+    // there flagged \Deleted. Bounded by the predicate alone, an INBOX EXPUNGE
+    // destroyed it; joining INBOX's scope rows leaves it to Trash. The
+    // predicate stays on top: without it an INBOX EXPUNGE would collect
+    // quarantined spam the client never saw and could not have flagged.
+    for (const mailbox of [null, "Drafts", "Junk"]) {
+      const { sql, values } = buildExpungeDeletedSelectQuery(USER, mailbox, false);
+      expect(sql).toContain(`JOIN mail_mailbox_uid x`);
+      expect(sql).toContain("AND x.mailbox = $3");
+      expect(sql).toContain(membershipExpression(mailbox, false, "m."));
+      expect(sql).toContain("m.deleted = TRUE AND m.expunged = FALSE");
+      // Numbered the way the view numbers its messages.
+      expect(sql).toContain("m.uid_domain as uid");
+      expect(values).toEqual([USER, false, "INBOX"]);
     }
   });
 
