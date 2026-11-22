@@ -5,31 +5,11 @@ use mail_server::postgres::initialize::{
     boot_maintenance, initialize_admin_read_only_user, initialize_admin_user, initialize_postgres,
 };
 use mail_server::postgres::pool;
-use mail_server::{env, http, push};
+use mail_server::{http, push, smtp};
 use tokio_util::sync::CancellationToken;
 
 /// Ceiling on the startup-failure alarm, so a wedged webhook cannot hold the exit.
 const CRASH_ALARM_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Stands in for a mail listener that is not ported yet: accepts and closes,
-/// completing a TLS handshake first on an implicit-TLS port.
-async fn placeholder_listener(name: &str, default: u16, implicit_tls: bool) -> anyhow::Result<()> {
-    let port = env::port(name, default).unwrap_or(default);
-    let listener = mail_server::net::bind_all(port).await?;
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
-            if implicit_tls {
-                tokio::spawn(async move {
-                    if let Ok(acceptor) = mail_server::tls::acceptor() {
-                        let _ = acceptor.accept(stream).await;
-                    }
-                });
-            }
-        }
-    });
-    Ok(())
-}
 
 async fn start() -> anyhow::Result<()> {
     // Settings only: a misconfiguration stops the start here, before anything
@@ -40,11 +20,9 @@ async fn start() -> anyhow::Result<()> {
     initialize_admin_read_only_user().await?;
     push::init_push()?;
     let http_server = http::initialize_http().await?;
-    placeholder_listener("SMTP_PORT", 25, false).await?;
-    if mail_server::tls::is_tls_available() {
-        placeholder_listener("SMTPS_PORT", 465, true).await?;
-        placeholder_listener("SMTP_SUBMISSION_PORT", 587, false).await?;
-    }
+    // Sweeps `attachments/.incoming`, then opens SMTP_PORT, and with a
+    // certificate SMTPS_PORT and SMTP_SUBMISSION_PORT.
+    let smtp_servers = smtp::initialize_mail_smtp().await?;
     let imap_servers = mail_server::imap::initialize_imap().await?;
     push::clean_subscriptions();
 
@@ -72,12 +50,22 @@ async fn start() -> anyhow::Result<()> {
     mail_server::imap::idle_manager::shutdown();
     println!("IDLE sessions cleaned up");
 
-    // IMAP sends BYE to every session and tears it down.
-    if mail_server::imap::close_imap_servers(imap_servers).await {
-        println!("IMAP servers closed");
-    } else {
-        println!("IMAP servers did not drain in time; continuing shutdown");
-    }
+    // Each protocol ends its own connections: IMAP sends BYE to every session
+    // and tears it down, SMTP gives in-flight DATA SMTP_CLOSE_TIMEOUT_MS
+    // before answering the rest 421. They run at once, so this phase costs
+    // the longer bound rather than the sum.
+    let close_imap = async {
+        if mail_server::imap::close_imap_servers(imap_servers).await {
+            println!("IMAP servers closed");
+        } else {
+            println!("IMAP servers did not drain in time; continuing shutdown");
+        }
+    };
+    let close_smtp = async {
+        smtp::close_smtp_servers(&smtp_servers).await;
+        println!("SMTP servers closed");
+    };
+    tokio::join!(close_imap, close_smtp);
 
     let _ = maintenance.await;
     println!("Boot maintenance stopped");
