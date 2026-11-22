@@ -252,6 +252,16 @@ describe("POST /api/mails/send — the stored Sent mail", () => {
     ]);
   });
 
+  test("a NUL character is left out of the Sent mail", async () => {
+    // PostgreSQL text cannot hold one: the Sent copy used to fail to save
+    // while the send still reported success.
+    const fresh = await newMailbox(server);
+    expect((await send({ ...BASE, senderFullName: "Al\u0000 Box", subject: "nu\u0000l", html: "<p>a\u0000b</p>" }, fresh.client)).body).toEqual(SUCCESS);
+    const row = await latestMail(server, fresh.id);
+    expect([row.subject, row.html, row.text]).toEqual(["nul", "<p>ab</p>", "ab"]);
+    expect([row.from_address, row.from_text]).toEqual([[{ name: "Al Box", address: fresh.address() }], `Al Box <${fresh.address()}>`]);
+  });
+
   test("the address and display name are stored without a name key when no name is given", async () => {
     const fresh = await newMailbox(server);
     await send({ sender: "BOX", to: "x@remote.example" }, fresh.client);

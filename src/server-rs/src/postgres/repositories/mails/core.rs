@@ -496,6 +496,67 @@ fn is_unique_violation(error: &anyhow::Error) -> bool {
     error.downcast_ref::<DbError>().is_some_and(DbError::is_unique_violation)
 }
 
+/// Takes the NUL characters out of a text in place.
+fn strip_nul(text: &mut String) {
+    if text.contains('\0') {
+        text.retain(|c| c != '\0');
+    }
+}
+
+/// Takes the NUL characters out of every string in a JSON document, at any
+/// depth. Object keys are left as they are.
+fn strip_nul_json(value: &mut Value) {
+    match value {
+        Value::String(text) => strip_nul(text),
+        Value::Array(items) => items.iter_mut().for_each(strip_nul_json),
+        Value::Object(entries) => entries.values_mut().for_each(strip_nul_json),
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+/// `input` with the NUL characters taken out of every text and JSON document
+/// it holds. PostgreSQL text cannot hold one and JSONB refuses `\u0000`, so a
+/// single NUL anywhere in a message fails its INSERT, and a sender retrying
+/// the delivery meets the same failure every time. The character carries
+/// nothing a reader would miss.
+pub fn without_nul(input: &SaveMailInput) -> SaveMailInput {
+    let mut input = input.clone();
+    for text in [&mut input.user_id, &mut input.message_id] {
+        strip_nul(text);
+    }
+    let optional_texts = [
+        &mut input.in_reply_to,
+        &mut input.subject,
+        &mut input.date,
+        &mut input.html,
+        &mut input.text,
+        &mut input.from_text,
+        &mut input.to_text,
+        &mut input.cc_text,
+        &mut input.bcc_text,
+        &mut input.reply_to_text,
+        &mut input.mailbox,
+        &mut input.domain_mailbox,
+    ];
+    optional_texts.into_iter().flatten().for_each(strip_nul);
+    for list in [&mut input.reference_ids, &mut input.spam_reasons].into_iter().flatten() {
+        list.iter_mut().for_each(strip_nul);
+    }
+    let documents = [
+        &mut input.from_address,
+        &mut input.to_address,
+        &mut input.cc_address,
+        &mut input.bcc_address,
+        &mut input.reply_to_address,
+        &mut input.envelope_from,
+        &mut input.envelope_to,
+        &mut input.attachments,
+        &mut input.insight,
+    ];
+    documents.into_iter().flatten().for_each(strip_nul_json);
+    input
+}
+
 /// Stores a mail and files it into its mailboxes. `None` when the INSERT
 /// returned no row, or when the Message-ID was refused as a duplicate and the
 /// row that holds it could not be read back.
@@ -505,6 +566,8 @@ fn is_unique_violation(error: &anyhow::Error) -> bool {
 /// other fault is logged and returned: a save never reports success for a
 /// row it did not write.
 pub async fn save_mail(input: &SaveMailInput) -> Result<Option<SavedMail>> {
+    // Every mail row is written here, whichever protocol it came in by.
+    let input = &without_nul(input);
     match insert_mail(input).await {
         Ok(saved) => Ok(saved),
         Err(error) if is_unique_violation(&error) => merge_into_existing(input).await,
@@ -887,6 +950,70 @@ mod tests {
         assert_eq!(trace[2].values, crate::params![USER, "<dup@example.com>"]);
         // The caller gets the id of the row that was there first.
         assert_eq!(saved.unwrap().unwrap().id, OTHER_MAIL);
+    }
+
+    // core.test.ts — "withoutNul"
+
+    #[test]
+    fn without_nul_takes_the_character_out_of_every_text_and_document() {
+        let input = SaveMailInput {
+            subject: Some("nu\0l".into()),
+            html: Some("<p>a\0b</p>".into()),
+            text: Some("a\0b\0".into()),
+            from_address: Some(json!([{ "address": "jo@remote.example", "name": "Jo\0e" }])),
+            from_text: Some("Jo\0e <jo@remote.example>".into()),
+            attachments: Some(json!([{ "filename": "re\0port.pdf", "contentType": "application/pdf", "content": { "data": "id" }, "size": 1 }])),
+            reference_ids: Some(vec!["<r\0@remote.example>".into()]),
+            insight: Some(json!({ "a\0": ["x\0", 1, null, true] })),
+            read: true,
+            spam_score: Some(1.5),
+            ..received("<id\0@example.com>")
+        };
+        let stored = without_nul(&input);
+        assert_eq!(
+            stored,
+            SaveMailInput {
+                message_id: "<id@example.com>".into(),
+                subject: Some("nul".into()),
+                html: Some("<p>ab</p>".into()),
+                text: Some("ab".into()),
+                from_address: Some(json!([{ "address": "jo@remote.example", "name": "Joe" }])),
+                from_text: Some("Joe <jo@remote.example>".into()),
+                attachments: Some(json!([{ "filename": "report.pdf", "contentType": "application/pdf", "content": { "data": "id" }, "size": 1 }])),
+                reference_ids: Some(vec!["<r@remote.example>".into()]),
+                // Keys are ours, not the message's, and are left alone.
+                insight: Some(json!({ "a\0": ["x", 1, null, true] })),
+                ..input.clone()
+            }
+        );
+        // Nothing else changes.
+        assert_eq!(without_nul(&stored), stored);
+    }
+
+    #[tokio::test]
+    async fn save_mail_binds_no_nul_character_and_merges_under_the_id_without_it() {
+        let input = SaveMailInput {
+            subject: Some("nu\0l".into()),
+            text: Some("a\0b".into()),
+            from_address: Some(json!([{ "address": "jo@remote.example", "name": "Jo\0e" }])),
+            envelope_to: Some(json!([{ "address": "admin@example.com" }])),
+            ..received("<id\0@example.com>")
+        };
+        let script = vec![
+            reserved(31),
+            fault(UNIQUE_VIOLATION),
+            rows(json!([mail_row(json!({}))])),
+            affected(1),
+            rows(json!([{ "uid": 5 }])),
+        ];
+        let (saved, trace) = with_script(script, save_mail(&input)).await;
+        assert_eq!(saved.unwrap().unwrap().id, OTHER_MAIL);
+        for value in trace.iter().flat_map(|query| &query.values) {
+            if let Param::Text(text) = value {
+                assert!(!text.contains('\0') && !text.contains("\\u0000"), "{text:?}");
+            }
+        }
+        assert_eq!(trace[2].values, crate::params![USER, "<id@example.com>"]);
     }
 
     // placement.test.ts — "saveMail — 23505 code narrows the merge branch"

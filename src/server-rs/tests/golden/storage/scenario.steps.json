@@ -3757,6 +3757,142 @@
     "name": "Again too many"
    },
    "as": "limit.refused.again"
+  },
+  {
+   "op": "getDomainUidNext",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "sent": false
+   },
+   "as": "nul.d"
+  },
+  {
+   "op": "getAccountUidNext",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "account": "admin@example.com",
+    "sent": false
+   },
+   "as": "nul.a"
+  },
+  {
+   "op": "saveMail",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "message_id": "<nul\u0000@example.com>",
+    "in_reply_to": "<pa\u0000rent@example.com>",
+    "reference_ids": [
+     "<ro\u0000ot@example.com>",
+     "<pa\u0000rent@example.com>"
+    ],
+    "subject": "nu\u0000l",
+    "date": "2024-03-04T05:06:07.000Z",
+    "html": "<p>a\u0000b</p>",
+    "text": "a\u0000b\u0000",
+    "from_address": [
+     {
+      "address": "sender@example.com",
+      "name": "Jo\u0000e"
+     }
+    ],
+    "from_text": "Jo\u0000e <sender@example.com>",
+    "to_address": [
+     {
+      "address": "admin@example.com",
+      "name": ""
+     }
+    ],
+    "to_text": "admin@example.com",
+    "reply_to_address": [
+     {
+      "address": "reply@example.com",
+      "name": "Re\u0000ply"
+     }
+    ],
+    "reply_to_text": "Re\u0000ply <reply@example.com>",
+    "envelope_from": [
+     {
+      "address": "bounce@example.com"
+     }
+    ],
+    "envelope_to": [
+     {
+      "address": "admin@example.com"
+     }
+    ],
+    "attachments": [
+     {
+      "content": {
+       "data": "scenario-attachment-on-disk"
+      },
+      "contentType": "application/pdf",
+      "filename": "re\u0000port.pdf",
+      "size": 1234
+     }
+    ],
+    "insight": {
+     "summary": "nu\u0000l",
+     "tags": [
+      "a\u0000"
+     ]
+    },
+    "uid_domain": {
+     "$ref": "nul.d"
+    },
+    "uid_mailbox": {
+     "$ref": "nul.a"
+    },
+    "mailbox": "INBOX/accounts/admin",
+    "domain_mailbox": "INBOX"
+   },
+   "as": "m.nul"
+  },
+  {
+   "op": "getDomainUidNext",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "sent": false
+   },
+   "as": "nul.again.d"
+  },
+  {
+   "op": "getAccountUidNext",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "account": "sales@example.com",
+    "sent": false
+   },
+   "as": "nul.again.a"
+  },
+  {
+   "op": "saveMail",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "message_id": "<n\u0000ul@example.com>",
+    "date": "2024-03-04T05:06:07.000Z",
+    "envelope_to": [
+     {
+      "address": "sales@example.com"
+     }
+    ],
+    "uid_domain": {
+     "$ref": "nul.again.d"
+    },
+    "uid_mailbox": {
+     "$ref": "nul.again.a"
+    },
+    "mailbox": "INBOX/accounts/sales",
+    "domain_mailbox": "INBOX"
+   },
+   "as": "m.nul.again"
+  },
+  {
+   "op": "getMailByMessageId",
+   "args": {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "message_id": "<nul@example.com>"
+   },
+   "as": "read.nul"
   }
  ]
 }

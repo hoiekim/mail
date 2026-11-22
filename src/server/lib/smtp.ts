@@ -34,6 +34,7 @@ import { registerSmtpServer, unregisterSmtpServer } from "./smtp-registry";
 import { MAX_MESSAGE_BYTES } from "./message-size";
 import { ATTACHMENT_FOLDER } from "./mails/util";
 import { incomingMailFromParsed } from "./mails/receive";
+import type { UploadedFile } from "./http/upload";
 import {
   DataBudgetUnavailableError,
   withSmtpDataBudget
@@ -950,7 +951,19 @@ const onDataOutgoing = async (
       references: parsed.references
     });
 
-    await sendMail(signedUser, mailData);
+    // The parser has already written each attachment into this transaction's
+    // directory, so they go out and onto the Sent copy as the files of an
+    // HTTP send do. An image the HTML names by `cid:` is among them: the
+    // parser inlines it as a `data:` URL and keeps it an attachment too, as it
+    // does for received mail.
+    const files: UploadedFile[] = parsed.attachments.map((attachment) => ({
+      name: attachment.filename || "attachment",
+      mimetype: attachment.contentType,
+      size: attachment.size,
+      tempFilePath: attachment.path
+    }));
+
+    await sendMail(signedUser, mailData, files);
     if (message.refused) return;
     cb();
   } catch (err) {

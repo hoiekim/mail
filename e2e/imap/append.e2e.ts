@@ -300,6 +300,22 @@ describe("APPEND: what is stored", () => {
     imap.close();
   });
 
+  test("a NUL character is left out of what is stored, and a Message-ID too long to store is dropped", async () => {
+    // Either one failed the save: PostgreSQL text holds no NUL, and the
+    // message_id column holds 512 characters.
+    const { imap, user } = await account();
+    const appended = await imap.command([
+      "APPEND INBOX ",
+      lit(crlf("Subject: =?utf-8?Q?nu=00l?=", `Message-ID: <${"x".repeat(600)}@append.example>`, "Content-Transfer-Encoding: quoted-printable", "", "a=00b", "")),
+    ]);
+    expect(appended.status).toBe("OK");
+    const [row] = await rowsOf(user, "message_id, subject, text");
+    // Stored as a message without a Message-ID is.
+    expect(row!.message_id).toMatch(/^[0-9a-f]{8}$/);
+    expect([row!.subject, row!.text]).toEqual(["nul", "ab\n"]);
+    imap.close();
+  });
+
   test("attachments are stored as files and served back", async () => {
     const { imap, user } = await account();
     const withAttachment = crlf(

@@ -3550,6 +3550,138 @@
    "ok": {
     "status": "at_limit"
    }
+  },
+  {
+   "step": 324,
+   "op": "getDomainUidNext",
+   "as": "nul.d",
+   "ok": 1
+  },
+  {
+   "step": 325,
+   "op": "getAccountUidNext",
+   "as": "nul.a",
+   "ok": 1
+  },
+  {
+   "step": 326,
+   "op": "saveMail",
+   "as": "m.nul",
+   "ok": {
+    "_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "uid_mailbox": 1,
+    "uid_domain": 1
+   }
+  },
+  {
+   "step": 327,
+   "op": "getDomainUidNext",
+   "as": "nul.again.d",
+   "ok": 2
+  },
+  {
+   "step": 328,
+   "op": "getAccountUidNext",
+   "as": "nul.again.a",
+   "ok": 1
+  },
+  {
+   "step": 329,
+   "op": "saveMail",
+   "as": "m.nul.again",
+   "ok": {
+    "_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "uid_mailbox": 1,
+    "uid_domain": 1
+   }
+  },
+  {
+   "step": 330,
+   "op": "getMailByMessageId",
+   "as": "read.nul",
+   "ok": {
+    "mail_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "message_id": "<nul@example.com>",
+    "subject": "nul",
+    "date": "2024-03-04T05:06:07.000Z",
+    "html": "<p>ab</p>",
+    "text": "ab",
+    "from_address": [
+     {
+      "name": "Joe",
+      "address": "sender@example.com"
+     }
+    ],
+    "from_text": "Joe <sender@example.com>",
+    "to_address": [
+     {
+      "name": "",
+      "address": "admin@example.com"
+     }
+    ],
+    "to_text": "admin@example.com",
+    "cc_address": null,
+    "cc_text": null,
+    "bcc_address": null,
+    "bcc_text": null,
+    "reply_to_address": [
+     {
+      "name": "Reply",
+      "address": "reply@example.com"
+     }
+    ],
+    "reply_to_text": "Reply <reply@example.com>",
+    "envelope_from": [
+     {
+      "address": "bounce@example.com"
+     }
+    ],
+    "envelope_to": [
+     {
+      "address": "admin@example.com"
+     },
+     {
+      "address": "sales@example.com"
+     }
+    ],
+    "attachments": [
+     {
+      "size": 1234,
+      "content": {
+       "data": "scenario-attachment-on-disk"
+      },
+      "filename": "report.pdf",
+      "contentType": "application/pdf"
+     }
+    ],
+    "read": false,
+    "saved": false,
+    "sent": false,
+    "deleted": false,
+    "draft": false,
+    "answered": false,
+    "expunged": false,
+    "insight": {
+     "tags": [
+      "a"
+     ],
+     "summary": "nul"
+    },
+    "uid_domain": 1,
+    "modseq": 1,
+    "spam_score": 0,
+    "spam_reasons": null,
+    "is_spam": false,
+    "rfc822_size": 2608,
+    "text_line_count": null,
+    "html_line_count": null,
+    "in_reply_to": "<parent@example.com>",
+    "reference_ids": [
+     "<root@example.com>",
+     "<parent@example.com>"
+    ]
+   }
   }
  ],
  "tables": {
@@ -4917,6 +5049,90 @@
     "in_reply_to": null,
     "reference_ids": null,
     "search_vector": ""
+   },
+   {
+    "mail_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "message_id": "<nul@example.com>",
+    "subject": "nul",
+    "date": "2024-03-04T05:06:07.000Z",
+    "html": "<p>ab</p>",
+    "text": "ab",
+    "from_address": [
+     {
+      "name": "Joe",
+      "address": "sender@example.com"
+     }
+    ],
+    "from_text": "Joe <sender@example.com>",
+    "to_address": [
+     {
+      "name": "",
+      "address": "admin@example.com"
+     }
+    ],
+    "to_text": "admin@example.com",
+    "cc_address": null,
+    "cc_text": null,
+    "bcc_address": null,
+    "bcc_text": null,
+    "reply_to_address": [
+     {
+      "name": "Reply",
+      "address": "reply@example.com"
+     }
+    ],
+    "reply_to_text": "Reply <reply@example.com>",
+    "envelope_from": [
+     {
+      "address": "bounce@example.com"
+     }
+    ],
+    "envelope_to": [
+     {
+      "address": "admin@example.com"
+     },
+     {
+      "address": "sales@example.com"
+     }
+    ],
+    "attachments": [
+     {
+      "size": 1234,
+      "content": {
+       "data": "scenario-attachment-on-disk"
+      },
+      "filename": "report.pdf",
+      "contentType": "application/pdf"
+     }
+    ],
+    "read": false,
+    "saved": false,
+    "sent": false,
+    "deleted": false,
+    "draft": false,
+    "answered": false,
+    "expunged": false,
+    "insight": {
+     "tags": [
+      "a"
+     ],
+     "summary": "nul"
+    },
+    "uid_domain": 1,
+    "modseq": 1,
+    "spam_score": 0,
+    "spam_reasons": null,
+    "is_spam": false,
+    "rfc822_size": 2608,
+    "text_line_count": null,
+    "html_line_count": null,
+    "in_reply_to": "<parent@example.com>",
+    "reference_ids": [
+     "<root@example.com>",
+     "<parent@example.com>"
+    ],
+    "search_vector": "'ab':2 'admin@example.com':5 'joe':3 'nul':1 'sender@example.com':4"
    }
   ],
   "mail_mailbox_uid": [
@@ -5285,6 +5501,24 @@
     "mailbox": "old",
     "mail_id": "mail(a0000000-0000-4000-8000-000000000003 <legacy-2@old>)",
     "uid": 15
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "mailbox": "INBOX",
+    "mail_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "uid": 1
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "mailbox": "INBOX/accounts/admin",
+    "mail_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "uid": 1
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "mailbox": "INBOX/accounts/sales",
+    "mail_id": "mail(a0000000-0000-4000-8000-000000000004 <nul@example.com>)",
+    "uid": 1
    }
   ],
   "mail_uid_counters": [
@@ -5434,6 +5668,34 @@
     "uid_scope": "",
     "sent": false,
     "last_uid": 9
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "uid_kind": "account",
+    "uid_scope": "admin@example.com",
+    "sent": false,
+    "last_uid": 1
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "uid_kind": "account",
+    "uid_scope": "sales@example.com",
+    "sent": false,
+    "last_uid": 1
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "uid_kind": "domain",
+    "uid_scope": "",
+    "sent": false,
+    "last_uid": 2
+   },
+   {
+    "user_id": "a0000000-0000-4000-8000-000000000004",
+    "uid_kind": "modseq",
+    "uid_scope": "",
+    "sent": false,
+    "last_uid": 2
    },
    {
     "user_id": "c0000000-0000-4000-8000-00000000dead",

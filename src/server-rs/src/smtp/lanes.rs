@@ -11,6 +11,7 @@ use super::outgoing::{
 };
 use super::transaction_dir::{new_transaction_dir, remove_transaction_dir};
 use super::types::{SmtpEnvelope, SmtpSession};
+use crate::http::upload::UploadedFile;
 use crate::logger;
 use crate::mails::receive::{
     incoming_mail_from_parsed, save_mail_handler, IncomingMailAddressValue, SaveMailHandlerOptions,
@@ -169,8 +170,26 @@ pub(crate) fn outgoing_mail(
     }
 }
 
-/// Sends an authenticated submission through Mailgun and records it in Sent.
-/// Attachments are not carried, as the Bun server carries none.
+/// The parsed attachments of a submission as the files of an HTTP send, so
+/// they go out and onto the Sent copy the same way. The parser has already
+/// written each into the transaction's directory. An image the HTML names by
+/// `cid:` is among them: the parser inlines it as a `data:` URL and keeps it
+/// an attachment too, as it does for received mail.
+pub(crate) fn outgoing_files(parsed: &ParsedMessage) -> Vec<UploadedFile> {
+    parsed
+        .attachments
+        .iter()
+        .map(|attachment| UploadedFile {
+            name: attachment.filename.clone().filter(|name| !name.is_empty()).unwrap_or_else(|| "attachment".into()),
+            mimetype: attachment.content_type.clone(),
+            size: attachment.size,
+            temp_file_path: attachment.path.to_string_lossy().into_owned(),
+        })
+        .collect()
+}
+
+/// Sends an authenticated submission, attachments included, through Mailgun
+/// and records it in Sent.
 async fn send_outgoing(
     parsed: ParsedMessage,
     username: &str,
@@ -178,13 +197,16 @@ async fn send_outgoing(
     session: &SmtpSession,
 ) -> anyhow::Result<()> {
     let mail = outgoing_mail(&parsed, username, &get_user_domain(username), &session.envelope);
-    send_mail(&user, mail, &[], SendMailOptions::default()).await.map_err(anyhow::Error::new)?;
+    let files = outgoing_files(&parsed);
+    send_mail(&user, mail, &files, SendMailOptions::default()).await.map_err(anyhow::Error::new)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     //! What a submission is sent as (`onDataOutgoing` in `smtp.test.ts`).
+
+    use std::path::Path;
 
     use serde_json::json;
 
@@ -248,6 +270,29 @@ mod tests {
         assert_eq!(mail.to, json!(""));
         assert_eq!(mail.bcc, Some(json!("x@remote.example,y@remote.example")));
         assert_eq!(mail.html, json!(parsed.html.clone().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn hands_on_every_attachment_as_a_file_an_http_send_would_upload() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = ParseOptions { attachment_dir: dir.path().join("tx") };
+        let message = concat!(
+            "From: alice@alice.test.com\r\nTo: bob@remote.example\r\nSubject: files\r\n",
+            "Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+            "--mix\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n",
+            "--mix\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"contract.pdf\"\r\n\r\n%PDF\r\n",
+            "--mix\r\nContent-Type: image/png\r\n\r\npng\r\n",
+            "--mix--\r\n"
+        );
+        let parsed = parse_message(message.as_bytes(), &options).await.unwrap();
+        let files = outgoing_files(&parsed);
+        let described: Vec<(&str, &str, u64)> =
+            files.iter().map(|file| (file.name.as_str(), file.mimetype.as_str(), file.size)).collect();
+        // A part that names no file is called what a received one is.
+        assert_eq!(described, vec![("contract.pdf", "application/pdf", 4), ("attachment", "image/png", 3)]);
+        assert_eq!(std::fs::read(&files[0].temp_file_path).unwrap(), b"%PDF");
+        assert!(files.iter().all(|file| Path::new(&file.temp_file_path).starts_with(dir.path().join("tx"))));
+        assert!(outgoing_files(&parse("Subject: none\r\n\r\nbody\r\n").await).is_empty());
     }
 
     #[tokio::test]

@@ -12,18 +12,21 @@ import type { SmtpClient } from "../harness/smtp";
 import {
   FIXED_DATE,
   MAX_MESSAGE_BYTES,
+  attachmentBytes,
   attachmentFiles,
   bootAll,
   closeClients,
   countersOf,
   crlf,
   deliver,
+  incomingLeftovers,
   mailsByMessageId,
   mailsOf,
   mappingsOf,
   messageId,
   open,
   raws,
+  sha256,
   uniqueName,
   type Listener,
   type Row,
@@ -52,6 +55,7 @@ afterAll(async () => {
 });
 
 const QUEUED = "250 OK: message queued";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const signIn = async (username: string, password: string, listener: Listener = "smtps"): Promise<SmtpClient> => {
   const smtp = await open(server, listener);
@@ -304,6 +308,15 @@ describe("the body that is sent", () => {
     expect(field(requests[0]!, "text")).toBe("Café crème");
   });
 
+  test("a NUL character is left out of the Sent record", async () => {
+    // PostgreSQL text cannot hold one: the Sent copy used to fail to save
+    // while the client was told 250.
+    const { result } = await sendAsAlice({ to: ["bob@remote.example"] }, "To: bob@remote.example", "Subject: nu\0l", "", "a\0b");
+    expect(result.final.raw).toBe(QUEUED);
+    const [row] = (await sentRows("alice")).slice(-1);
+    expect([row!.subject, row!.html, row!.text]).toEqual(["nul", '<div style="white-space: pre-wrap">ab\n</div>', "ab"]);
+  });
+
   test("a message with no subject goes out as No Subject, and one with no body sends no body fields", async () => {
     const { result, requests } = await sendAsAlice({ to: ["bob@remote.example"] }, "To: bob@remote.example");
     expect(result.final.raw).toBe(QUEUED);
@@ -313,42 +326,7 @@ describe("the body that is sent", () => {
     expect([row!.subject, row!.html, row!.text]).toEqual(["No Subject", "", ""]);
   });
 
-  test("attachments of a submission are dropped: not sent, not stored", async () => {
-    // NOTE: looks like a bug with data loss. The message is parsed, its
-    // attachments are written to the transaction's working directory, and
-    // then nothing passes them on: Mailgun gets the body only, the Sent
-    // record lists none, and the client is told 250.
-    const files = attachmentFiles(server).length;
-    const { result, requests } = await sendAsAlice(
-      { to: ["bob@remote.example"] },
-      "To: bob@remote.example",
-      "Subject: with a file",
-      'Content-Type: multipart/mixed; boundary="mix"',
-      "",
-      "--mix",
-      "Content-Type: text/plain",
-      "",
-      "See attached.",
-      "--mix",
-      "Content-Type: application/pdf",
-      'Content-Disposition: attachment; filename="contract.pdf"',
-      "Content-Transfer-Encoding: base64",
-      "",
-      Buffer.from("%PDF-1.4 the contract").toString("base64"),
-      "--mix--"
-    );
-    expect(result.final.raw).toBe(QUEUED);
-    expect(requests).toHaveLength(1);
-    expect(requests[0]!.attachments).toEqual([]);
-    expect(requests[0]!.fieldOrder).toEqual(["from", "to", "subject", "html", "text"]);
-    expect(field(requests[0]!, "text")).toBe("See attached.");
-    const [row] = (await sentRows("alice")).slice(-1);
-    expect(row!.subject).toBe("with a file");
-    expect(row!.attachments).toEqual([]);
-    expect(attachmentFiles(server).length).toBe(files);
-  });
-
-  test("an inline image of a submission is sent inside the HTML as a data: URL", async () => {
+  test("an inline image of a submission is sent inside the HTML as a data: URL, and as an attachment", async () => {
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
     const { requests } = await sendAsAlice(
       { to: ["bob@remote.example"] },
@@ -368,7 +346,129 @@ describe("the body that is sent", () => {
       "--rel--"
     );
     expect(field(requests[0]!, "html")).toBe(`<p><img src="data:image/png;base64,${png}"></p>`);
-    expect(requests[0]!.attachments).toEqual([]);
+    // The HTTP send has no inline parts of its own, so the image also goes
+    // out as a file, and the Sent copy lists it as received mail does.
+    const bytes = Buffer.from(png, "base64");
+    expect(requests[0]!.attachments).toEqual([
+      { filename: "attachment", contentType: "image/png", size: bytes.length, sha256: sha256(bytes), text: expect.any(String) },
+    ]);
+    const [row] = (await sentRows("alice")).slice(-1);
+    expect(row!.subject).toBe("inline");
+    expect(row!.attachments).toEqual([{ size: bytes.length, content: { data: expect.stringMatching(UUID) }, filename: "attachment", contentType: "image/png" }]);
+    expect(attachmentBytes(server, row!.attachments[0].content.data).equals(bytes)).toBe(true);
+  });
+});
+
+describe("the attachments of a submission", () => {
+  const PDF = Buffer.from("%PDF-1.4 the contract");
+
+  /** A multipart/mixed submission: a line of text, then each part as given. */
+  const withParts = (subject: string, ...parts: string[][]) =>
+    sendAsAlice(
+      { to: ["bob@remote.example"] },
+      "To: bob@remote.example",
+      `Subject: ${subject}`,
+      'Content-Type: multipart/mixed; boundary="mix"',
+      "",
+      "--mix",
+      "Content-Type: text/plain",
+      "",
+      "See attached.",
+      ...parts.flatMap((part) => ["--mix", ...part]),
+      "--mix--"
+    );
+
+  const pdfPart = (disposition = 'attachment; filename="contract.pdf"') => [
+    "Content-Type: application/pdf",
+    `Content-Disposition: ${disposition}`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    PDF.toString("base64"),
+  ];
+
+  test("are sent to Mailgun as files and stored on the Sent record, as an HTTP send's are", async () => {
+    const files = attachmentFiles(server).length;
+    const { result, requests } = await withParts("with a file", pdfPart());
+    expect(result.final.raw).toBe(QUEUED);
+    expect(requests).toHaveLength(1);
+    // The file parts come after the text fields, as they do for an HTTP send.
+    expect(requests[0]!.fieldOrder).toEqual(["from", "to", "subject", "html", "text", "attachment"]);
+    expect(field(requests[0]!, "text")).toBe("See attached.");
+    expect(requests[0]!.attachments).toEqual([
+      { filename: "contract.pdf", contentType: "application/pdf", size: PDF.length, sha256: sha256(PDF), text: PDF.toString() },
+    ]);
+
+    const [row] = (await sentRows("alice")).slice(-1);
+    expect(row!.subject).toBe("with a file");
+    expect(row!.attachments).toEqual([{ size: PDF.length, content: { data: expect.stringMatching(UUID) }, filename: "contract.pdf", contentType: "application/pdf" }]);
+    expect(attachmentBytes(server, row!.attachments[0].content.data).equals(PDF)).toBe(true);
+    expect(attachmentFiles(server).length).toBe(files + 1);
+    // The transaction's working copy is gone once the client has its answer.
+    await waitFor(() => incomingLeftovers(server).length === 0, { what: "the transaction's working files to go" });
+  });
+
+  test("several are sent in message order and stored each under its own id", async () => {
+    const bytes = Buffer.from([0, 1, 2, 255, 13, 10]);
+    const { result, requests } = await withParts(
+      "several",
+      pdfPart(),
+      ["Content-Type: application/octet-stream", 'Content-Disposition: attachment; filename="data.bin"', "Content-Transfer-Encoding: base64", "", bytes.toString("base64")],
+      ["Content-Type: text/csv", 'Content-Disposition: attachment; filename="rows.csv"', "", "a,b"],
+      pdfPart()
+    );
+    expect(result.final.raw).toBe(QUEUED);
+    expect(requests[0]!.fieldOrder).toEqual(["from", "to", "subject", "html", "text", "attachment", "attachment", "attachment", "attachment"]);
+    expect(requests[0]!.attachments.map((a) => [a.filename, a.size, a.sha256])).toEqual([
+      ["contract.pdf", PDF.length, sha256(PDF)],
+      ["data.bin", bytes.length, sha256(bytes)],
+      ["rows.csv", 3, sha256("a,b")],
+      ["contract.pdf", PDF.length, sha256(PDF)],
+    ]);
+
+    const [row] = (await sentRows("alice")).slice(-1);
+    const stored = row!.attachments as { filename: string; contentType: string; size: number; content: { data: string } }[];
+    // The HTTP send stores its files concurrently, so the Sent record lists
+    // them in no fixed order.
+    expect(stored.map((a) => [a.filename, a.contentType, a.size]).sort()).toEqual([
+      ["contract.pdf", "application/pdf", PDF.length],
+      ["contract.pdf", "application/pdf", PDF.length],
+      ["data.bin", "application/octet-stream", bytes.length],
+      ["rows.csv", "text/csv", 3],
+    ]);
+    expect(new Set(stored.map((a) => a.content.data)).size).toBe(4);
+    const data = stored.find((a) => a.filename === "data.bin")!;
+    expect(attachmentBytes(server, data.content.data).equals(bytes)).toBe(true);
+    await waitFor(() => incomingLeftovers(server).length === 0, { what: "the transaction's working files to go" });
+  });
+
+  test("a file name in non-ASCII characters arrives and is stored decoded", async () => {
+    const name = "Vertrag ünï 😀.pdf";
+    for (const disposition of [
+      `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+      `attachment; filename="=?UTF-8?B?${Buffer.from(name).toString("base64")}?="`,
+    ]) {
+      const { result, requests } = await withParts("named", pdfPart(disposition));
+      expect({ disposition, reply: result.final.raw }).toEqual({ disposition, reply: QUEUED });
+      expect(requests[0]!.attachments.map((a) => a.filename)).toEqual([name]);
+      const [row] = (await sentRows("alice")).slice(-1);
+      expect(row!.attachments.map((a: { filename: string }) => a.filename)).toEqual([name]);
+    }
+  });
+
+  test("go to every per-recipient message of a Bcc-only submission, and are stored once", async () => {
+    const smtp = await signIn("alice", alice.password);
+    const result = await smtp.transaction({
+      from: "me@alice.mail.test",
+      to: ["dave@remote.example", "erin@remote.example"],
+      data: crlf("Subject: bcc files", 'Content-Type: multipart/mixed; boundary="mix"', "", "--mix", "Content-Type: text/plain", "", "x", "--mix", ...pdfPart(), "--mix--"),
+    });
+    expect(result.final.raw).toBe(QUEUED);
+    expect(server.mailgun.requests).toHaveLength(2);
+    for (const request of server.mailgun.requests) {
+      expect(request.attachments.map((a) => [a.filename, a.sha256])).toEqual([["contract.pdf", sha256(PDF)]]);
+    }
+    const [row] = (await sentRows("alice")).slice(-1);
+    expect(row!.attachments.map((a: { filename: string }) => a.filename)).toEqual(["contract.pdf"]);
   });
 });
 
