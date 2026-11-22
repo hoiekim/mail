@@ -120,7 +120,7 @@ async fn releases_the_slot_when_the_transaction_fails() {
 #[tokio::test]
 async fn releases_the_slot_when_the_transaction_is_dropped_or_panics() {
     let _turn = fresh_budget().await;
-    let abandoned = tokio::spawn(with_smtp_data_budget(|| std::future::pending::<()>()));
+    let abandoned = tokio::spawn(with_smtp_data_budget(std::future::pending::<()>));
     next_tick().await;
     assert_eq!(smtp_data_budget_in_flight(), 1);
     abandoned.abort();

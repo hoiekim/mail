@@ -1,5 +1,5 @@
 //! An SMTP listener: one TCP server whose connections are run by
-//! [`Connection`] (`smtp/server.ts`).
+//! `Connection` (`smtp/server.ts`).
 
 use std::collections::HashMap;
 use std::fmt;

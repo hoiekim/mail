@@ -333,9 +333,9 @@ impl ConnectionHandle {
 
 /// The AUTH exchange waiting for its next line.
 enum NextLine {
-    AuthPlain,
-    AuthLoginUsername,
-    AuthLoginPassword(String),
+    Plain,
+    LoginUsername,
+    LoginPassword(String),
 }
 
 /// What a hook answered, with what the answer applies to.
@@ -835,9 +835,9 @@ impl Connection {
 
         if let Some(next) = self.next_line.take() {
             return match next {
-                NextLine::AuthPlain => self.auth_plain(line, true),
-                NextLine::AuthLoginUsername => self.auth_login_username(line, true),
-                NextLine::AuthLoginPassword(username) => self.auth_login_password(username, line),
+                NextLine::Plain => self.auth_plain(line, true),
+                NextLine::LoginUsername => self.auth_login_username(line, true),
+                NextLine::LoginPassword(username) => self.auth_login_password(username, line),
             };
         }
 
@@ -1029,7 +1029,7 @@ impl Connection {
                 match args.first() {
                     Some(token) => self.auth_plain(token, false),
                     None => {
-                        self.next_line = Some(NextLine::AuthPlain);
+                        self.next_line = Some(NextLine::Plain);
                         self.send(334, "");
                     }
                 }
@@ -1041,7 +1041,7 @@ impl Connection {
                 match args.first() {
                     Some(username) => self.auth_login_username(username, false),
                     None => {
-                        self.next_line = Some(NextLine::AuthLoginUsername);
+                        self.next_line = Some(NextLine::LoginUsername);
                         self.send(334, "VXNlcm5hbWU6");
                     }
                 }
@@ -1073,7 +1073,7 @@ impl Connection {
         if username.is_empty() {
             return self.send(500, "Error: missing username");
         }
-        self.next_line = Some(NextLine::AuthLoginPassword(username));
+        self.next_line = Some(NextLine::LoginPassword(username));
         self.send(334, "UGFzc3dvcmQ6");
     }
 
