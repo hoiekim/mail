@@ -76,6 +76,7 @@ async fn start() -> anyhow::Result<()> {
 }
 
 fn main() {
+    mail_server::alarm::install_panic_alarm();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         // Deeply nested client JSON is parsed and dropped recursively.
