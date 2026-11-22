@@ -653,7 +653,13 @@ export const expungeDeletedMails = async (
     );
 
     const rows = await mailsTable.updateWhere(
-      { [MAIL_ID]: { op: "IN", value: mailIds } },
+      // Checked again here: another client may have cleared \Deleted since the SELECT.
+      {
+        [USER_ID]: user_id,
+        [MAIL_ID]: { op: "IN", value: mailIds },
+        [DELETED]: true,
+        [EXPUNGED]: false,
+      },
       // Bump modseq so the expunge advances HIGHESTMODSEQ (RFC 7162) — a
       // resyncing CONDSTORE/QRESYNC client detects the removal.
       { [EXPUNGED]: true, updated: DB_NOW, [MODSEQ]: await getNextModseq(user_id) },

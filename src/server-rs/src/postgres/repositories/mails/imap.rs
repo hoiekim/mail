@@ -37,7 +37,7 @@ use super::imap_query::{
 use super::inflight::single_flight;
 use super::model::{
     mails_table, PartialMailModel, ANSWERED, DELETED, DRAFT, EXPUNGED, MAIL_ID, MODSEQ, READ, SAVED, UID_DOMAIN,
-    UPDATED,
+    UPDATED, USER_ID,
 };
 use super::set_flags_query::build_set_mail_flags_queries;
 use super::table::{run, run_query, Filter, Record, SetValue};
@@ -736,9 +736,22 @@ async fn expunged_data(user_id: &str) -> DbResult<[(&'static str, SetValue); 3]>
     ])
 }
 
+/// Which of the mails a lookup found an expunge may still mark.
+#[derive(Clone, Copy)]
+enum ExpungeGuard {
+    /// Every one: MOVE removes its source whatever the flags.
+    Found,
+    /// Those still `\Deleted` and not yet expunged when the UPDATE runs.
+    StillDeleted,
+}
+
 /// Marks the mails `lookup` finds expunged, and returns the UID each held in
 /// the box. Nothing is reserved or written when it finds none.
-async fn expunge_mapped(user_id: &str, lookup: &super::table::PreparedQuery) -> DbResult<Vec<i64>> {
+async fn expunge_mapped(
+    user_id: &str,
+    lookup: &super::table::PreparedQuery,
+    guard: ExpungeGuard,
+) -> DbResult<Vec<i64>> {
     let selected = run_query(lookup).await?;
     if selected.rows.is_empty() {
         return Ok(Vec::new());
@@ -747,9 +760,16 @@ async fn expunge_mapped(user_id: &str, lookup: &super::table::PreparedQuery) -> 
     let uids_by_mail_id: HashMap<&str, Option<i64>> =
         mail_ids.iter().map(String::as_str).zip(selected.rows.iter().map(|row| integer(row, "uid"))).collect();
 
-    let rows = mails_table()
-        .update_where(&[(MAIL_ID, Filter::any_of(&mail_ids))], &expunged_data(user_id).await?, &[MAIL_ID])
-        .await?;
+    let filters: Vec<(&str, Filter)> = match guard {
+        ExpungeGuard::Found => vec![(MAIL_ID, Filter::any_of(&mail_ids))],
+        ExpungeGuard::StillDeleted => vec![
+            (USER_ID, Filter::from(user_id)),
+            (MAIL_ID, Filter::any_of(&mail_ids)),
+            (DELETED, Filter::from(true)),
+            (EXPUNGED, Filter::from(false)),
+        ],
+    };
+    let rows = mails_table().update_where(&filters, &expunged_data(user_id).await?, &[MAIL_ID]).await?;
     // The UPDATE returns ids; the UIDs the client knows them by come from
     // the lookup.
     Ok(rows
@@ -773,11 +793,13 @@ async fn expunge_domain(user_id: &str, filters: &[(&str, Filter)]) -> DbResult<V
 /// (`build_expunge_deleted_inbox_query`); a mapped box joins its own rows.
 pub async fn expunge_deleted_mails(user_id: &str, mailbox: Option<&str>, sent: bool) -> Vec<i64> {
     let expunged = if !uses_domain_uid_space(mailbox) {
-        expunge_mapped(user_id, &build_expunge_deleted_select_query(user_id, mailbox, sent)).await
+        expunge_mapped(user_id, &build_expunge_deleted_select_query(user_id, mailbox, sent), ExpungeGuard::StillDeleted)
+            .await
     } else if sent {
         expunge_domain(user_id, &build_expunge_deleted_filters(user_id, mailbox, sent)).await
     } else {
-        expunge_mapped(user_id, &build_expunge_deleted_inbox_query(user_id, mailbox, sent)).await
+        expunge_mapped(user_id, &build_expunge_deleted_inbox_query(user_id, mailbox, sent), ExpungeGuard::StillDeleted)
+            .await
     };
     expunged.unwrap_or_else(|error| {
         logger::error_with("Failed to expunge deleted mails", json!({}), &error);
@@ -804,7 +826,7 @@ pub async fn expunge_mails_by_uid(
     let expunged = if uses_domain_uid_space(mailbox) {
         expunge_domain(user_id, &build_expunge_uids_filters(user_id, mailbox, sent, uids)).await
     } else {
-        expunge_mapped(user_id, &build_expunge_uids_select_query(user_id, mailbox, sent, uids)).await
+        expunge_mapped(user_id, &build_expunge_uids_select_query(user_id, mailbox, sent, uids), ExpungeGuard::Found).await
     };
     if let Err(error) = &expunged {
         logger::error_with("Failed to expunge mails by UID", json!({ "uids": uids }), error);
@@ -1535,7 +1557,7 @@ mod tests {
             .await;
             assert_eq!(uids, vec![2]);
             assert_eq!(trace[0], build_expunge_deleted_inbox_query(USER, mailbox, false));
-            assert_eq!(trace[2].values, params![true, 31, MAIL]);
+            assert_eq!(trace[2].values, params![true, 31, USER, MAIL, true, false]);
         }
     }
 
@@ -1547,8 +1569,10 @@ mod tests {
         assert_eq!(trace[0], build_expunge_deleted_select_query(USER, Some("Archive"), false));
     }
 
+    // Another client can clear \Deleted between the lookup and the UPDATE, so
+    // the UPDATE asks again and only the rows it returns are reported.
     #[tokio::test]
-    async fn a_mapped_expunge_reports_the_uids_of_the_rows_it_marked() {
+    async fn a_mapped_expunge_marks_only_rows_still_deleted_and_reports_their_uids() {
         let (uids, trace) = with_script(
             vec![
                 rows(json!([{ "mail_id": MAIL, "uid": 4 }, { "mail_id": OTHER_MAIL, "uid": 9 }])),
@@ -1561,9 +1585,23 @@ mod tests {
         assert_eq!(uids, vec![9]);
         assert_eq!(
             trace[2].sql,
-            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id"
+            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id"
         );
-        assert_eq!(trace[2].values, params![true, 31, MAIL, OTHER_MAIL]);
+        assert_eq!(trace[2].values, params![true, 31, USER, MAIL, OTHER_MAIL, true, false]);
+    }
+
+    #[tokio::test]
+    async fn a_move_removes_its_source_rows_whatever_their_flags() {
+        let (uids, trace) = with_script(
+            vec![rows(json!([{ "mail_id": MAIL, "uid": 4 }])), rows(json!([{ "next_uid": 31 }])), rows(json!([{ "mail_id": MAIL }]))],
+            expunge_mails_by_uid(USER, Some("Archive"), false, &[4]),
+        )
+        .await;
+        assert_eq!(uids.unwrap(), vec![4]);
+        assert_eq!(
+            trace[2].sql,
+            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3) RETURNING mail_id"
+        );
     }
 
     #[tokio::test]

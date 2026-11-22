@@ -26103,12 +26103,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "34",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -26174,12 +26177,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "35",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -26349,12 +26355,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "36",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -27168,12 +27177,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "34",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -27239,12 +27251,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "35",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -27414,12 +27429,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "36",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -27772,12 +27790,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "34",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -27839,12 +27860,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "35",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -27998,12 +28022,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "36",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -28606,12 +28633,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "34",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -28673,12 +28703,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "35",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -28832,12 +28865,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "36",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -29440,12 +29476,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "34",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -29507,12 +29546,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "35",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -29666,12 +29708,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "36",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -30274,12 +30319,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "34",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -30341,12 +30389,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "35",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -30500,12 +30551,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "36",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -97225,12 +97279,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -97680,12 +97737,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -98568,12 +98628,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -99041,12 +99104,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -99495,12 +99561,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -99950,12 +100019,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -100424,12 +100496,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -100898,12 +100973,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -101372,12 +101450,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -101846,12 +101927,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -102320,12 +102404,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -102794,12 +102881,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -103268,12 +103358,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
@@ -103742,12 +103835,15 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND mail_id IN ($4, $5) AND deleted = $6 AND expunged = $7 RETURNING mail_id",
      "values": [
       "true",
       "31",
+      "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
-      "33333333-3333-4333-8333-333333333333"
+      "33333333-3333-4333-8333-333333333333",
+      "true",
+      "false"
      ]
     }
    ],
