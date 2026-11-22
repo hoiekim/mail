@@ -268,9 +268,10 @@ fn criterion_of(value: &Value) -> SimplifiedCriterion {
     match (upper.as_str(), operand) {
         ("NOT", Some(inner)) => SimplifiedCriterion::not(criterion_of(inner)),
         ("OR", Some(sides)) => SimplifiedCriterion::or(criterion_of(&sides["left"]), criterion_of(&sides["right"])),
-        ("HEADER", Some(header)) => {
-            SimplifiedCriterion::Header { field: text(header, "field").to_string(), text: text(header, "text").to_string() }
-        }
+        ("HEADER", Some(header)) => SimplifiedCriterion::Header {
+            field: text(header, "field").to_string(),
+            text: text(header, "text").to_string(),
+        },
         ("UID_SET", Some(ranges)) => SimplifiedCriterion::UidSet(ranges_of(ranges)),
         ("LARGER", Some(size)) => SimplifiedCriterion::Size { key: SizeKey::Larger, value: number(size) },
         ("SMALLER", Some(size)) => SimplifiedCriterion::Size { key: SizeKey::Smaller, value: number(size) },
@@ -392,8 +393,12 @@ fn the_expunge_builders_emit_the_same_filters_and_statements() {
     }
     for case in list(&fixture, "expungeUidsSelect") {
         let args = &case["args"];
-        let built =
-            query::build_expunge_uids_select_query(USER, mailbox_arg(args), flag(args, "sent"), &integers(&args["uids"]));
+        let built = query::build_expunge_uids_select_query(
+            USER,
+            mailbox_arg(args),
+            flag(args, "sent"),
+            &integers(&args["uids"]),
+        );
         assert_query(&format!("expungeUidsSelect {args}"), &built, case);
     }
 }
@@ -405,8 +410,12 @@ fn the_flag_push_builder_emits_the_same_sql_and_values() {
     assert_eq!(cases.len(), 60);
     for case in cases {
         let args = &case["args"];
-        let built =
-            query::build_mail_flag_updates_query(USER, mailbox_arg(args), flag(args, "sent"), &strings(&args["mail_ids"]));
+        let built = query::build_mail_flag_updates_query(
+            USER,
+            mailbox_arg(args),
+            flag(args, "sent"),
+            &strings(&args["mail_ids"]),
+        );
         assert_query(&format!("mailFlagUpdates {args}"), &built, case);
     }
 }
@@ -662,12 +671,15 @@ async fn replay(group: &str, minimum: usize) {
         let name = text(case, "fn");
         let args = &case["args"];
         let label = format!("{group} {name} {args}");
-        let (outcome, statements) = with_script(script(case), with_inline_reads(async {
-            match group {
-                "repository" => run_repository(name, args).await,
-                _ => run_store(name, args).await,
-            }
-        }))
+        let (outcome, statements) = with_script(
+            script(case),
+            with_inline_reads(async {
+                match group {
+                    "repository" => run_repository(name, args).await,
+                    _ => run_store(name, args).await,
+                }
+            }),
+        )
         .await;
         assert_statements(&label, &statements, &case["statements"]);
         assert_eq!(outcome, outcome_of(case), "{label}: outcome");

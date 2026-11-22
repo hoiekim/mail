@@ -143,6 +143,11 @@ const listing = (user: string) => {
 for (const { id, username, email } of Object.values(USERS)) {
   step("sql", { sql: "INSERT INTO users (user_id, username, email) VALUES ($1, $2, $3)", values: [id, username, email] });
 }
+// Rows the order of a statement leaves tied come back in their physical
+// order; no vacuum may move them halfway through.
+for (const table of ["mails", "mail_mailbox_uid", "mail_uid_counters", "mailboxes"]) {
+  step("ddl", { sql: `ALTER TABLE ${table} SET (autovacuum_enabled = false)` });
+}
 
 // --- an empty account: every read answers for a mailbox with nothing in it ------------
 
@@ -409,7 +414,7 @@ for (const [mailbox, flags, messageId] of [
 // The store's write, with destinations the session does not produce.
 step("storeMail", { user: "admin", destination: null, mail: appended("<direct1@example.com>", { uid: { domain: 0, account: 0 } }) });
 step("storeMail", { user: "admin", destination: "", mail: appended("<direct2@example.com>", { uid: { domain: 77, account: 0 } }) });
-step("storeMail", { user: "admin", destination: "Archive", mail: appended("<direct3@example.com>", { uid: { domain: 0, account: 0 } }) });
+step("storeMail", { user: "admin", destination: "Archive", mail: appended("<direct3@example.com>", { uid: { domain: 501, account: 0 } }) });
 step("storeMail", { user: "bob", destination: "INBOX", mail: appended("<bad-date@example.com>", { date: "not a date", uid: { domain: 5, account: 0 } }) });
 
 readEverything("admin", ["INBOX", "Drafts", "Junk", "Starred", "Trash", "Sent Messages", "Archive", "INBOX/accounts/admin"]);
@@ -500,6 +505,18 @@ step("copy", { user: "admin", box: "INBOX", line: "a COPY 999 Archive" });
 step("copy", { user: "admin", box: "INBOX", line: "a UID COPY 999 Archive" });
 step("copy", { user: "alice", box: "INBOX/accounts/work", line: "a UID COPY 1:* Archive" });
 step("copy", { user: "alice", box: "INBOX", line: "a UID COPY 1:* INBOX/accounts/home" });
+// A COPY keeps its source's date, so the boxes it fans one mail out to tie
+// on their latest mail. A newer delivery to each decides their order.
+for (const [user, account] of [
+  ["admin", `INBOX/accounts@${DOMAIN}`],
+  ["admin", `Projects/Wörk "2024"@${DOMAIN}`],
+  ["admin", `Archive@${DOMAIN}`],
+  ["admin", SALES],
+  ["alice", `Archive@alice.${DOMAIN}`],
+  ["alice", HOME],
+]) {
+  deliver(user, account, `<latest-${account.split("@")[0].replace(/[^A-Za-z]/g, "")}-${user}@outside.test>`);
+}
 listing("admin");
 listing("alice");
 readEverything("admin", ["INBOX", "Drafts", "Junk", "Starred", "Trash", "Archive", "Projects/Wörk \"2024\"", "Sent Messages", "INBOX/accounts/sales"]);
@@ -620,6 +637,7 @@ const core = await import("../../../../server/lib/postgres/repositories/mails/co
 const counters = await import("../../../../server/lib/postgres/repositories/mails/counters");
 const mailboxes = await import("../../../../server/lib/postgres/repositories/mailboxes");
 const repository = await import("../../../../server/lib/postgres/repositories/mails/imap");
+const httpQuery = await import("../../../../server/lib/postgres/repositories/mails/http-query");
 const { Store } = await import("../../../../server/lib/imap/store");
 const { parseCommand } = await import("../../../../server/lib/imap/parsers/command-parser");
 const { getRequestedFields, convertSequenceSet } = await import("../../../../server/lib/imap/fetch-helpers");
@@ -658,7 +676,7 @@ const refreshLabels = async () => {
   }
 };
 
-const VOLATILE_KEYS = ["created", "updated"];
+const VOLATILE_KEYS = ["created"];
 /** Replaces generated ids by what they stand for, and drops the clock. */
 const normalize = (value: unknown): Json => {
   if (value === undefined || value === null) return null;
@@ -692,6 +710,24 @@ const mailIdsOf = async (user_id: string, messageIds: string[]): Promise<string[
 
 const mailIdOf = async (user_id: string, messageId: string): Promise<string> =>
   (await mailIdsOf(user_id, [messageId]))[0] ?? "c0000000-0000-4000-8000-00000000dead";
+
+/**
+ * The account boxes are listed newest mail first; two accounts whose latest
+ * mail ties come back in whatever order PostgreSQL meets them, which no two
+ * databases need share. The scenario must not depend on one.
+ */
+const assertAccountOrderDecided = async (a: Args) => {
+  const { id, username } = userOf(a);
+  for (const sent of [false, true]) {
+    const domain = username === "admin" ? DOMAIN : `${username}.${DOMAIN}`;
+    const { sql, values } = httpQuery.buildAccountStatsQuery(id, sent, domain, false);
+    const rows = (await pool.query(sql, values)).rows;
+    const latest = rows.map((row) => String(row.latest));
+    if (new Set(latest).size !== latest.length) {
+      throw new Error(`accounts tie on their latest mail for ${username} (sent ${sent}): ${JSON.stringify(rows)}`);
+    }
+  }
+};
 
 const sha256 = (data: string | Buffer) => crypto.createHash("sha256").update(data).digest("hex");
 
@@ -784,6 +820,10 @@ const mailOf = (fields: Args): MailInstance => {
 
 const ops: Record<string, (a: Args) => Promise<unknown>> = {
   sql: async (a) => ({ rowCount: (await pool.query(a.sql as string, a.values as unknown[])).rowCount }),
+  ddl: async (a) => {
+    await pool.query(a.sql as string);
+    return null;
+  },
 
   // SMTP delivery and the send path: reserve both UIDs, then save the mail
   // under its per-account box (and INBOX for received mail).
@@ -853,8 +893,14 @@ const ops: Record<string, (a: Args) => Promise<unknown>> = {
   renameMailbox: (a) => mailboxes.renameMailbox(userOf(a).id, a.oldName as string, a.newName as string),
   setMailboxSubscribed: (a) => mailboxes.setMailboxSubscribed(userOf(a).id, a.name as string, a.subscribed as boolean),
 
-  listMailboxes: (a) => storeOf(a).listMailboxes(),
-  listMailboxEntries: (a) => storeOf(a).listMailboxEntries(),
+  listMailboxes: async (a) => {
+    await assertAccountOrderDecided(a);
+    return storeOf(a).listMailboxes();
+  },
+  listMailboxEntries: async (a) => {
+    await assertAccountOrderDecided(a);
+    return storeOf(a).listMailboxEntries();
+  },
   mailboxExists: (a) => storeOf(a).mailboxExists(a.box as string),
   countMessages: (a) => storeOf(a).countMessages(a.box as string),
   getUidNext: (a) => storeOf(a).getUidNext(a.box as string),
@@ -1023,9 +1069,14 @@ for (const [index, { op, args }] of steps.entries()) {
   if (!run) throw new Error(`no op ${op}`);
   let outcome: Json;
   try {
+    // Rows an earlier step filed are named before this one sorts by name.
+    await refreshLabels();
     const returned = await run(args);
+    // A COPY files rows nobody has named yet; name them before recording.
+    await refreshLabels();
     outcome = { ok: normalize(JSON.parse(JSON.stringify(returned ?? null))) };
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("accounts tie")) throw error;
     const thrown = error as { code?: string; constraint?: string; message?: string };
     await refreshLabels();
     outcome = {

@@ -35,6 +35,30 @@
    }
   },
   {
+   "op": "ddl",
+   "args": {
+    "sql": "ALTER TABLE mails SET (autovacuum_enabled = false)"
+   }
+  },
+  {
+   "op": "ddl",
+   "args": {
+    "sql": "ALTER TABLE mail_mailbox_uid SET (autovacuum_enabled = false)"
+   }
+  },
+  {
+   "op": "ddl",
+   "args": {
+    "sql": "ALTER TABLE mail_uid_counters SET (autovacuum_enabled = false)"
+   }
+  },
+  {
+   "op": "ddl",
+   "args": {
+    "sql": "ALTER TABLE mailboxes SET (autovacuum_enabled = false)"
+   }
+  },
+  {
    "op": "listMailboxes",
    "args": {
     "user": "bob"
@@ -6818,7 +6842,7 @@
       "text": "friend@outside.test"
      },
      "uid": {
-      "domain": 0,
+      "domain": 501,
       "account": 0
      }
     }
@@ -8763,6 +8787,246 @@
     "user": "alice",
     "box": "INBOX",
     "line": "a UID COPY 1:* INBOX/accounts/home"
+   }
+  },
+  {
+   "op": "deliver",
+   "args": {
+    "user": "admin",
+    "sent": false,
+    "messageId": "<latest-INBOXaccounts-admin@outside.test>",
+    "subject": "Subject of <latest-INBOXaccounts-admin@outside.test>",
+    "date": "2024-02-05T08:30:00.000Z",
+    "text": "Body of <latest-INBOXaccounts-admin@outside.test>",
+    "html": "<p>Body of <latest-INBOXaccounts-admin@outside.test></p>",
+    "from": {
+     "value": [
+      {
+       "address": "sender@outside.test",
+       "name": "Sender"
+      }
+     ],
+     "text": "Sender <sender@outside.test>"
+    },
+    "to": {
+     "value": [
+      {
+       "address": "INBOX/accounts@example.com",
+       "name": ""
+      }
+     ],
+     "text": "INBOX/accounts@example.com"
+    },
+    "envelopeFrom": [
+     {
+      "address": "bounce@outside.test"
+     }
+    ],
+    "envelopeTo": [
+     {
+      "address": "INBOX/accounts@example.com"
+     }
+    ]
+   }
+  },
+  {
+   "op": "deliver",
+   "args": {
+    "user": "admin",
+    "sent": false,
+    "messageId": "<latest-ProjectsWrk-admin@outside.test>",
+    "subject": "Subject of <latest-ProjectsWrk-admin@outside.test>",
+    "date": "2024-02-06T08:30:00.000Z",
+    "text": "Body of <latest-ProjectsWrk-admin@outside.test>",
+    "html": "<p>Body of <latest-ProjectsWrk-admin@outside.test></p>",
+    "from": {
+     "value": [
+      {
+       "address": "sender@outside.test",
+       "name": "Sender"
+      }
+     ],
+     "text": "Sender <sender@outside.test>"
+    },
+    "to": {
+     "value": [
+      {
+       "address": "Projects/Wörk \"2024\"@example.com",
+       "name": ""
+      }
+     ],
+     "text": "Projects/Wörk \"2024\"@example.com"
+    },
+    "envelopeFrom": [
+     {
+      "address": "bounce@outside.test"
+     }
+    ],
+    "envelopeTo": [
+     {
+      "address": "Projects/Wörk \"2024\"@example.com"
+     }
+    ]
+   }
+  },
+  {
+   "op": "deliver",
+   "args": {
+    "user": "admin",
+    "sent": false,
+    "messageId": "<latest-Archive-admin@outside.test>",
+    "subject": "Subject of <latest-Archive-admin@outside.test>",
+    "date": "2024-02-07T08:30:00.000Z",
+    "text": "Body of <latest-Archive-admin@outside.test>",
+    "html": "<p>Body of <latest-Archive-admin@outside.test></p>",
+    "from": {
+     "value": [
+      {
+       "address": "sender@outside.test",
+       "name": "Sender"
+      }
+     ],
+     "text": "Sender <sender@outside.test>"
+    },
+    "to": {
+     "value": [
+      {
+       "address": "Archive@example.com",
+       "name": ""
+      }
+     ],
+     "text": "Archive@example.com"
+    },
+    "envelopeFrom": [
+     {
+      "address": "bounce@outside.test"
+     }
+    ],
+    "envelopeTo": [
+     {
+      "address": "Archive@example.com"
+     }
+    ]
+   }
+  },
+  {
+   "op": "deliver",
+   "args": {
+    "user": "admin",
+    "sent": false,
+    "messageId": "<latest-sales-admin@outside.test>",
+    "subject": "Subject of <latest-sales-admin@outside.test>",
+    "date": "2024-02-08T08:30:00.000Z",
+    "text": "Body of <latest-sales-admin@outside.test>",
+    "html": "<p>Body of <latest-sales-admin@outside.test></p>",
+    "from": {
+     "value": [
+      {
+       "address": "sender@outside.test",
+       "name": "Sender"
+      }
+     ],
+     "text": "Sender <sender@outside.test>"
+    },
+    "to": {
+     "value": [
+      {
+       "address": "sales@example.com",
+       "name": ""
+      }
+     ],
+     "text": "sales@example.com"
+    },
+    "envelopeFrom": [
+     {
+      "address": "bounce@outside.test"
+     }
+    ],
+    "envelopeTo": [
+     {
+      "address": "sales@example.com"
+     }
+    ]
+   }
+  },
+  {
+   "op": "deliver",
+   "args": {
+    "user": "alice",
+    "sent": false,
+    "messageId": "<latest-Archive-alice@outside.test>",
+    "subject": "Subject of <latest-Archive-alice@outside.test>",
+    "date": "2024-02-09T08:30:00.000Z",
+    "text": "Body of <latest-Archive-alice@outside.test>",
+    "html": "<p>Body of <latest-Archive-alice@outside.test></p>",
+    "from": {
+     "value": [
+      {
+       "address": "sender@outside.test",
+       "name": "Sender"
+      }
+     ],
+     "text": "Sender <sender@outside.test>"
+    },
+    "to": {
+     "value": [
+      {
+       "address": "Archive@alice.example.com",
+       "name": ""
+      }
+     ],
+     "text": "Archive@alice.example.com"
+    },
+    "envelopeFrom": [
+     {
+      "address": "bounce@outside.test"
+     }
+    ],
+    "envelopeTo": [
+     {
+      "address": "Archive@alice.example.com"
+     }
+    ]
+   }
+  },
+  {
+   "op": "deliver",
+   "args": {
+    "user": "alice",
+    "sent": false,
+    "messageId": "<latest-home-alice@outside.test>",
+    "subject": "Subject of <latest-home-alice@outside.test>",
+    "date": "2024-02-10T08:30:00.000Z",
+    "text": "Body of <latest-home-alice@outside.test>",
+    "html": "<p>Body of <latest-home-alice@outside.test></p>",
+    "from": {
+     "value": [
+      {
+       "address": "sender@outside.test",
+       "name": "Sender"
+      }
+     ],
+     "text": "Sender <sender@outside.test>"
+    },
+    "to": {
+     "value": [
+      {
+       "address": "home@alice.example.com",
+       "name": ""
+      }
+     ],
+     "text": "home@alice.example.com"
+    },
+    "envelopeFrom": [
+     {
+      "address": "bounce@outside.test"
+     }
+    ],
+    "envelopeTo": [
+     {
+      "address": "home@alice.example.com"
+     }
+    ]
    }
   },
   {
