@@ -15,6 +15,7 @@ pub mod command_budget;
 pub mod command_budget_hold;
 pub mod credential_version;
 pub mod fetch_format;
+pub mod fetch_stream;
 pub mod handler;
 pub mod idle_manager;
 pub mod literal_spool;

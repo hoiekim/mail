@@ -2,55 +2,35 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use serde_json::json;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
 use super::types::{Literal, MessageLiteral};
-use crate::logger;
-
-/// Where attachments live, relative to the working directory, and the
-/// per-transaction working directories beside them. The SMTP server's
-/// `smtp.ts` owns these in the Bun server; they are repeated here until that
-/// port lands.
-const ATTACHMENT_FOLDER: &str = "./attachments";
-const INCOMING_FOLDER_NAME: &str = ".incoming";
+use crate::smtp::transaction_dir;
 
 const MESSAGE_FILE: &str = "message";
 
-fn attachment_folder() -> PathBuf {
-    // Unit tests run from the crate directory; their spool files go under
-    // the build output rather than into the source tree.
-    if cfg!(test) {
-        return Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("test-attachments");
-    }
-    PathBuf::from(ATTACHMENT_FOLDER)
-}
-
-/// Per-transaction attachment working directories.
+/// Per-transaction attachment working directories, which the SMTP server
+/// owns (`smtp.ts` in the Bun server). Unit tests run from the crate
+/// directory; their spool files go under the build output rather than into
+/// the source tree.
 pub fn incoming_attachment_folder() -> PathBuf {
-    attachment_folder().join(INCOMING_FOLDER_NAME)
+    if cfg!(test) {
+        return Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("test-attachments").join(".incoming");
+    }
+    PathBuf::from(transaction_dir::INCOMING_ATTACHMENT_FOLDER)
 }
 
 /// A fresh directory name for one transaction's working files.
 pub fn new_transaction_dir() -> PathBuf {
-    incoming_attachment_folder().join(uuid::Uuid::new_v4().to_string())
+    if cfg!(test) {
+        return incoming_attachment_folder().join(uuid::Uuid::new_v4().to_string());
+    }
+    transaction_dir::new_transaction_dir()
 }
 
 /// Removes a transaction's working files. A failure is logged, not returned.
-pub async fn remove_transaction_dir(dir: &Path) {
-    match tokio::fs::remove_dir_all(dir).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            logger::warn_with(
-                "Could not remove a transaction's working files",
-                json!({ "dir": dir.display().to_string() }),
-                &error,
-            );
-        }
-    }
-}
+pub use crate::smtp::transaction_dir::remove_transaction_dir;
 
 /// `path.resolve`: absolute, with `.` and `..` folded away, symlinks left alone.
 fn resolve(path: &Path) -> PathBuf {
@@ -229,6 +209,6 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         assert_eq!(resolve(Path::new("./attachments/.incoming")), cwd.join("attachments/.incoming"));
         assert_eq!(resolve(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
-        assert_eq!(ATTACHMENT_FOLDER, "./attachments");
+        assert_eq!(resolve(Path::new(transaction_dir::INCOMING_ATTACHMENT_FOLDER)), cwd.join("attachments/.incoming"));
     }
 }

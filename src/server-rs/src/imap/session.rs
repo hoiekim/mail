@@ -28,10 +28,12 @@ use super::session_registry::{
     register_authenticated_session, unregister_connection, unregister_session, RegisteredSession,
 };
 use super::socket::SocketHandle;
+use super::store::Store;
 use super::throttler::Throttler;
 use super::trace::{imap_trace, Direction};
 use super::types::{AppendRequest, CopyRequest, FetchRequest, MoveRequest, SearchRequest, StatusItem, StoreRequest};
 use super::{mailbox_ops, message_ops};
+#[cfg(test)]
 use crate::models::SignedUser;
 use crate::tls::{get_tls_credentials, TlsCredentials};
 use crate::{logger, sso};
@@ -42,10 +44,10 @@ pub struct SessionState {
     pub selected_mailbox: Option<String>,
     pub selected_mailbox_message_count: usize,
     pub mailbox_read_only: bool,
-    /// The account the session reads, set by a successful sign-in. This is
-    /// the store's user: the store itself takes this field's place when the
-    /// mailbox and message commands are filled in.
-    pub user: Option<SignedUser>,
+    /// The mailboxes and messages of the account the session reads, set by
+    /// a successful sign-in (for a read-only credential, the account it is
+    /// mapped onto).
+    pub store: Option<Store>,
     pub authenticated: bool,
     /// True when the caller signed in with a read-only credential. Every
     /// state-changing command then refuses with `NO [READ-ONLY]`; the flag
@@ -210,7 +212,7 @@ impl ImapSession {
         let _turn = self.serial().await;
         let selected = {
             let state = self.state();
-            if !state.is_idling || state.user.is_none() {
+            if !state.is_idling || state.store.is_none() {
                 return Ok(());
             }
             state.selected_mailbox.clone()
@@ -394,7 +396,7 @@ impl ImapSession {
     fn signed_in(&self, result: AuthResult) {
         {
             let mut state = self.state();
-            state.user = Some(result.user);
+            state.store = Some(Store::new(result.user));
             state.authenticated = true;
             state.is_read_only_user = result.is_read_only;
             state.authenticated_as = Some(result.authenticated_as);
@@ -457,29 +459,30 @@ impl ImapSession {
         false
     }
 
-    /// The signed-in account, or `None` after answering `NO Not authenticated.`
-    fn require_user(&self, tag: &str) -> Option<SignedUser> {
-        let user = {
+    /// The signed-in account's store, or `None` after answering `NO Not
+    /// authenticated.`
+    fn require_store(&self, tag: &str) -> Option<Store> {
+        let store = {
             let state = self.state();
             if state.authenticated {
-                state.user.clone()
+                state.store.clone()
             } else {
                 None
             }
         };
-        if user.is_none() {
+        if store.is_none() {
             self.write(&format!("{tag} NO Not authenticated.\r\n"));
         }
-        user
+        store
     }
 
     /// The signed-in account and the selected mailbox, or `None` after
     /// answering which of the two is missing.
-    fn require_selected(&self, tag: &str) -> Option<(SignedUser, String)> {
-        let user = self.require_user(tag)?;
+    fn require_selected(&self, tag: &str) -> Option<(Store, String)> {
+        let store = self.require_store(tag)?;
         let selected = self.state().selected_mailbox.clone();
         match selected {
-            Some(mailbox) => Some((user, mailbox)),
+            Some(mailbox) => Some((store, mailbox)),
             None => {
                 self.write(&format!("{tag} BAD No mailbox selected\r\n"));
                 None
@@ -492,74 +495,74 @@ impl ImapSession {
     // -----------------------------------------------------------------------
 
     pub async fn create_mailbox(&self, tag: &str, mailbox: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "CREATE") {
             return;
         }
-        mailbox_ops::create_mailbox(tag, mailbox, &user, self).await;
+        mailbox_ops::create_mailbox(tag, mailbox, &store, self).await;
     }
 
     pub async fn delete_mailbox(&self, tag: &str, mailbox: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "DELETE") {
             return;
         }
-        mailbox_ops::delete_mailbox(tag, mailbox, &user, self).await;
+        mailbox_ops::delete_mailbox(tag, mailbox, &store, self).await;
     }
 
     pub async fn rename_mailbox(&self, tag: &str, old_name: &str, new_name: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "RENAME") {
             return;
         }
-        mailbox_ops::rename_mailbox(tag, old_name, new_name, &user, self).await;
+        mailbox_ops::rename_mailbox(tag, old_name, new_name, &store, self).await;
     }
 
     pub async fn subscribe_mailbox(&self, tag: &str, mailbox: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "SUBSCRIBE") {
             return;
         }
-        mailbox_ops::subscribe_mailbox(tag, mailbox, &user, self).await;
+        mailbox_ops::subscribe_mailbox(tag, mailbox, &store, self).await;
     }
 
     pub async fn unsubscribe_mailbox(&self, tag: &str, mailbox: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "UNSUBSCRIBE") {
             return;
         }
-        mailbox_ops::unsubscribe_mailbox(tag, mailbox, &user, self).await;
+        mailbox_ops::unsubscribe_mailbox(tag, mailbox, &store, self).await;
     }
 
     pub async fn status_mailbox(&self, tag: &str, mailbox: &str, items: &[StatusItem]) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
-        mailbox_ops::status_mailbox(tag, mailbox, items, &user, self).await;
+        mailbox_ops::status_mailbox(tag, mailbox, items, &store, self).await;
     }
 
     pub async fn list_mailboxes(&self, tag: &str, reference: &str, pattern: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
-        mailbox_ops::list_mailboxes(tag, reference, pattern, &user, self).await;
+        mailbox_ops::list_mailboxes(tag, reference, pattern, &store, self).await;
     }
 
     pub async fn list_subscribed_mailboxes(&self, tag: &str, reference: &str, pattern: &str) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
-        mailbox_ops::list_subscribed_mailboxes(tag, reference, pattern, &user, self).await;
+        mailbox_ops::list_subscribed_mailboxes(tag, reference, pattern, &store, self).await;
     }
 
     pub async fn examine_mailbox(&self, tag: &str, name: &str) {
@@ -567,7 +570,7 @@ impl ImapSession {
     }
 
     pub async fn select_mailbox(&self, tag: &str, name: &str, is_examine: bool) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         // A read-only user cannot change any mailbox, so its SELECT must
@@ -579,7 +582,7 @@ impl ImapSession {
             state.mailbox_read_only
         };
         let command = if is_examine { "EXAMINE" } else { "SELECT" };
-        mailbox_ops::select_mailbox(tag, name, read_only, command, &user, self).await;
+        mailbox_ops::select_mailbox(tag, name, read_only, command, &store, self).await;
     }
 
     /// Records which mailbox is selected and how many messages it holds.
@@ -600,7 +603,7 @@ impl ImapSession {
     // -----------------------------------------------------------------------
 
     pub async fn fetch_messages_typed(&self, tag: &str, fetch_request: &FetchRequest, is_uid_command: bool) {
-        let Some((user, selected_mailbox)) = self.require_selected(tag) else {
+        let Some((store, selected_mailbox)) = self.require_selected(tag) else {
             return;
         };
         // RFC 4551 §3.3.1: the CHANGEDSINCE modifier turns CONDSTORE on for
@@ -617,7 +620,7 @@ impl ImapSession {
             tag,
             fetch_request,
             is_uid_command,
-            &user,
+            &store,
             &selected_mailbox,
             self,
             condstore_enabled,
@@ -627,14 +630,14 @@ impl ImapSession {
     }
 
     pub async fn search_typed(&self, tag: &str, search_request: &SearchRequest, is_uid_command: bool) {
-        let Some((user, selected_mailbox)) = self.require_selected(tag) else {
+        let Some((store, selected_mailbox)) = self.require_selected(tag) else {
             return;
         };
-        message_ops::search_typed(tag, search_request, is_uid_command, &user, &selected_mailbox, self).await;
+        message_ops::search_typed(tag, search_request, is_uid_command, &store, &selected_mailbox, self).await;
     }
 
     pub async fn store_flags_typed(&self, tag: &str, store_request: &StoreRequest, is_uid_command: bool) {
-        let Some((user, selected_mailbox)) = self.require_selected(tag) else {
+        let Some((store, selected_mailbox)) = self.require_selected(tag) else {
             return;
         };
         if !self.allow_mutation(tag, if is_uid_command { "UID STORE" } else { "STORE" }) {
@@ -654,7 +657,7 @@ impl ImapSession {
             tag,
             store_request,
             is_uid_command,
-            &user,
+            &store,
             &selected_mailbox,
             mailbox_read_only,
             self,
@@ -665,11 +668,11 @@ impl ImapSession {
 
     /// The signed-in account and the selected mailbox for COPY and MOVE,
     /// which answer both missing states with one line.
-    fn require_copy_source(&self, tag: &str) -> Option<(SignedUser, String)> {
+    fn require_copy_source(&self, tag: &str) -> Option<(Store, String)> {
         let found = {
             let state = self.state();
-            match (state.authenticated, &state.user, &state.selected_mailbox) {
-                (true, Some(user), Some(mailbox)) => Some((user.clone(), mailbox.clone())),
+            match (state.authenticated, &state.store, &state.selected_mailbox) {
+                (true, Some(store), Some(mailbox)) => Some((store.clone(), mailbox.clone())),
                 _ => None,
             }
         };
@@ -680,17 +683,17 @@ impl ImapSession {
     }
 
     pub async fn copy_message_typed(&self, tag: &str, copy_request: &CopyRequest, is_uid_command: bool) {
-        let Some((user, selected_mailbox)) = self.require_copy_source(tag) else {
+        let Some((store, selected_mailbox)) = self.require_copy_source(tag) else {
             return;
         };
         if !self.allow_mutation(tag, if is_uid_command { "UID COPY" } else { "COPY" }) {
             return;
         }
-        message_ops::copy_message_typed(tag, copy_request, is_uid_command, &user, &selected_mailbox, self).await;
+        message_ops::copy_message_typed(tag, copy_request, is_uid_command, &store, &selected_mailbox, self).await;
     }
 
     pub async fn move_message_typed(&self, tag: &str, move_request: &MoveRequest, is_uid_command: bool) {
-        let Some((user, selected_mailbox)) = self.require_copy_source(tag) else {
+        let Some((store, selected_mailbox)) = self.require_copy_source(tag) else {
             return;
         };
         if !self.allow_mutation(tag, if is_uid_command { "UID MOVE" } else { "MOVE" }) {
@@ -701,7 +704,7 @@ impl ImapSession {
             tag,
             move_request,
             is_uid_command,
-            &user,
+            &store,
             &selected_mailbox,
             mailbox_read_only,
             self,
@@ -710,25 +713,25 @@ impl ImapSession {
     }
 
     pub async fn append_message(&self, tag: &str, append_request: &AppendRequest) {
-        let Some(user) = self.require_user(tag) else {
+        let Some(store) = self.require_store(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "APPEND") {
             return;
         }
         let selected_mailbox = self.state().selected_mailbox.clone();
-        message_ops::append_message(tag, append_request, &user, selected_mailbox.as_deref(), self).await;
+        message_ops::append_message(tag, append_request, &store, selected_mailbox.as_deref(), self).await;
     }
 
     pub async fn expunge(&self, tag: &str) {
-        let Some((user, selected_mailbox)) = self.require_selected(tag) else {
+        let Some((store, selected_mailbox)) = self.require_selected(tag) else {
             return;
         };
         if !self.allow_mutation(tag, "EXPUNGE") {
             return;
         }
         let mailbox_read_only = self.state().mailbox_read_only;
-        message_ops::expunge(tag, &user, &selected_mailbox, mailbox_read_only, self).await;
+        message_ops::expunge(tag, &store, &selected_mailbox, mailbox_read_only, self).await;
     }
 
     // -----------------------------------------------------------------------
@@ -760,7 +763,7 @@ impl ImapSession {
         }
         {
             let mut state = self.state();
-            state.user = None;
+            state.store = None;
             state.selected_mailbox = None;
             state.selected_mailbox_message_count = 0;
             state.seq_state.seq_to_uid = Vec::new();
@@ -779,8 +782,8 @@ impl ImapSession {
     pub fn start_idle(&self, tag: &str) {
         let entered = {
             let mut state = self.state();
-            let watching = match (state.authenticated, &state.user, &state.selected_mailbox) {
-                (true, Some(user), Some(mailbox)) => Some((user.username.clone(), mailbox.clone())),
+            let watching = match (state.authenticated, &state.store, &state.selected_mailbox) {
+                (true, Some(store), Some(mailbox)) => Some((store.get_user().username.clone(), mailbox.clone())),
                 _ => None,
             };
             match watching {
@@ -1010,7 +1013,7 @@ impl ImapSession {
     pub(crate) fn sign_in_for_test(&self, username: &str, selected_mailbox: Option<&str>) {
         let mut state = self.state();
         state.authenticated = true;
-        state.user = Some(SignedUser::new(Some("user-1".into()), Some(username.into()), Some("u@test".into())));
+        state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some(username.into()), Some("u@test".into()))));
         state.authenticated_as = Some(username.to_string());
         state.selected_mailbox = selected_mailbox.map(str::to_string);
     }
