@@ -562,7 +562,14 @@ const headerFixture = () => {
     splitHeaderLine: run("splitHeaderLine", splitHeaderLineInputs, splitHeaderLine),
     rawOctetsAsUtf8: run("rawOctetsAsUtf8", rawOctetsInputs, rawOctetsAsUtf8),
     parseMessageIdList: run("parseMessageIdList", messageIdListInputs, parseMessageIdList),
-    ensureMessageIdFormat: run("ensureMessageIdFormat", ["abc@x", "<abc@x>", "", "<", ">", "<>", "a>", "<a", " ", "한글"], (id) => ensureMessageIdFormat(id) ?? null)
+    ensureMessageIdFormat: run(
+      "ensureMessageIdFormat",
+      [
+        "abc@x", "<abc@x>", "", "<", ">", "<>", "a>", "<a", " ", "한글",
+        `<${"x".repeat(510)}>`, `<${"x".repeat(511)}>`, "x".repeat(510), "x".repeat(511), `<${"😀".repeat(255)}>`, `<${"😀".repeat(256)}>`
+      ],
+      (id) => ensureMessageIdFormat(id) ?? null
+    )
   });
 };
 

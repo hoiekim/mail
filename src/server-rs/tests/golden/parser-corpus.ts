@@ -125,6 +125,10 @@ const handWritten = (): ParserCase[] => {
   add("two dates, the last unreadable", message("Date: Tue, 27 Oct 2026 10:00:00 +0900", "Date: nope", "", "body"));
   add("message ids", message("Message-ID: <a@b>", "Message-ID: =?utf-8?q?enc=40x?=", "", "body"));
   add("message id with spaces and brackets", message("Message-ID:   <<weird id>>  ", "", "body"));
+  add("message id of 512 characters", message(`Message-ID: <${"x".repeat(495)}@remote.example>`, "", "body"));
+  add("message id too long to store", message(`Message-ID: ${"x".repeat(496)}@remote.example`, "", "body"));
+  add("too long a message id after a good one", message("Message-ID: <kept@x>", `Message-ID: <${"x".repeat(496)}@remote.example>`, "", "body"));
+  add("nul in headers and body", message("Subject: nu\0l", "From: Jo\0e <jo@x.org>", "Message-ID: <i\0d@x>", "", "a\0b"));
   add("in-reply-to list and repeated references", message("In-Reply-To: <a@x> <b@x> (comment) <c@x>", "In-Reply-To: no ids", "References: <r1@x>", "References: junk", "References: <r2@x> <r2@x> <r3@x>", "", "body"));
   add("address headers of every kind", message("From: =?UTF-8?B?7ZmN6ri464+Z?= <hong@example.kr>", 'To: "Doe, John" <john@example.org>, Team: a@x.org, b@x.org;', "Cc: undisclosed-recipients:;", "Cc: c@x.org (C)", "Bcc: hidden@xn--9n2bp8q.com", "Reply-To: reply@x.org", "Reply-To: last-reply@x.org", "", "body"));
   add("empty address headers", message("To:", "To: ", "Cc: ,", "Bcc: ;", "", "body"));

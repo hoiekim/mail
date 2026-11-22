@@ -732,6 +732,57 @@ step("deleteMailboxByName", { user_id: U4, name: "bulk-1" }, "limit.make-room");
 step("createMailbox", { user_id: U4, name: "One too many" }, "limit.room");
 step("createMailbox", { user_id: U4, name: "Again too many" }, "limit.refused.again");
 
+// --- NUL characters -----------------------------------------------------------------
+
+// PostgreSQL text holds no NUL and JSONB refuses `\u0000`, so the save takes
+// the character out of everything it writes, the Message-ID included: a
+// second delivery spelled with a NUL elsewhere merges into the first.
+reserve("nul", U4, ADMIN);
+step(
+  "saveMail",
+  {
+    user_id: U4,
+    message_id: "<nul\u0000@example.com>",
+    in_reply_to: "<pa\u0000rent@example.com>",
+    reference_ids: ["<ro\u0000ot@example.com>", "<pa\u0000rent@example.com>"],
+    subject: "nu\u0000l",
+    date: DATE,
+    html: "<p>a\u0000b</p>",
+    text: "a\u0000b\u0000",
+    from_address: [{ address: "sender@example.com", name: "Jo\u0000e" }],
+    from_text: "Jo\u0000e <sender@example.com>",
+    to_address: [{ address: ADMIN, name: "" }],
+    to_text: ADMIN,
+    reply_to_address: [{ address: "reply@example.com", name: "Re\u0000ply" }],
+    reply_to_text: "Re\u0000ply <reply@example.com>",
+    envelope_from: [{ address: "bounce@example.com" }],
+    envelope_to: [{ address: ADMIN }],
+    attachments: [{ content: { data: ATTACHMENT_ON_DISK }, contentType: "application/pdf", filename: "re\u0000port.pdf", size: 1234 }],
+    insight: { summary: "nu\u0000l", tags: ["a\u0000"] },
+    uid_domain: ref("nul.d"),
+    uid_mailbox: ref("nul.a"),
+    mailbox: ADMIN_BOX,
+    domain_mailbox: "INBOX",
+  },
+  "m.nul"
+);
+reserve("nul.again", U4, SALES);
+step(
+  "saveMail",
+  {
+    user_id: U4,
+    message_id: "<n\u0000ul@example.com>",
+    date: DATE,
+    envelope_to: [{ address: SALES }],
+    uid_domain: ref("nul.again.d"),
+    uid_mailbox: ref("nul.again.a"),
+    mailbox: SALES_BOX,
+    domain_mailbox: "INBOX",
+  },
+  "m.nul.again"
+);
+step("getMailByMessageId", { user_id: U4, message_id: "<nul@example.com>" }, "read.nul");
+
 // ---------------------------------------------------------------------------
 // The harness
 // ---------------------------------------------------------------------------

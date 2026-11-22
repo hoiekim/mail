@@ -545,13 +545,15 @@ describe("the DATA stream", () => {
     try {
       const dumpDir = path.join(server.cwd, "error");
       const dumpsBefore = fs.existsSync(dumpDir) ? fs.readdirSync(dumpDir).length : 0;
+      const alarmsBefore = server.alarms.alarms.length;
       const { final } = await mailer.send("Subject: refused by the database\r\nMessage-ID: <unwell@remote.example>\r\n\r\nbody\r\n");
       expect(final.raw).toBe("450 the database is unwell");
       expect(await server.db.query("SELECT 1 FROM mails WHERE message_id = '<unwell@remote.example>'")).toEqual([]);
 
-      const alarm = await waitFor(() => server.alarms.alarms.find((entry) => entry.title.includes("Mail Receive Failed")), {
-        what: "the receive-failure alarm",
-      });
+      const alarm = await waitFor(
+        () => server.alarms.alarms.slice(alarmsBefore).find((entry) => entry.title.includes("Mail Receive Failed")),
+        { what: "the receive-failure alarm" }
+      );
       expect(alarm.title).toBe("🚨 Mail Server Error: Mail Receive Failed");
       expect(alarm.description).toBe("**Error:** the database is unwell");
 
