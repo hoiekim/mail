@@ -14,8 +14,8 @@ use tokio::time::Instant;
 
 use mail_server::smtp::{
     create_smtp_server, evict_smtp_connections, register_smtp_server, unregister_smtp_server, SharedSmtpHandler,
-    SmtpAddress, SmtpAuthRequest, SmtpAuthResponse, SmtpDataStream, SmtpEnvelope, SmtpHandler, SmtpHookError,
-    SmtpServer, SmtpServerError, SmtpServerOptions, SmtpSession,
+    SmtpAddress, SmtpAuthRequest, SmtpAuthResponse, SmtpDataStream, SmtpDataTooLarge, SmtpEnvelope, SmtpHandler,
+    SmtpHookError, SmtpServer, SmtpServerError, SmtpServerOptions, SmtpSession,
 };
 use smtp_support::{tls_source, Client};
 
@@ -954,6 +954,81 @@ fn the_data_stream_and_the_session_can_move_between_tasks() {
     chunked::<SmtpDataStream>();
     movable::<SmtpSession>();
     movable::<SmtpServer>();
+}
+
+/// Holds the message to the listener's ceiling, as the Bun mail handling does
+/// in front of its parser, and keeps what it read.
+struct BoundedHandler(Arc<Mutex<Vec<Result<usize, String>>>>);
+
+impl SmtpHandler for BoundedHandler {
+    async fn on_auth(
+        &self,
+        _auth: SmtpAuthRequest,
+        _session: &mut SmtpSession,
+    ) -> Result<SmtpAuthResponse, SmtpHookError> {
+        Ok(SmtpAuthResponse::reject())
+    }
+
+    async fn on_mail_from(&self, _address: &SmtpAddress, _session: &mut SmtpSession) -> Result<(), SmtpHookError> {
+        Ok(())
+    }
+
+    async fn on_rcpt_to(&self, _address: &SmtpAddress, _session: &mut SmtpSession) -> Result<(), SmtpHookError> {
+        Ok(())
+    }
+
+    async fn on_data(&self, mut stream: SmtpDataStream, _session: &mut SmtpSession) -> Result<(), SmtpHookError> {
+        stream.enforce_size_limit();
+        let mut message = Vec::new();
+        match stream.read_to_end(&mut message).await {
+            Ok(read) => {
+                self.0.lock().unwrap().push(Ok(read));
+                Ok(())
+            }
+            Err(error) if SmtpDataStream::is_too_large(&error) => {
+                self.0.lock().unwrap().push(Err(error.to_string()));
+                let too_large = *error.get_ref().and_then(|inner| inner.downcast_ref::<SmtpDataTooLarge>()).unwrap();
+                Err(too_large.into())
+            }
+            Err(error) => panic!("an unexpected stream error: {error}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn refuses_a_message_past_the_ceiling_a_hook_enforces_once_the_message_is_read_out() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut options = options(TestHandler::default());
+    options.handler = SharedSmtpHandler::new(BoundedHandler(seen.clone()));
+    let server = create_smtp_server(options);
+    let port = server.listen(0).await.unwrap().port();
+
+    // Exactly the ceiling, counted after dot-unstuffing, passes.
+    let mut client = transact(port).await;
+    let line = format!("..{}\r\n", "a".repeat(1021));
+    let body = line.repeat(SIZE as usize / 1024);
+    client.send(body.as_bytes()).await;
+    client.send(b".\r\n").await;
+    assert_eq!(client.reply(Duration::from_secs(5)).await, "250 OK: message queued");
+
+    // One byte more is refused, after the terminator, and the session goes on.
+    assert_eq!(client.command("MAIL FROM:<a@x.org>").await, "250 Accepted");
+    assert_eq!(client.command("RCPT TO:<b@y.org>").await, "250 Accepted");
+    assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+    client.send(body.as_bytes()).await;
+    client.send(b"x").await;
+    assert_eq!(client.reply(Duration::from_millis(300)).await, "<timeout>");
+    client.send(&b"more after the ceiling\r\n".repeat(10_000)).await;
+    client.send(b".\r\n").await;
+    assert_eq!(
+        client.reply(Duration::from_secs(5)).await,
+        format!("552 Error: message exceeds fixed maximum message size {SIZE}")
+    );
+    assert_eq!(client.command("NOOP").await, "250 OK");
+
+    let message = format!("Error: message exceeds fixed maximum message size {SIZE}");
+    assert_eq!(*seen.lock().unwrap(), vec![Ok(SIZE as usize), Err(message)]);
+    drop(server.close());
 }
 
 /// What a hook stores on the session is there for the hooks that follow.

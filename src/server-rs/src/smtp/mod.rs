@@ -14,7 +14,7 @@ pub mod server;
 pub mod types;
 
 pub use data_budget::{with_smtp_data_budget, DataBudgetUnavailableError};
-pub use data_stream::{SmtpDataAbandoned, SmtpDataStream};
+pub use data_stream::{SmtpDataAbandoned, SmtpDataStream, SmtpDataTooLarge};
 pub use listeners::{close_smtp_servers, initialize_smtp, SmtpListeners};
 pub use registry::{evict_smtp_connections, register_smtp_server, unregister_smtp_server};
 pub use server::{create_smtp_server, HandshakeErrorMeta, SmtpServer, SmtpServerError};

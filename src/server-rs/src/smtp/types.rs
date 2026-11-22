@@ -258,8 +258,11 @@ pub trait SmtpHandler: Send + Sync + 'static {
     /// the server.
     ///
     /// The listener's `size` is advertised and checked against a declared
-    /// `SIZE=`, but nothing counts the octets of DATA: a hook that enforces a
-    /// ceiling counts what it reads.
+    /// `SIZE=`, but the listener does not count the octets of DATA, as the
+    /// Bun server's does not. A hook that holds the message to it calls
+    /// [`SmtpDataStream::enforce_size_limit`]: a read past the ceiling then
+    /// fails with [`super::SmtpDataTooLarge`], which converts into the 552 the
+    /// Bun mail handling answers.
     fn on_data(
         &self,
         stream: SmtpDataStream,

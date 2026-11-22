@@ -3,7 +3,9 @@
 //! This is the `PassThrough` the Bun server writes the dot-unstuffed message
 //! into: the connection pushes what it reads, stops reading its socket while
 //! the consumer is behind, and tells a message that ended from one whose
-//! connection went away.
+//! connection went away. It can also hold the message to the listener's size
+//! ceiling, as the Bun mail handling does with its own `PassThrough` in front
+//! of the parser (`boundMessageSize` in `smtp.ts`).
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -16,6 +18,8 @@ use bytes::Bytes;
 use futures_util::Stream;
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::Notify;
+
+use super::types::SmtpHookError;
 
 /// What the stream holds before the connection stops reading its socket: a
 /// `PassThrough` fills its writable and its readable side, 64 KiB each.
@@ -38,10 +42,49 @@ impl fmt::Display for SmtpDataAbandoned {
 
 impl std::error::Error for SmtpDataAbandoned {}
 
+/// The error a read fails with once the message has grown past the size
+/// ceiling a consumer asked for with [`SmtpDataStream::enforce_size_limit`].
+/// See [`SmtpDataStream::is_too_large`].
+///
+/// As a hook's answer it is the reply the Bun server gives such a message:
+/// `552 Error: message exceeds fixed maximum message size <limit>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmtpDataTooLarge {
+    pub limit: u64,
+}
+
+impl SmtpDataTooLarge {
+    /// RFC 5321 §4.2.3 gives 552 to a message that exceeds the fixed maximum size.
+    pub const RESPONSE_CODE: u16 = 552;
+}
+
+impl fmt::Display for SmtpDataTooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Error: message exceeds fixed maximum message size {}", self.limit)
+    }
+}
+
+impl std::error::Error for SmtpDataTooLarge {}
+
+impl From<SmtpDataTooLarge> for SmtpHookError {
+    fn from(error: SmtpDataTooLarge) -> SmtpHookError {
+        SmtpHookError::with_code(SmtpDataTooLarge::RESPONSE_CODE, error.to_string())
+    }
+}
+
 #[derive(Default)]
 struct State {
     chunks: VecDeque<Bytes>,
     buffered: usize,
+    /// Every byte of the message the connection has handed over so far.
+    written: u64,
+    /// The listener's `size`.
+    size_limit: u64,
+    /// The consumer asked for the message to be held to `size_limit`.
+    enforce_size_limit: bool,
+    /// The message grew past `size_limit` while that was enforced: what is
+    /// left of it is discarded and reads fail.
+    too_large: bool,
     /// The terminator was seen: no more bytes will follow.
     ended: bool,
     /// The connection closed before the terminator.
@@ -77,9 +120,32 @@ pub struct SmtpDataStream {
     shared: Arc<Shared>,
 }
 
-pub(crate) fn data_stream() -> (DataWriter, SmtpDataStream) {
-    let shared = Arc::new(Shared { state: Mutex::new(State::default()), progress: Notify::new() });
+/// The two ends of the message of one DATA transaction on a listener whose
+/// `size` is `size_limit`.
+pub(crate) fn data_stream(size_limit: u64) -> (DataWriter, SmtpDataStream) {
+    let state = State { size_limit, ..State::default() };
+    let shared = Arc::new(Shared { state: Mutex::new(state), progress: Notify::new() });
     (DataWriter { shared: shared.clone() }, SmtpDataStream { shared })
+}
+
+impl State {
+    /// Whether what arrives now is thrown away rather than queued.
+    fn discarding(&self) -> bool {
+        self.reader_gone || self.too_large
+    }
+
+    /// Past the enforced ceiling: drops what is queued and everything after
+    /// it. True when this is the moment the ceiling was crossed.
+    fn check_size(&mut self) -> bool {
+        if !self.enforce_size_limit || self.too_large || self.written <= self.size_limit {
+            return false;
+        }
+        self.too_large = true;
+        self.chunks.clear();
+        self.buffered = 0;
+        self.need_drain = false;
+        true
+    }
 }
 
 impl DataWriter {
@@ -87,7 +153,20 @@ impl DataWriter {
     /// socket should not be read until [`DataWriter::needs_drain`] clears.
     pub fn write(&self, chunk: Bytes) -> bool {
         let mut state = self.shared.state.lock().unwrap();
-        if state.reader_gone || state.ended || state.abandoned || chunk.is_empty() {
+        if state.ended || state.abandoned || chunk.is_empty() {
+            return !state.need_drain;
+        }
+        state.written += chunk.len() as u64;
+        if state.check_size() {
+            // A reader waiting for more learns at once.
+            let waker = state.reader.take();
+            drop(state);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+            return true;
+        }
+        if state.discarding() {
             return !state.need_drain;
         }
         state.buffered += chunk.len();
@@ -141,10 +220,11 @@ impl DataWriter {
         self.shared.state.lock().unwrap().need_drain
     }
 
-    /// The message ended and its consumer has read all of it, or dropped it.
+    /// The message ended and its consumer has read all of it, or dropped it,
+    /// or it went past the size ceiling and the rest was discarded.
     pub fn is_finished(&self) -> bool {
         let state = self.shared.state.lock().unwrap();
-        state.ended && (state.end_read || state.reader_gone)
+        state.ended && (state.end_read || state.discarding())
     }
 
     /// Resolves when the consumer made progress the connection cares about.
@@ -166,6 +246,50 @@ impl SmtpDataStream {
         error.get_ref().is_some_and(|inner| inner.is::<SmtpDataAbandoned>())
     }
 
+    /// Whether `error` is this stream reporting that the message grew past
+    /// the ceiling [`SmtpDataStream::enforce_size_limit`] set.
+    pub fn is_too_large(error: &io::Error) -> bool {
+        error.get_ref().is_some_and(|inner| inner.is::<SmtpDataTooLarge>())
+    }
+
+    /// The listener's `size`: the ceiling it advertises in EHLO and checks a
+    /// declared `SIZE=` against.
+    pub fn size_limit(&self) -> u64 {
+        self.shared.state.lock().unwrap().size_limit
+    }
+
+    /// How many bytes of the message have arrived so far, read or not.
+    pub fn received(&self) -> u64 {
+        self.shared.state.lock().unwrap().written
+    }
+
+    /// Holds the message to the listener's `size`. Once more than that has
+    /// arrived — the whole message counted, from its first byte, after
+    /// dot-unstuffing — what is still queued is dropped, every read from
+    /// then on fails with [`SmtpDataTooLarge`], and the server discards the
+    /// rest of the message up to its terminator before it replies. A message
+    /// of exactly `size` bytes passes.
+    ///
+    /// The listener does not do this on its own, because the Bun server's
+    /// does not: there the mail handling counts the octets in front of its
+    /// parser and refuses as soon as the ceiling is crossed. Answer the hook
+    /// with the error (`SmtpHookError::from(too_large)`) for its 552.
+    pub fn enforce_size_limit(&mut self) {
+        let mut state = self.shared.state.lock().unwrap();
+        state.enforce_size_limit = true;
+        let crossed = state.check_size();
+        drop(state);
+        if crossed {
+            // The connection may be holding its socket for this consumer.
+            self.shared.progress.notify_one();
+        }
+    }
+
+    /// Whether the message went past the ceiling being enforced.
+    pub fn is_over_size_limit(&self) -> bool {
+        self.shared.state.lock().unwrap().too_large
+    }
+
     /// The bytes that have arrived and not been read yet. The connection
     /// stops reading its socket while this is at the high-water mark.
     pub fn buffered(&self) -> usize {
@@ -179,6 +303,10 @@ impl SmtpDataStream {
 
     fn poll_chunk(&mut self, cx: &mut Context<'_>, limit: usize) -> Poll<io::Result<Option<Bytes>>> {
         let mut state = self.shared.state.lock().unwrap();
+        if state.too_large {
+            let limit = state.size_limit;
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, SmtpDataTooLarge { limit })));
+        }
         if let Some(front) = state.chunks.front_mut() {
             let piece = if front.len() <= limit {
                 state.chunks.pop_front().expect("the front chunk exists")
@@ -264,6 +392,12 @@ mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
 
+    const LIMIT: u64 = 1024 * 1024;
+
+    fn data_stream() -> (DataWriter, SmtpDataStream) {
+        super::data_stream(LIMIT)
+    }
+
     #[tokio::test]
     async fn delivers_the_message_and_then_its_end() {
         let (writer, mut stream) = data_stream();
@@ -314,5 +448,84 @@ mod tests {
         assert!(writer.write(Bytes::from(vec![b'a'; HIGH_WATER_MARK])));
         writer.end();
         assert!(writer.is_finished());
+    }
+}
+
+#[cfg(test)]
+mod size_limit_tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn passes_a_message_of_exactly_the_ceiling() {
+        let (writer, mut stream) = data_stream(10);
+        stream.enforce_size_limit();
+        writer.write(Bytes::from_static(b"12345"));
+        writer.write(Bytes::from_static(b"67890"));
+        writer.end();
+        let mut message = Vec::new();
+        stream.read_to_end(&mut message).await.unwrap();
+        assert_eq!(message, b"1234567890");
+        assert_eq!(stream.received(), 10);
+        assert!(!stream.is_over_size_limit());
+        assert!(writer.is_finished());
+    }
+
+    #[tokio::test]
+    async fn fails_the_read_once_the_message_grows_past_the_ceiling() {
+        let (writer, mut stream) = data_stream(10);
+        assert_eq!(stream.size_limit(), 10);
+        stream.enforce_size_limit();
+        writer.write(Bytes::from_static(b"12345"));
+        assert_eq!(stream.next_chunk().await.unwrap().unwrap(), "12345");
+        writer.write(Bytes::from_static(b"678901"));
+        let error = stream.next_chunk().await.unwrap_err();
+        assert!(SmtpDataStream::is_too_large(&error));
+        assert!(!SmtpDataStream::is_abandoned(&error));
+        assert!(stream.is_over_size_limit());
+        let too_large = error.get_ref().and_then(|inner| inner.downcast_ref::<SmtpDataTooLarge>()).copied();
+        let refusal = SmtpHookError::from(too_large.expect("the error says how large"));
+        assert_eq!(refusal, SmtpHookError::with_code(552, "Error: message exceeds fixed maximum message size 10"));
+
+        // The rest is discarded without holding the connection back, and the
+        // reply may go out once the terminator is in.
+        assert!(writer.write(Bytes::from(vec![b'a'; 2 * HIGH_WATER_MARK])));
+        assert!(!writer.needs_drain());
+        assert!(!writer.is_finished());
+        writer.end();
+        assert!(writer.is_finished());
+        assert!(SmtpDataStream::is_too_large(&stream.next_chunk().await.unwrap_err()));
+    }
+
+    #[tokio::test]
+    async fn counts_what_arrived_before_the_ceiling_was_asked_for() {
+        let (writer, mut stream) = data_stream(10);
+        writer.write(Bytes::from_static(b"123456789012"));
+        assert_eq!(stream.received(), 12);
+        assert!(!stream.is_over_size_limit());
+        stream.enforce_size_limit();
+        assert!(stream.is_over_size_limit());
+        assert!(SmtpDataStream::is_too_large(&stream.next_chunk().await.unwrap_err()));
+    }
+
+    #[tokio::test]
+    async fn wakes_a_reader_that_waits_when_the_ceiling_is_crossed() {
+        let (writer, mut stream) = data_stream(4);
+        stream.enforce_size_limit();
+        let reader = tokio::spawn(async move { stream.next_chunk().await.map(|chunk| chunk.map(|c| c.to_vec())) });
+        tokio::task::yield_now().await;
+        writer.write(Bytes::from_static(b"12345"));
+        let error = reader.await.unwrap().unwrap_err();
+        assert!(SmtpDataStream::is_too_large(&error));
+    }
+
+    #[tokio::test]
+    async fn leaves_a_message_alone_when_nobody_asked_for_the_ceiling() {
+        let (writer, mut stream) = data_stream(4);
+        writer.write(Bytes::from_static(b"123456789"));
+        writer.end();
+        let mut message = Vec::new();
+        stream.read_to_end(&mut message).await.unwrap();
+        assert_eq!(message, b"123456789");
     }
 }

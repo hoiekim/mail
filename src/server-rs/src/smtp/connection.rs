@@ -1181,7 +1181,7 @@ impl Connection {
             return self.send(503, "Error: need RCPT command");
         }
 
-        let (writer, stream) = data_stream();
+        let (writer, stream) = data_stream(self.server.options.size);
         self.data = Some(DataTransfer { writer, unstuffer: Some(DotUnstuffer::new()), answer: None });
 
         let handler = self.server.options.handler.0.clone();
