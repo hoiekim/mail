@@ -21,6 +21,12 @@ and rustup only reads it from the working directory. The pin is load-bearing.
 Lowercasing follows the compiler's Unicode tables, which must match Bun
 1.4.4's, and `tests/spam_golden.rs` fails when they drift.
 
+The SMTP and IMAP listeners terminate TLS with the system OpenSSL 3, linked
+dynamically. Building needs its headers and `pkg-config`
+(`apt-get install libssl-dev pkg-config` on Debian and Ubuntu; GitHub's
+Ubuntu runners have both), and the server needs `libssl.so.3` at run time
+(`libssl3`). Outbound HTTPS (Mailgun, the OpenID provider) stays on rustls.
+
 It reads the environment the Bun server reads. Two things differ:
 
 - `CLIENT_DIR` — where the built web client is (`bun run build-client`).
@@ -119,11 +125,20 @@ are needed, not once at start.
 Everything the black-box suite pins is identical. These differences are
 deliberate or unavoidable, and no test pins them:
 
-- **TLS.** The mail listeners use rustls (TLS 1.2 and 1.3). It has no CBC
-  cipher suites, so a mail server that offers only AES-CBC at TLS 1.2 cannot
-  connect, where Bun's OpenSSL accepts it. The certificate is read at every
-  handshake rather than once at boot, so a renewed certificate is served
-  without a restart.
+- **TLS certificate.** The certificate and key are read at every handshake
+  rather than once at boot, so a renewed certificate is served without a
+  restart. They are parsed again only when the files change.
+- **TLS handshake.** OpenSSL is set up (`tls.rs`) to take what Bun's
+  BoringSSL takes, listener by listener: the same versions, suites, groups,
+  signature algorithms and suite order. What OpenSSL 3.0 does differently,
+  with no handshake that succeeds on one failing on the other in practice: it
+  has no X25519MLKEM768 (a client offering it gets X25519); at TLS 1.3 it uses
+  a key share the client sent where Bun may first ask for its preferred
+  group; it honours `max_fragment_length`; it refuses a client's
+  renegotiation with a warning alert, not a fatal one; sessions also resume
+  on IMAP's STARTTLS; and a TLS 1.2 client that lists only signature
+  algorithms the server does not sign with (SHA-224 alone, say) is refused
+  where Bun falls back to RSA key exchange.
 - **HTTP parsing.** A `#` inside a request target is dropped by the HTTP
   library before the server sees it. Answers given by the parser itself
   differ in their headers: the 400 for an HTTP/1.1 request without `Host`, a

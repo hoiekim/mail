@@ -3,8 +3,9 @@ import crypto from "crypto";
 import fs from "fs";
 import net from "net";
 import { waitFor, type TestServer } from "../harness";
+import { handshakeWithoutSignatureAlgorithms, sClient, type StartTls } from "../harness/handshake";
 import { SmtpClient } from "../harness/smtp";
-import { HOST, bootAll, closeClients, ehloReply, mailByMessageId, messageId, open, plain, raws, session } from "./support";
+import { HOST, bootAll, closeClients, ehloReply, mailByMessageId, messageId, open, plain, raws, session, type Listener } from "./support";
 
 // `server` has a certificate, so all three listeners are up. `unreadable` is
 // configured with certificate paths that do not exist.
@@ -217,6 +218,86 @@ describe("STARTTLS", () => {
     expect(result.final.raw).toBe("250 OK: message queued");
     const mail = await mailByMessageId(server, id);
     expect(mail.text).toBe(text.replace(/\r\n/g, "\n"));
+  });
+});
+
+// What an old sender's TLS 1.2 stack offers, and what is refused, on every
+// listener: implicit TLS (465) and STARTTLS (25, 587). A sender refused here
+// does not fall back to cleartext: Postfix defers the mail until it bounces.
+describe("the TLS a sending server may offer", () => {
+  const LISTENERS: [Listener, StartTls | undefined][] = [
+    ["smtps", undefined],
+    ["smtp", "smtp"],
+    ["submission", "smtp"],
+  ];
+  const offer = (listener: Listener, starttls: StartTls | undefined, args: string[]) =>
+    sClient(server.ports[listener], args, { starttls, protocol: "smtp" });
+
+  // As a Postfix pinned to an old cipher list, or Windows 7's SChannel, offers.
+  const CBC_ONLY = ["-tls1_2", "-cipher", "ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA:AES128-SHA:AES256-SHA"];
+  const RSA_KEY_EXCHANGE_ONLY = ["-tls1_2", "-cipher", "AES256-SHA:AES128-GCM-SHA256"];
+  const SHA1_SIGNATURES_ONLY = ["-tls1_2", "-sigalgs", "RSA+SHA1", "-cipher", "ECDHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0"];
+
+  for (const [listener, starttls] of LISTENERS) {
+    test(`${listener}: TLS 1.2 with CBC suites only`, async () => {
+      const result = await offer(listener, starttls, CBC_ONLY);
+      expect([result.protocol, result.cipher, result.roundTrip]).toEqual(["TLSv1.2", "ECDHE-RSA-AES128-SHA", true]);
+    });
+
+    test(`${listener}: TLS 1.2 with RSA key exchange only`, async () => {
+      const result = await offer(listener, starttls, RSA_KEY_EXCHANGE_ONLY);
+      expect([result.protocol, result.cipher, result.signature, result.roundTrip]).toEqual(["TLSv1.2", "AES256-SHA", undefined, true]);
+    });
+
+    test(`${listener}: TLS 1.2 with SHA-1 signatures only`, async () => {
+      const result = await offer(listener, starttls, SHA1_SIGNATURES_ONLY);
+      expect([result.protocol, result.signature, result.roundTrip]).toEqual(["TLSv1.2", "RSA/SHA1", true]);
+    });
+
+    test(`${listener}: TLS 1.2 without signature_algorithms is signed for with SHA-1`, async () => {
+      const result = await handshakeWithoutSignatureAlgorithms(server.ports[listener], starttls);
+      expect(result.cipher).toBe("ECDHE-RSA-AES128-GCM-SHA256");
+      expect(result.signatureScheme).toBe(0x0201);
+      expect(result.firstLine).toBe(starttls ? `250-${HOST} Nice to meet you, [127.0.0.1]` : `220 ${HOST} ESMTP`);
+    });
+
+    test(`${listener}: TLS 1.0 and 1.1 are refused`, async () => {
+      for (const version of ["-tls1", "-tls1_1"]) {
+        const result = await offer(listener, starttls, [version, "-cipher", "ALL:@SECLEVEL=0"]);
+        expect(result.protocol).toBeUndefined();
+        expect(result.output).toContain("alert protocol version");
+      }
+    });
+  }
+
+  test("STARTTLS negotiates what the implicit-TLS port negotiates", async () => {
+    const offers = [
+      [],
+      ["-tls1_2"],
+      CBC_ONLY,
+      RSA_KEY_EXCHANGE_ONLY,
+      SHA1_SIGNATURES_ONLY,
+      ["-tls1_2", "-cipher", "ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES256-GCM-SHA384"],
+      ["-tls1_2", "-groups", "P-384:X25519"],
+      ["-tls1_2", "-cipher", "ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0"],
+      ["-tls1_3", "-ciphersuites", "TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"],
+      ["-tls1_3", "-groups", "P-256"],
+    ];
+    const negotiated = async (listener: Listener, starttls: StartTls | undefined) => {
+      const results = [];
+      for (const args of offers) {
+        const { protocol, cipher, signature, serverTempKey, roundTrip } = await offer(listener, starttls, args);
+        results.push({ args: args.join(" "), protocol, cipher, signature, serverTempKey, roundTrip });
+      }
+      return results;
+    };
+    const implicit = await negotiated("smtps", undefined);
+    // Every offer but the one of suites outside the set is taken.
+    expect(implicit.filter((result) => !result.protocol).map((result) => result.args)).toEqual([
+      "-tls1_2 -cipher ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0",
+    ]);
+    expect(await negotiated("smtp", "smtp")).toEqual(implicit);
+    expect(await negotiated("submission", "smtp")).toEqual(implicit);
   });
 });
 

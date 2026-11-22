@@ -14,7 +14,6 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures_util::Stream;
 use serde_json::json;
-use tokio_rustls::TlsAcceptor;
 
 use super::auth::{handle_authenticate, handle_login, AuthBackend, AuthConnection, AuthResult, ServerAuthBackend};
 use super::capabilities::get_capabilities;
@@ -35,7 +34,7 @@ use super::types::{AppendRequest, CopyRequest, FetchRequest, MoveRequest, Search
 use super::{mailbox_ops, message_ops};
 #[cfg(test)]
 use crate::models::SignedUser;
-use crate::tls::{get_tls_credentials, TlsCredentials};
+use crate::tls::{get_tls_credentials, TlsAcceptor, TlsCredentials};
 use crate::{logger, sso};
 
 /// What a session holds besides its socket.

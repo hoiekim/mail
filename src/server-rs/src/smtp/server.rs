@@ -21,6 +21,7 @@ use super::types::SmtpServerOptions;
 use crate::logger;
 use crate::net::bind_all;
 use crate::proxy_protocol::{read_proxy_header, unmapped, Peer, Prefixed};
+use crate::tls::TlsError;
 
 /// How long an implicit-TLS client may take to complete its handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -64,10 +65,10 @@ impl SmtpServerError {
 
     /// The error of a failed socket operation, as Node would describe it.
     pub(crate) fn from_io(syscall: &str, error: &io::Error) -> SmtpServerError {
-        if let Some(tls) = error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
-            let reason = tls_reason(tls);
+        if let Some(tls) = error.get_ref().and_then(|inner| inner.downcast_ref::<TlsError>()) {
+            let reason = tls.reason.to_uppercase().replace(' ', "_");
             return SmtpServerError {
-                message: tls.to_string(),
+                message: tls.message.clone(),
                 code: Some(format!("ERR_SSL_{reason}")),
                 library: Some("SSL routines".to_string()),
                 reason: Some(reason),
@@ -138,41 +139,6 @@ fn errno_name(error: &io::Error) -> Option<&'static str> {
         io::ErrorKind::ConnectionAborted => Some("ECONNABORTED"),
         _ => None,
     })
-}
-
-/// What OpenSSL would call a rustls error: the alerts a peer sends keep the
-/// names the certificate-rejection check looks for.
-fn tls_reason(error: &rustls::Error) -> String {
-    use rustls::AlertDescription as Alert;
-    match error {
-        rustls::Error::AlertReceived(alert) => match alert {
-            Alert::BadCertificate => "SSLV3_ALERT_BAD_CERTIFICATE".to_string(),
-            Alert::UnsupportedCertificate => "SSLV3_ALERT_UNSUPPORTED_CERTIFICATE".to_string(),
-            Alert::CertificateRevoked => "SSLV3_ALERT_CERTIFICATE_REVOKED".to_string(),
-            Alert::CertificateExpired => "SSLV3_ALERT_CERTIFICATE_EXPIRED".to_string(),
-            Alert::CertificateUnknown => "SSLV3_ALERT_CERTIFICATE_UNKNOWN".to_string(),
-            Alert::UnknownCA => "TLSV1_ALERT_UNKNOWN_CA".to_string(),
-            other => format!("TLS_ALERT_{}", screaming_snake(&format!("{other:?}"))),
-        },
-        rustls::Error::PeerIncompatible(_) => "PEER_INCOMPATIBLE".to_string(),
-        rustls::Error::PeerMisbehaved(_) => "PEER_MISBEHAVED".to_string(),
-        rustls::Error::InvalidMessage(_) => "INVALID_MESSAGE".to_string(),
-        rustls::Error::NoCertificatesPresented => "PEER_DID_NOT_RETURN_A_CERTIFICATE".to_string(),
-        rustls::Error::DecryptError => "DECRYPTION_FAILED_OR_BAD_RECORD_MAC".to_string(),
-        _ => "TLS_ERROR".to_string(),
-    }
-}
-
-/// `HandshakeFailure` → `HANDSHAKE_FAILURE`.
-fn screaming_snake(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 4);
-    for (index, c) in name.chars().enumerate() {
-        if c.is_ascii_uppercase() && index > 0 {
-            out.push('_');
-        }
-        out.push(c.to_ascii_uppercase());
-    }
-    out
 }
 
 type ErrorListener = Arc<dyn Fn(&SmtpServerError) + Send + Sync>;

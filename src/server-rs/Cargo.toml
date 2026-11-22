@@ -73,10 +73,15 @@ rsa = { version = "0.9", features = ["sha2"] }
 hkdf = "0.12"
 aes-gcm = "0.10"
 
-# TLS for the mail listeners
+# TLS for the mail listeners: the system OpenSSL, which takes the legacy
+# TLS 1.2 handshakes Bun's BoringSSL takes and rustls refuses (`tls.rs`).
+openssl = "0.10"
+openssl-sys = "0.9"
+foreign-types = "0.3"
+tokio-openssl = "0.6"
+# The loopback probe of `/api/health`, and the tests' TLS client.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
-rustls-pemfile = "2"
 
 # DNS (DNSBL lookups)
 hickory-resolver = "0.24"

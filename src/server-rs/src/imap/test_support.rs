@@ -10,13 +10,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use tokio_rustls::TlsAcceptor;
 
 use super::auth::AuthBackend;
 use crate::models::{SignedUser, User};
 use crate::read_only::{remap_read_only_session, ADMIN_RO_USERNAME, ADMIN_USERNAME};
 use crate::sso::app_password::AppPasswordCheck;
 use crate::sso::Sso;
+use crate::tls::TlsAcceptor;
 
 static PROCESS_WIDE: RwLock<()> = RwLock::const_new(());
 
@@ -87,18 +87,7 @@ pub(crate) fn certificate() -> Option<&'static (PathBuf, PathBuf)> {
 /// environment the server reads its own certificate from.
 pub(crate) fn acceptor() -> Option<TlsAcceptor> {
     let (cert, key) = certificate()?;
-    let mut cert_reader = std::io::BufReader::new(std::fs::File::open(cert).ok()?);
-    let certificates: Vec<_> = rustls_pemfile::certs(&mut cert_reader).collect::<Result<_, _>>().ok()?;
-    let mut key_reader = std::io::BufReader::new(std::fs::File::open(key).ok()?);
-    let private_key = rustls_pemfile::private_key(&mut key_reader).ok()??;
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = rustls::ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .ok()?
-        .with_no_client_auth()
-        .with_single_cert(certificates, private_key)
-        .ok()?;
-    Some(TlsAcceptor::from(Arc::new(config)))
+    crate::tls::acceptor_for(cert.to_str()?, key.to_str()?).ok()
 }
 
 /// The server name the test certificate is for.
