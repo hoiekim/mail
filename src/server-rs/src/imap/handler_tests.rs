@@ -2820,6 +2820,23 @@ mod command_budget_wiring {
     }
 
     #[tokio::test]
+    async fn gives_the_slot_back_however_the_command_ends_but_never_twice() {
+        let _lock = test_lock().await;
+        reset_command_budget();
+        // A command that ends by unwinding still drops its release.
+        acquire_command_budget().await;
+        drop(ReleaseOnDrop(create_command_budget_hold(true, Duration::ZERO)));
+        assert_eq!(command_budget_in_flight(), 0);
+        // A slot given up for a deeper wait and not yet taken back is not
+        // the command's to hand back.
+        acquire_command_budget().await;
+        let hold = create_command_budget_hold(false, Duration::ZERO);
+        drop(ReleaseOnDrop(hold));
+        assert_eq!(command_budget_in_flight(), 1);
+        reset_command_budget();
+    }
+
+    #[tokio::test]
     async fn abandons_a_queued_command_whose_peer_disconnected_while_it_waited() {
         abandons_a_queued_command(|wire| {
             wire.session.socket().destroy();

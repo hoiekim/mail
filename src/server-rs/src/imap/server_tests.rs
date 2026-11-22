@@ -148,6 +148,114 @@ fn ports_follow_number_or_default() {
     assert!(port_setting(Some("143.5"), 143).is_err());
 }
 
+mod index_parsers {
+    use serde_json::{json, Value};
+
+    use super::super::super::parsers::command_parser::parse_command;
+
+    /// The parsed command as the Bun server's JSON has it, with its tag.
+    fn parsed(line: &str) -> (String, Value, usize) {
+        let result = parse_command(line, None);
+        assert!(result.success, "{line}");
+        let consumed = result.consumed;
+        let parsed = result.value.unwrap();
+        (parsed.tag, serde_json::from_str(&parsed.request.to_json_string()).unwrap(), consumed)
+    }
+
+    #[test]
+    fn parses_a_silent_uid_store() {
+        let (tag, request, consumed) = parsed("1.1 UID STORE 1 +FLAGS.SILENT (\\Seen)");
+        assert_eq!(tag, "1.1");
+        assert_eq!(consumed, 37);
+        assert_eq!(request["type"], "UID");
+        assert_eq!(request["data"]["command"], "STORE");
+        let store = &request["data"]["request"]["data"];
+        assert_eq!(store["operation"], "+FLAGS.SILENT");
+        assert_eq!(store["flags"], json!(["\\Seen"]));
+        assert_eq!(store["silent"], true);
+    }
+
+    #[test]
+    fn parses_a_uid_store_of_answered() {
+        let (tag, request, _) = parsed("1.2 UID STORE 1 +FLAGS (\\Answered)");
+        assert_eq!(tag, "1.2");
+        let store = &request["data"]["request"]["data"];
+        assert_eq!(store["operation"], "+FLAGS");
+        assert_eq!(store["flags"], json!(["\\Answered"]));
+        assert_eq!(store["silent"], false);
+    }
+
+    #[test]
+    fn parses_a_fetch_of_a_range() {
+        let (tag, request, _) = parsed("2.1 FETCH 1:15 (FLAGS ENVELOPE)");
+        assert_eq!(tag, "2.1");
+        assert_eq!(request["type"], "FETCH");
+        assert_eq!(request["data"]["sequenceSet"]["ranges"][0], json!({ "start": 1, "end": 15 }));
+    }
+
+    #[test]
+    fn parses_a_uid_search_of_comma_separated_numbers() {
+        let (tag, request, _) = parsed("3.1 UID SEARCH 1,577,5084,9591");
+        assert_eq!(tag, "3.1");
+        let criterion = &request["data"]["request"]["data"]["criteria"][0];
+        assert_eq!(criterion["type"], "SEQ");
+        assert_eq!(
+            criterion["sequenceSet"],
+            json!({ "type": "sequence", "ranges": [{ "start": 1 }, { "start": 577 }, { "start": 5084 }, { "start": 9591 }] })
+        );
+    }
+
+    #[test]
+    fn parses_a_uid_search_with_a_uid_range_to_the_end() {
+        let (tag, request, _) = parsed("4.1 UID SEARCH UID 5091:*");
+        assert_eq!(tag, "4.1");
+        let criterion = &request["data"]["request"]["data"]["criteria"][0];
+        assert_eq!(criterion["type"], "UID");
+        assert_eq!(criterion["sequenceSet"], json!({ "type": "sequence", "ranges": [{ "start": 5091, "end": 9007199254740991_i64 }] }));
+    }
+
+    #[test]
+    fn parses_a_fetch_to_the_end() {
+        let (tag, request, _) = parsed("5.1 FETCH 1:* (FLAGS)");
+        assert_eq!(tag, "5.1");
+        assert_eq!(request["data"]["sequenceSet"]["ranges"][0], json!({ "start": 1, "end": 9007199254740991_i64 }));
+    }
+
+    #[test]
+    fn parses_a_store_to_the_end() {
+        let (tag, request, _) = parsed("6.1 STORE 1:* +FLAGS (\\Seen)");
+        assert_eq!(tag, "6.1");
+        assert_eq!(request["type"], "STORE");
+        assert_eq!(request["data"]["sequenceSet"]["ranges"][0], json!({ "start": 1, "end": 9007199254740991_i64 }));
+    }
+
+    #[test]
+    fn parses_a_copy_of_one_message() {
+        let (tag, request, _) = parsed("7.1 COPY 123 \"INBOX/Archive\"");
+        assert_eq!(tag, "7.1");
+        assert_eq!(request["data"]["sequenceSet"]["ranges"][0], json!({ "start": 123 }));
+        assert_eq!(request["data"]["mailbox"], "INBOX/Archive");
+    }
+
+    #[test]
+    fn parses_a_uid_copy_of_a_range() {
+        let (tag, request, _) = parsed("8.1 UID COPY 1:10 \"Sent Messages/Archive\"");
+        assert_eq!(tag, "8.1");
+        assert_eq!(request["data"]["command"], "COPY");
+        let copy = &request["data"]["request"]["data"];
+        assert_eq!(copy["sequenceSet"]["ranges"][0], json!({ "start": 1, "end": 10 }));
+        assert_eq!(copy["mailbox"], "Sent Messages/Archive");
+    }
+
+    #[test]
+    fn parses_a_copy_of_several_messages() {
+        let (tag, request, _) = parsed("9.1 COPY 1,5,10 \"INBOX\"");
+        assert_eq!(tag, "9.1");
+        assert_eq!(request["data"]["sequenceSet"]["ranges"], json!([{ "start": 1 }, { "start": 5 }, { "start": 10 }]));
+        assert_eq!(request["data"]["mailbox"], "INBOX");
+    }
+}
+
 #[tokio::test]
 async fn greets_and_serves_a_connection() {
     let _exclusive = test_support::exclusive().await;
