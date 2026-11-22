@@ -55,8 +55,12 @@ test("an unread mail is counted", async () => {
 - `server.db.query(sql, values)` reads and seeds the database directly.
 - `server.mailgun.requests` and `server.alarms.alarms` are what the server
   sent out.
+- `deliverMail` / `rfc822` (in `harness/deliver.ts`) put mail into a mailbox
+  the way a relay would. Scripted protocol clients live in `harness/smtp.ts`
+  and `harness/imap.ts`, and a fake OpenID Connect provider in
+  `harness/issuer.ts`; import them by path.
 - Never branch on which server is under test. If the two differ, one of them
   is wrong.
 
 Set `MAIL_E2E_LOGS=1` to stream the server's output while a test runs, or
-print `server.logs()`.
+print `server.logs()`. `bun run typecheck:e2e` type-checks the suite.
