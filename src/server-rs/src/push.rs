@@ -26,8 +26,17 @@ static VAPID: RwLock<Vapid> = RwLock::new(Vapid {
     configured: false,
 });
 
+/// `Buffer.from(value, "base64url")`: padding is optional, and bits left over
+/// in the last character are dropped rather than refused.
 fn decode_base64url(value: &str) -> Option<Vec<u8>> {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value.trim_end_matches('=')).ok()
+    use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+    const LENIENT: GeneralPurpose = GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        GeneralPurposeConfig::new()
+            .with_decode_allow_trailing_bits(true)
+            .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+    LENIENT.decode(value.trim_end_matches('=')).ok()
 }
 
 /// The checks the push library applies to its VAPID details.
@@ -38,7 +47,9 @@ fn validate_vapid_details(subject: &str, public_key: &str, private_key: &str) ->
     if url::Url::parse(subject).is_err() {
         bail!("Vapid subject is not a valid URL. {subject}");
     }
-    let is_url_safe = |value: &str| value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'=');
+    // `/^[A-Za-z0-9\-_]+$/`: no padding, and not empty.
+    let is_url_safe =
+        |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if !is_url_safe(public_key) {
         bail!("Vapid public key must be a URL safe Base 64 (without \"=\")");
     }
@@ -57,13 +68,15 @@ fn validate_vapid_details(subject: &str, public_key: &str, private_key: &str) ->
 /// Reads the VAPID keys. Push is on only when both are set; a malformed pair
 /// is a startup error.
 pub fn init_push() -> Result<()> {
-    let public_key = env::non_empty("PUSH_VAPID_PUBLIC_KEY");
-    let private_key = env::non_empty("PUSH_VAPID_PRIVATE_KEY");
+    // Kept as set, even empty: the public-key route answers with it verbatim.
+    let public_key = env::var("PUSH_VAPID_PUBLIC_KEY");
+    let private_key = env::var("PUSH_VAPID_PRIVATE_KEY");
     let domain = env::non_empty("EMAIL_DOMAIN").unwrap_or_else(|| "mydomain".to_string());
     let subject = format!("mailto:admin@{domain}");
-    let configured = public_key.is_some() && private_key.is_some();
+    let filled = |key: &Option<String>| key.as_deref().is_some_and(|key| !key.is_empty());
+    let configured = filled(&public_key) && filled(&private_key);
 
-    if let (Some(public_key), Some(private_key)) = (&public_key, &private_key) {
+    if let (true, Some(public_key), Some(private_key)) = (configured, &public_key, &private_key) {
         validate_vapid_details(&subject, public_key, private_key)?;
     } else {
         logger::warn(
