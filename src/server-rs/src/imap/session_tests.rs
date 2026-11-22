@@ -60,7 +60,7 @@ fn delay(ms: u64) -> tokio::time::Sleep {
 fn prime(session: &ImapSession, authenticated_as: &str, stamped: i64) {
     let mut state = session.state();
     state.authenticated = true;
-    state.user = Some(SignedUser::new(Some("user-1".into()), Some(authenticated_as.into()), Some("u@test".into())));
+    state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some(authenticated_as.into()), Some("u@test".into()))));
     state.authenticated_as = Some(authenticated_as.into());
     state.credential_password_version = Some(stamped);
 }
@@ -127,7 +127,7 @@ mod verify_credential_version {
     async fn keys_the_comparison_on_the_credential_presented_not_a_remapped_user() {
         let fixture = fixture(false);
         prime(&fixture.session, "admin-ro", 1);
-        fixture.session.state().user = Some(SignedUser::new(Some("user-admin".into()), Some("admin".into()), Some("a@test".into())));
+        fixture.session.state().store = Some(Store::new(SignedUser::new(Some("user-admin".into()), Some("admin".into()), Some("a@test".into()))));
 
         let ok = fixture
             .session
@@ -240,7 +240,7 @@ fn idling(advertised: &[i64]) -> Fixture {
     {
         let mut state = fixture.session.state();
         state.authenticated = true;
-        state.user = Some(SignedUser::new(Some("user-1".into()), Some("alice".into()), Some("a@test".into())));
+        state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("alice".into()), Some("a@test".into()))));
         state.selected_mailbox = Some("INBOX".into());
         set_sequence_mapping(&mut state.seq_state, advertised.to_vec());
         state.is_idling = true;
@@ -292,10 +292,11 @@ mod notify_mailbox_update {
     }
 
     #[tokio::test]
-    async fn without_a_store_the_seam_reads_nothing_and_nothing_is_sent() {
-        // Phase 1: the store is not there, so the notification stops at the
-        // seam and the client keeps the mapping it has.
+    async fn without_a_store_nothing_is_read_and_nothing_is_sent() {
+        // No store means nothing to read: the notification stops before the
+        // database and the client keeps the mapping it has.
         let fixture = idling(&[10, 20, 30]);
+        fixture.session.state().store = None;
         assert_eq!(fixture.session.notify_mailbox_update().await.unwrap(), None);
         assert_eq!(fixture.wire().await, "");
         assert_eq!(mapping(&fixture), (vec![10, 20, 30], Some(3)));
@@ -596,7 +597,7 @@ mod store_backed_commands {
         {
             let mut state = fixture.session.state();
             state.authenticated = true;
-            state.user = Some(SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into())));
+            state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into()))));
             state.authenticated_as = Some(if read_only_user { "admin-ro" } else { "tester" }.into());
             state.is_read_only_user = read_only_user;
             state.selected_mailbox = (!mailbox.is_empty()).then(|| mailbox.to_string());
@@ -729,28 +730,5 @@ mod store_backed_commands {
         );
         assert_eq!(fixture.session.selected_mailbox().as_deref(), Some("INBOX"));
         assert_eq!(run(&fixture, "a MOVE 1 Trash").await, "a NO [READ-ONLY] Mailbox is read-only\r\n");
-    }
-
-    #[tokio::test]
-    async fn each_store_seam_answers_its_commands_failure_for_now() {
-        let _budget = crate::imap::command_budget::test_lock().await;
-        let fixture = selected("INBOX", false, false);
-        for (line, answer) in [
-            ("a STATUS INBOX (MESSAGES)", "a NO STATUS failed\r\n"),
-            ("a LIST \"\" *", "a NO LIST failed\r\n"),
-            ("a LSUB \"\" *", "a NO LSUB failed\r\n"),
-            ("a FETCH 1 FLAGS", "a NO FETCH failed\r\n"),
-            ("a UID FETCH 1 FLAGS", "a NO FETCH failed\r\n"),
-            ("a SEARCH ALL", "a NO SEARCH failed\r\n"),
-            ("a STORE 1 +FLAGS (\\Seen)", "a NO STORE failed\r\n"),
-            ("a COPY 1 Trash", "a NO COPY failed\r\n"),
-            ("a MOVE 1 Trash", "a NO MOVE failed\r\n"),
-            ("a EXPUNGE", "a NO EXPUNGE failed\r\n"),
-        ] {
-            assert_eq!(run(&fixture, line).await, answer, "{line}");
-        }
-        // A failed SELECT leaves no mailbox selected (RFC 3501 §6.3.1).
-        assert_eq!(run(&fixture, "a SELECT INBOX").await, "a NO SELECT failed\r\n");
-        assert_eq!(fixture.session.selected_mailbox(), None);
     }
 }
