@@ -1,10 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import webPush from "web-push";
 import {
   ADMIN_PASSWORD,
   adminUser,
   bootExpectingExit,
   createUser,
+  deliverMail,
+  generateCertificate,
   missingId,
   rawHttp,
   type ApiClient,
@@ -755,4 +761,66 @@ describe("DELETE /api/push/subscribe/:id", () => {
     await server.db.query("DELETE FROM users WHERE user_id = $1", [carol.id]);
     expect(await rowOf(id)).toBeUndefined();
   });
+});
+
+describe("sending a push", () => {
+  test("a redirect from the push service is not followed", async () => {
+    const inside: string[] = [];
+    const internal = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (request) => {
+        inside.push(`${request.method} ${new URL(request.url).pathname}`);
+        return new Response("ok");
+      },
+    });
+    const pushed: string[] = [];
+    const redirect = async (request: Request) => {
+      pushed.push(new URL(request.url).protocol);
+      await request.arrayBuffer();
+      return new Response(null, { status: 307, headers: { Location: `http://127.0.0.1:${internal.port}/inside` } });
+    };
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "mail-e2e-push-"));
+    const certificate = await generateCertificate(dir);
+    const tls = { cert: Bun.file(certificate.certPath), key: Bun.file(certificate.keyPath) };
+    const secureService = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: redirect });
+    const plainService = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: redirect });
+    const pushing = await startServer({
+      env: {
+        PUSH_VAPID_PUBLIC_KEY: vapid.publicKey,
+        PUSH_VAPID_PRIVATE_KEY: vapid.privateKey,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      },
+    });
+    try {
+      const dave = await createUser(pushing, "dave");
+      // Written to the table directly: the subscribe route takes only a
+      // public https name. One endpoint each server's push client can reach.
+      for (const endpoint of [`https://127.0.0.1:${secureService.port}/push`, `http://127.0.0.1:${plainService.port}/push`]) {
+        const ecdh = crypto.createECDH("prime256v1");
+        ecdh.generateKeys();
+        await pushing.db.query(
+          "INSERT INTO push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth) VALUES ($1, $2, $3, $4)",
+          [dave.id, endpoint, ecdh.getPublicKey().toString("base64url"), crypto.randomBytes(16).toString("base64url")]
+        );
+      }
+      const recipient = `hello@${dave.username}.${pushing.domain}`;
+      const delivered = await deliverMail(pushing, {
+        from: "someone@remote.example",
+        to: [recipient],
+        data: `From: someone@remote.example\r\nTo: ${recipient}\r\nSubject: hi\r\n\r\nhello\r\n`,
+      });
+      expect(delivered.accepted).toBe(true);
+      for (let i = 0; i < 200 && pushed.length === 0; i++) await Bun.sleep(50);
+      expect(pushed.length).toBeGreaterThan(0);
+      await Bun.sleep(1000);
+      expect(inside).toEqual([]);
+    } finally {
+      await pushing.stop();
+      secureService.stop(true);
+      plainService.stop(true);
+      internal.stop(true);
+      await fs.promises.rm(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
 });
