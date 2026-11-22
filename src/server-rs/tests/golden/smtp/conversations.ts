@@ -1796,5 +1796,11 @@ export const addressCommandLines: [string, string][] = [
   ...Array.from({ length: 600 }, (): [string, string] => [
     "mail from",
     pick(FRAMES)(`${pick(LOCAL_PARTS)}@${pick(DOMAINS)}`, pick(PARAMETERS) + (random(4) === 0 ? pick(PARAMETERS) : ""))
+  ]),
+  // Punycode labels made from any text, first and last in the domain (a
+  // label ending in `-` passes the syntax check only at the end).
+  ...LABEL_TEXTS.flatMap((text): [string, string][] => [
+    ["mail from", `MAIL FROM:<a@xn--${punycode(text)}.example>`],
+    ["rcpt to", `RCPT TO:<a@sub.xn--${punycode(text)}>`]
   ])
 ];
