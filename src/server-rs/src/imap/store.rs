@@ -43,7 +43,7 @@ use crate::postgres::repositories::mails::imap_query::{DateKey, SizeKey, TextKey
 use crate::postgres::repositories::mails::model::PartialMailModel;
 use crate::postgres::repositories::mails::table::{run_query, PreparedQuery};
 use crate::postgres::repositories::mails::views::domain_view_for_destination;
-use crate::postgres::{DbResult, Param};
+use crate::postgres::DbResult;
 use crate::util::{get_random_id, get_user_domain};
 use crate::{js, logger};
 
@@ -392,32 +392,10 @@ pub fn simplify_criterion(criterion: &SearchCriterion) -> SimplifiedCriterion {
 // Accounts
 // ---------------------------------------------------------------------------
 
-/// The statement behind the account list: the addresses the user's mail
-/// names, newest first. The received side reads the recipients of mail that
-/// is not spam, the sent side its senders; drafts belong to neither. With a
-/// `domain_filter` only addresses of that domain are listed.
-///
-/// This is the HTTP repository's `buildAccountStatsQuery`, for the two shapes
-/// the store asks for.
+/// The statement behind the account list: the HTTP repository's, for the
+/// received and sent sides (never the spam view).
 fn build_account_stats_query(user_id: &str, sent: bool, domain_filter: Option<&str>) -> PreparedQuery {
-    let (address_expansion, address_not_null) = if sent {
-        ("jsonb_array_elements(from_address)->>'address' as address", "from_address IS NOT NULL")
-    } else {
-        (
-            "jsonb_array_elements(\n  COALESCE(to_address, '[]'::jsonb) ||\n  COALESCE(cc_address, '[]'::jsonb) ||\n  COALESCE(bcc_address, '[]'::jsonb) ||\n  COALESCE(envelope_to, '[]'::jsonb)\n)->>'address' as address",
-            "(to_address IS NOT NULL OR cc_address IS NOT NULL OR bcc_address IS NOT NULL OR envelope_to IS NOT NULL)",
-        )
-    };
-    let domain_filter = domain_filter.filter(|domain| !domain.is_empty());
-    let domain_condition = if domain_filter.is_some() { "AND address ILIKE '%@' || $2" } else { "" };
-    let mut values = vec![Param::from(user_id)];
-    values.extend(domain_filter.map(Param::from));
-    PreparedQuery {
-        sql: format!(
-            "\n      WITH expanded_mails AS (\n        SELECT DISTINCT\n          mail_id, read, saved, date,\n          {address_expansion}\n        FROM mails\n        WHERE user_id = $1\n          AND expunged = FALSE\n          AND draft = FALSE\n          AND is_spam = FALSE\n          AND {address_not_null}\n      )\n      SELECT\n        address,\n        COUNT(*) as count,\n        SUM(CASE WHEN read = FALSE THEN 1 ELSE 0 END) as unread,\n        SUM(CASE WHEN saved = TRUE THEN 1 ELSE 0 END) as saved_count,\n        MAX(date) as latest\n      FROM expanded_mails\n      WHERE address IS NOT NULL\n      {domain_condition}\n      GROUP BY address\n      ORDER BY latest DESC\n    "
-        ),
-        values,
-    }
+    crate::postgres::repositories::mails::http_query::build_account_stats_query(user_id, sent, domain_filter, false)
 }
 
 /// The addresses of the account list, newest mail first. A database fault
@@ -1569,3 +1547,4 @@ mod tests {
         // `get_messages` and `set_flags` declare theirs.
     }
 }
+
