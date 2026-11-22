@@ -34,6 +34,25 @@ use super::util::{js_is_whitespace, js_trim};
 use crate::proxy_protocol::Peer;
 use crate::{js, logger, sso};
 
+#[cfg(test)]
+#[path = "handler_tests.rs"]
+mod tests;
+
+/// The connection driver's DEBUG lines. Tests read back what reached the
+/// journal: that is how they keep credentials out of it.
+fn log_debug(message: &str, context: serde_json::Value) {
+    #[cfg(test)]
+    tests::journal("debug", message, &context);
+    logger::debug(message, context);
+}
+
+/// The connection driver's INFO lines.
+fn log_info(message: &str, context: serde_json::Value) {
+    #[cfg(test)]
+    tests::journal("info", message, &context);
+    logger::info(message, context);
+}
+
 /// The largest whole RFC 5322 message the process will hold at once
 /// (`lib/message-size.ts`): every surface that materializes a message shares
 /// this ceiling, SMTP DATA and the IMAP APPEND literal alike.
@@ -441,7 +460,7 @@ fn open_session(stream: BoxedStream, peer: &Peer, is_tls: bool) -> (Arc<ImapSess
     let timed_out = Arc::downgrade(&session);
     socket.on_timeout(move || {
         if let Some(session) = timed_out.upgrade() {
-            logger::info("IMAP socket timeout", json!({ "component": "imap" }));
+            log_info("IMAP socket timeout", json!({ "component": "imap" }));
             session.write("* BYE Timeout\r\n");
             session.close();
         }
@@ -568,7 +587,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
         if over_cap {
             if !self.paused {
                 self.paused = true;
-                logger::info(
+                log_info(
                     "IMAP unread command text over cap; pausing socket",
                     json!({ "component": "imap", "bufferedBytes": buffered_bytes, "remote": socket.remote() }),
                 );
@@ -594,7 +613,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
         };
         match read {
             Ok(0) => {
-                logger::debug("IMAP connection closed", json!({ "component": "imap" }));
+                log_debug("IMAP connection closed", json!({ "component": "imap" }));
                 false
             }
             Ok(read) => {
@@ -605,7 +624,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
                 true
             }
             Err(error) => {
-                log_socket_error(&error);
+                log_socket_error(&error, &socket.remote());
                 socket.destroy();
                 false
             }
@@ -653,11 +672,11 @@ impl<D: Dispatch> ImapRequestHandler<D> {
         let stream = match handshake {
             Ok(Ok(stream)) => stream,
             Ok(Err(error)) => {
-                log_socket_error(&error);
+                log_socket_error(&error, &self.remote());
                 return false;
             }
             Err(_) => {
-                logger::info("IMAP socket timeout", json!({ "component": "imap" }));
+                log_info("IMAP socket timeout", json!({ "component": "imap" }));
                 return false;
             }
         };
@@ -695,7 +714,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
                 }
             },
             None => {
-                logger::debug(
+                log_debug(
                     "Parse failed",
                     json!({
                         "component": "imap.parser",
@@ -740,7 +759,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
         // segment resetting the inactivity timeout on the way. It ends the
         // session on the same terms as the chain cap.
         if !is_synchronizing && declared_bytes > MAX_PENDING_COMMAND_BYTES {
-            logger::info(
+            log_info(
                 "IMAP literal past the command ceiling; closing session",
                 json!({
                     "component": "imap",
@@ -755,7 +774,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
             return LiteralOutcome::Closed;
         }
 
-        logger::info(
+        log_info(
             "IMAP literal over cap; refusing",
             json!({
                 "component": "imap",
@@ -970,7 +989,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
                     // accumulator attack, so it ends the session rather
                     // than answering `NO` and inviting the next one.
                     if self.pending_literals.len() >= MAX_LITERALS_PER_COMMAND || pending_bytes > MAX_PENDING_COMMAND_BYTES {
-                        logger::info(
+                        log_info(
                             "IMAP literal chain over cap; closing session",
                             json!({
                                 "component": "imap",
@@ -1063,7 +1082,7 @@ impl<D: Dispatch> ImapRequestHandler<D> {
                 continue;
             }
 
-            logger::debug(
+            log_debug(
                 "IMAP command received",
                 json!({
                     "component": "imap",
@@ -1177,7 +1196,7 @@ pub async fn handle_request(session: &Arc<ImapSession>, tag: &str, request: Imap
     // saturated.
     let socket = session.socket();
     if budgeted && (socket.is_destroyed() || !socket.is_writable()) {
-        logger::info(
+        log_info(
             "IMAP command dropped",
             json!({
                 "component": "imap",
@@ -1221,6 +1240,22 @@ pub async fn handle_request(session: &Arc<ImapSession>, tag: &str, request: Imap
     .await;
 }
 
+/// Whether a command's completion line is logged at INFO rather than DEBUG:
+/// ANY axis past its threshold is enough. A budgeted command that queued
+/// long behind the command budget counts even if it then ran fast, since
+/// that wait is the only sign the budget is undersized.
+fn is_interesting_command(
+    rss_delta_mb: i64,
+    duration_ms: u64,
+    response_bytes: u64,
+    waited_for_command_budget_ms: u64,
+) -> bool {
+    rss_delta_mb.abs() >= INTERESTING_RSS_DELTA_MB
+        || duration_ms >= INTERESTING_DURATION_MS
+        || response_bytes >= INTERESTING_RESPONSE_BYTES
+        || waited_for_command_budget_ms >= INTERESTING_DURATION_MS
+}
+
 /// The per-command diagnostic: memory delta, octets sent and wall time, so a
 /// memory spike can be attributed to a specific command.
 fn log_completion(
@@ -1240,10 +1275,8 @@ fn log_completion(
     let duration_ms = duration_ms.round() as u64;
     let waited_for_body_budget_ms = get_body_budget_wait_ms().round() as u64;
     let waited_for_command_budget_ms = hold.waited_ms().round() as u64;
-    let is_interesting = rss_delta_mb.abs() >= INTERESTING_RSS_DELTA_MB
-        || duration_ms >= INTERESTING_DURATION_MS
-        || response_bytes >= INTERESTING_RESPONSE_BYTES
-        || waited_for_command_budget_ms >= INTERESTING_DURATION_MS;
+    let is_interesting =
+        is_interesting_command(rss_delta_mb, duration_ms, response_bytes, waited_for_command_budget_ms);
 
     // Which BODY[] shape a FETCH used: a partial `BODY[]<start.length>`, or
     // the whole body (`BODY[]`, or RFC822, which has no partial form).
@@ -1286,9 +1319,9 @@ fn log_completion(
         "waitedForCommandBudgetMs": waited_for_command_budget_ms,
     });
     if is_interesting {
-        logger::info("IMAP command completed", payload);
+        log_info("IMAP command completed", payload);
     } else {
-        logger::debug("IMAP command completed", payload);
+        log_debug("IMAP command completed", payload);
     }
 }
 

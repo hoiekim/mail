@@ -210,7 +210,8 @@ mod tests {
         stuck.abort();
         let _ = stuck.await;
         // The next stream of the key starts at once.
-        tokio::time::timeout(Duration::from_secs(1), acquire_stream_mutex(key)).await.expect("the key was released");
+        let _next =
+            tokio::time::timeout(Duration::from_secs(1), acquire_stream_mutex(key)).await.expect("the key was released");
     }
 
     #[tokio::test]

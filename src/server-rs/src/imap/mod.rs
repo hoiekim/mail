@@ -29,6 +29,8 @@ pub mod session_format;
 pub mod session_registry;
 pub mod socket;
 pub mod stream_mutex;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod throttler;
 pub mod trace;
 pub mod types;

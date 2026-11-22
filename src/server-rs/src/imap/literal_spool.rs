@@ -156,12 +156,28 @@ impl Default for LiteralSpool {
     }
 }
 
+/// Tests that look at which spool directories exist take turns.
+#[cfg(test)]
+pub(crate) async fn spool_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    LOCK.lock().await
+}
+
+/// The spool directories that exist now.
+#[cfg(test)]
+pub(crate) fn spool_dirs() -> Vec<String> {
+    std::fs::read_dir(incoming_attachment_folder())
+        .map(|entries| entries.filter_map(|entry| entry.ok()).map(|entry| entry.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn a_spooled_message_is_the_octets_written_in_order() {
+        let _spool = spool_test_lock().await;
         let mut spool = LiteralSpool::new();
         spool.write(b"Subject: x\r\n").await.unwrap();
         spool.write(&[0xff, 0xfe, 0x80]).await.unwrap();
@@ -178,6 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_empty_message_is_an_empty_file() {
+        let _spool = spool_test_lock().await;
         let literal = LiteralSpool::new().finish().await.unwrap();
         assert_eq!(literal.size, 0);
         assert_eq!(tokio::fs::read(&literal.path).await.unwrap(), b"");
@@ -187,6 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn discard_removes_a_partial_file_and_is_safe_before_any_write() {
+        let _spool = spool_test_lock().await;
         let mut spool = LiteralSpool::new();
         spool.write(b"partial").await.unwrap();
         let dir = spool.dir.clone();

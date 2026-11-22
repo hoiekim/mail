@@ -84,6 +84,9 @@ pub struct ImapSession {
     // above any interactive rate while still bounding a runaway client.
     throttler: Mutex<Throttler>,
     bytes_written: AtomicU64,
+    /// Command slots taken from the throttler, for tests of the pacing.
+    #[cfg(test)]
+    slots_taken: AtomicU64,
 }
 
 impl ImapSession {
@@ -98,6 +101,8 @@ impl ImapSession {
             serial: tokio::sync::Mutex::new(()),
             throttler: Mutex::new(Throttler::new(100, 1000)),
             bytes_written: AtomicU64::new(0),
+            #[cfg(test)]
+            slots_taken: AtomicU64::new(0),
         })
     }
 
@@ -273,6 +278,14 @@ impl ImapSession {
             wait = self.throttle().ms_until_free();
         }
         self.throttle().record();
+        #[cfg(test)]
+        self.slots_taken.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// How many command slots the session has taken.
+    #[cfg(test)]
+    pub(crate) fn slots_taken(&self) -> u64 {
+        self.slots_taken.load(Ordering::SeqCst)
     }
 
     fn throttle(&self) -> MutexGuard<'_, Throttler> {
@@ -798,6 +811,20 @@ impl ImapSession {
     /// error rather than letting through a grant that could not be proven
     /// current.
     pub async fn verify_credential_version(&self, tag: &str) -> Result<bool> {
+        self.verify_credential_version_with(tag, |username: &str| {
+            let username = username.to_string();
+            async move { get_credential_password_version(&username).await }
+        })
+        .await
+    }
+
+    /// [`ImapSession::verify_credential_version`], reading the credential
+    /// row's version with `current_version`.
+    pub async fn verify_credential_version_with<F, Fut>(&self, tag: &str, current_version: F) -> Result<bool>
+    where
+        F: FnOnce(&str) -> Fut,
+        Fut: std::future::Future<Output = Result<i64>>,
+    {
         let (authenticated_as, stamped) = {
             let state = self.state();
             match (state.authenticated, &state.authenticated_as, state.credential_password_version) {
@@ -805,7 +832,7 @@ impl ImapSession {
                 _ => return Ok(true),
             }
         };
-        let current = get_credential_password_version(&authenticated_as).await?;
+        let current = current_version(&authenticated_as).await?;
         if current <= stamped {
             return Ok(true);
         }

@@ -214,6 +214,20 @@ impl SocketHandle {
         half
     }
 
+    /// The inactivity timeout in force, in milliseconds.
+    #[cfg(test)]
+    pub(crate) fn timeout_ms(&self) -> u64 {
+        self.0.timeout_ms.load(Ordering::SeqCst)
+    }
+
+    /// Runs the inactivity handler now, as if the timeout had run out.
+    #[cfg(test)]
+    pub(crate) fn fire_timeout(&self) {
+        if let Some(handler) = self.0.on_timeout.get() {
+            handler();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(address: &str) -> (SocketHandle, ReadHalf<BoxedStream>, tokio::io::DuplexStream) {
         let (server, client) = tokio::io::duplex(4 * 1024 * 1024);
@@ -230,11 +244,54 @@ fn is_quiet_error(error: &std::io::Error) -> bool {
     )
 }
 
+/// The TLS alerts a peer sends when it refuses this server's certificate.
+const PEER_CERT_REJECTION_ALERTS: [&str; 6] = [
+    "ALERT_BAD_CERTIFICATE",
+    "ALERT_UNSUPPORTED_CERTIFICATE",
+    "ALERT_CERTIFICATE_REVOKED",
+    "ALERT_CERTIFICATE_EXPIRED",
+    "ALERT_CERTIFICATE_UNKNOWN",
+    "ALERT_UNKNOWN_CA",
+];
+
+/// A peer rejecting this server's certificate (expired, wrong host name,
+/// unknown CA) is a server-side defect even though it surfaces as a TLS
+/// error (lib/peer-cert-rejection.ts).
+pub fn is_peer_cert_rejection(error: &std::io::Error) -> bool {
+    use rustls::AlertDescription as Alert;
+
+    let tls_error = error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>());
+    if let Some(rustls::Error::AlertReceived(alert)) = tls_error {
+        return matches!(
+            alert,
+            Alert::BadCertificate
+                | Alert::UnsupportedCertificate
+                | Alert::CertificateRevoked
+                | Alert::CertificateExpired
+                | Alert::CertificateUnknown
+                | Alert::UnknownCA
+        );
+    }
+    let text = error.to_string().to_uppercase().replace(' ', "_");
+    PEER_CERT_REJECTION_ALERTS.iter().any(|alert| text.contains(alert))
+}
+
+/// What a socket fault is logged with: the peer is named only when it
+/// refused the certificate, which is the one fault an operator has to chase
+/// down by client.
+pub fn socket_error_context(error: &std::io::Error, remote: &str) -> serde_json::Value {
+    if is_peer_cert_rejection(error) {
+        json!({ "component": "imap", "remote": remote })
+    } else {
+        json!({ "component": "imap" })
+    }
+}
+
 /// Logs a socket fault the way the Bun server's `error` listener does: a
 /// reset by the peer is not worth a line.
-pub fn log_socket_error(error: &std::io::Error) {
+pub fn log_socket_error(error: &std::io::Error, remote: &str) {
     if !is_quiet_error(error) {
-        logger::error_with("IMAP socket error", json!({ "component": "imap" }), error);
+        logger::error_with("IMAP socket error", socket_error_context(error, remote), error);
     }
 }
 
@@ -294,7 +351,7 @@ async fn write_loop(
                     written = write_all(&mut half, &chunks) => written,
                 };
                 if let Err(error) = written {
-                    log_socket_error(&error);
+                    log_socket_error(&error, &socket.remote());
                     break;
                 }
                 socket.touch();
