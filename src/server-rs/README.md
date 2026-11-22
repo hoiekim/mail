@@ -12,8 +12,14 @@ means here.
 ## Run
 
 ```bash
-cargo run --release --manifest-path src/server-rs/Cargo.toml
+cd src/server-rs
+cargo run --release
 ```
+
+Run cargo from this directory: `rust-toolchain.toml` here pins Rust 1.97.0,
+and rustup only reads it from the working directory. The pin is load-bearing.
+Lowercasing follows the compiler's Unicode tables, which must match Bun
+1.4.4's, and `tests/spam_golden.rs` fails when they drift.
 
 It reads the environment the Bun server reads. Two things differ:
 
@@ -25,9 +31,9 @@ It reads the environment the Bun server reads. Two things differ:
 ## Test
 
 ```bash
-cargo test --manifest-path src/server-rs/Cargo.toml   # unit tests
-bun run test:e2e:rust                                 # black-box suite, Rust
-bun run test:e2e                                      # the same suite, both servers
+cargo test                # unit tests, from src/server-rs
+bun run test:e2e:rust     # black-box suite, Rust
+bun run test:e2e          # the same suite, both servers
 ```
 
 See `e2e/README.md` for what the black-box suite needs.

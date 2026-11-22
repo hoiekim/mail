@@ -234,9 +234,9 @@ Keeping the two in step:
   recorded from the TypeScript (`src/server-rs/tests/golden/`). Changing the
   TypeScript they mirror means re-running the generator next to the fixtures.
 
-`cargo test --manifest-path src/server-rs/Cargo.toml` runs the Rust unit and
-integration tests; set `MAIL_TEST_POSTGRES=1` to include the database-backed
-ones. Conventions for Rust code are in `src/server-rs/README.md`.
+`cargo test`, run in `src/server-rs` (its `rust-toolchain.toml` pins the
+compiler), runs the Rust unit and integration tests; set
+`MAIL_TEST_POSTGRES=1` to include the database-backed ones. Conventions for Rust code are in `src/server-rs/README.md`.
 
 ## Code Style
 

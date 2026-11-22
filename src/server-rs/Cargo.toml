@@ -2,6 +2,7 @@
 name = "mail-server"
 version = "1.0.0"
 edition = "2021"
+rust-version = "1.97"
 description = "The Mail backend: HTTP API, IMAP and SMTP servers, on PostgreSQL"
 license = "ISC"
 publish = false

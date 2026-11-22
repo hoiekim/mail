@@ -36,8 +36,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src/server-rs/target
-          key: cargo-debug-${{ hashFiles('src/server-rs/Cargo.lock') }}
+          key: cargo-debug-${{ hashFiles('src/server-rs/Cargo.lock', 'src/server-rs/rust-toolchain.toml') }}
           restore-keys: cargo-debug-
+      - name: Rust toolchain from rust-toolchain.toml
+        working-directory: src/server-rs
+        run: rustup show active-toolchain || rustup toolchain install
       - name: Rust unit and integration tests
         working-directory: src/server-rs
         env:
@@ -83,8 +86,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src/server-rs/target
-          key: cargo-release-${{ hashFiles('src/server-rs/Cargo.lock') }}
+          key: cargo-release-${{ hashFiles('src/server-rs/Cargo.lock', 'src/server-rs/rust-toolchain.toml') }}
           restore-keys: cargo-release-
+      - name: Rust toolchain from rust-toolchain.toml
+        if: matrix.server == 'rust'
+        working-directory: src/server-rs
+        run: rustup show active-toolchain || rustup toolchain install
       # Builds the web client (the static-file tests read it) and, for the
       # Rust run, the release binary; then runs every e2e/*.e2e.ts file.
       - name: Black-box suite against the ${{ matrix.server }} server
