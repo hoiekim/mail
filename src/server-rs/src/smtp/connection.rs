@@ -3,12 +3,12 @@
 //!
 //! The Bun server is a set of socket event handlers around one piece of
 //! state; this is the same state driven by one task. Commands are handled
-//! strictly one at a time. The socket is not read while a command waits on a
-//! hook, while the DATA consumer is behind, or while the client is not
+//! strictly one at a time. The connection is paused while a command waits on
+//! a hook, while the DATA consumer is behind, or while the client is not
 //! reading its replies, so a pipelining client is held by TCP backpressure
 //! rather than buffered.
 //!
-//! Three things are carried over from how Bun's sockets behave, because a
+//! Four things are carried over from how Bun's sockets behave, because a
 //! client can see them:
 //!
 //! - Closing is two steps. `close` ends the writing side (after QUIT, a 421,
@@ -17,14 +17,15 @@
 //! - A hook whose answer needs no outside event is answered on the spot, as
 //!   a hook calling back synchronously is there; the lines behind it are then
 //!   handled before anything else is read off the socket.
-//! - A paused socket still takes in a socket buffer's worth: what arrives
-//!   meanwhile counts as activity for the idle timeout, and waits its turn.
+//! - A paused connection still takes in a socket buffer's worth: what
+//!   arrives meanwhile counts as activity for the idle timeout, and waits
+//!   its turn.
 //! - The client's FIN is acted on as soon as nothing is left in front of it,
 //!   even while a hook is running: the connection is over, the hook's answer
 //!   goes nowhere, and lines not yet handled are dropped. The hook itself
 //!   still runs to its end. A FIN that came in behind commands while the
-//!   socket was paused is acted on right after the first of those commands
-//!   that calls a hook.
+//!   connection was paused is acted on right after the first of those
+//!   commands that calls a hook.
 
 use std::any::Any;
 use std::collections::VecDeque;

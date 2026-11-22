@@ -943,6 +943,19 @@ async fn keeps_the_client_from_the_header_after_starttls() {
 
 // ── Hooks beyond what the Bun tests drive ──────────────────────────────────
 
+/// The message can be handed to a parser that takes any `AsyncRead`, on any
+/// task, and the session can cross tasks with the hook that holds it.
+#[test]
+fn the_data_stream_and_the_session_can_move_between_tasks() {
+    fn readable<T: tokio::io::AsyncRead + Unpin + Send + Sync + 'static>() {}
+    fn chunked<T: futures_util::Stream<Item = std::io::Result<bytes::Bytes>> + Unpin + Send + 'static>() {}
+    fn movable<T: Send + 'static>() {}
+    readable::<SmtpDataStream>();
+    chunked::<SmtpDataStream>();
+    movable::<SmtpSession>();
+    movable::<SmtpServer>();
+}
+
 /// What a hook stores on the session is there for the hooks that follow.
 struct Stamped(u32);
 

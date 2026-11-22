@@ -205,12 +205,19 @@ impl SmtpAuthResponse {
 }
 
 /// The hooks an SMTP listener calls: the seam between the protocol and the
-/// mail handling. Each is awaited before the command is answered, and the
-/// connection reads nothing further from the client meanwhile.
+/// mail handling. Each is awaited before the command is answered, and no
+/// further command of the client is handled meanwhile.
 ///
 /// An `Err` is the refusal sent to the client (see [`SmtpHookError`]). A hook
 /// keeps running to its end when the client goes away first; only its answer
 /// is then dropped.
+///
+/// A hook runs on its connection's task until the connection is gone, so
+/// work that would block a thread (a password hash) belongs in
+/// `spawn_blocking`. One that answers without waiting on anything is
+/// answered at once, the way a hook that calls back synchronously is in the
+/// Bun server. A hook that panics is reported to the listener's `on_error`
+/// and its connection dropped: the session went with it.
 ///
 /// ```ignore
 /// impl SmtpHandler for Mail {
