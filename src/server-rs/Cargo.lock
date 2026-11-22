@@ -1315,6 +1315,7 @@ dependencies = [
  "hyper-util",
  "icu_collator",
  "idna",
+ "libc",
  "md-5 0.10.6",
  "p256",
  "postgres-protocol",

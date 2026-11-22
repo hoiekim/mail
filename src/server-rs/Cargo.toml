@@ -55,6 +55,8 @@ base64 = "0.22"
 hex = "0.4"
 # `String.prototype.localeCompare`: the order mailboxes are listed in
 icu_collator = "2"
+# errno names and the host name for the SMTP listeners
+libc = "0.2"
 
 # Crypto
 bcrypt = "0.17"
