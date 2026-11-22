@@ -182,12 +182,25 @@ describe("POST /api/mails/mark — both, neither, extras", () => {
     expect((await flags(mail.mail_id)).read).toBe(true);
   });
 
-  test("works on sent mail, spam, drafts and — like the body route — an expunged mail", async () => {
-    for (const row of [{ sent: true }, { is_spam: true }, { draft: true }, { expunged: true }]) {
+  test("works on sent mail, spam, drafts and deleted mail", async () => {
+    for (const row of [{ sent: true }, { is_spam: true }, { draft: true }, { deleted: true }]) {
       const mail = await box.mail(row);
       expect({ row, body: (await mark({ mail_id: mail.mail_id, read: true, save: true })).body }).toEqual({ row, body: SUCCESS });
       expect(await flags(mail.mail_id)).toMatchObject({ read: true, saved: true });
     }
+  });
+
+  test("an expunged mail is refused like a missing one, and nothing changes", async () => {
+    const mail = await box.mail({ expunged: true, modseq: 5, updated: "2026-01-01T00:00:00Z" });
+    for (const body of [{ read: true }, { save: true }, { read: true, save: false }]) {
+      const answer = await mark({ mail_id: mail.mail_id, ...body });
+      expect({ body, text: answer.text }).toEqual({
+        body,
+        text: '{"status":"failed","message":"Invalid request. You may not manipulate other users\' email"}',
+      });
+    }
+    expect(await flags(mail.mail_id)).toEqual({ read: false, saved: false, modseq: "5", updated: Date.parse("2026-01-01T00:00:00Z") });
+    expect(await starred(mail.mail_id)).toEqual([]);
   });
 });
 

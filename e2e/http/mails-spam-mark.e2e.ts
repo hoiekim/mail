@@ -127,11 +127,25 @@ describe("POST /api/mails/spam/mark — the flag", () => {
     expect({ is_spam: row!.is_spam, read: row!.read, expunged: row!.expunged }).toEqual({ is_spam: true, read: false, expunged: false });
   });
 
-  test("works on sent mail, drafts and an expunged mail", async () => {
-    for (const row of [{ sent: true }, { draft: true }, { expunged: true }]) {
+  test("works on sent mail, drafts and deleted mail", async () => {
+    for (const row of [{ sent: true }, { draft: true }, { deleted: true }]) {
       const mail = await box.mail(row);
       expect({ row, body: (await spamMark({ mail_id: mail.mail_id, is_spam: true })).body }).toEqual({ row, body: SUCCESS });
       expect((await readMail(server, mail.mail_id))!.is_spam).toBe(true);
+    }
+  });
+
+  test("an expunged mail is refused like a missing one, either way, and nothing changes", async () => {
+    for (const is_spam of [true, false]) {
+      const mail = await box.mail({ expunged: true, is_spam: !is_spam, modseq: 5, updated: "2026-01-01T00:00:00Z" });
+      const { text } = await spamMark({ mail_id: mail.mail_id, is_spam });
+      expect({ is_spam, text }).toEqual({ is_spam, text: '{"status":"failed","message":"Mail not found or you don\'t have permission"}' });
+      const row = await readMail(server, mail.mail_id);
+      expect({ is_spam: row!.is_spam, modseq: String(row!.modseq), updated: new Date(row!.updated).toISOString() }).toEqual({
+        is_spam: !is_spam,
+        modseq: "5",
+        updated: "2026-01-01T00:00:00.000Z",
+      });
     }
   });
 });
@@ -235,6 +249,15 @@ describe("POST /api/mails/spam/mark — training", () => {
     await spamMark({ mail_id: marker.mail_id, is_spam: true }, fresh.client);
     expect((await trainedTo(fresh.id, 1, 0)).map((row) => row.word)).toEqual(["__total__", "checkpoint"]);
     expect(await training(other.id)).toEqual([]);
+  });
+
+  test("a mark refused for an expunged mail trains nothing", async () => {
+    const fresh = await newMailbox(server);
+    const gone = await fresh.mail({ subject: "Vanished words", text: "", html: "", expunged: true });
+    const marker = await fresh.mail({ subject: "Checkpoint", text: "", html: "" });
+    expect((await spamMark({ mail_id: gone.mail_id, is_spam: true }, fresh.client)).body).toEqual(NOT_FOUND);
+    await spamMark({ mail_id: marker.mail_id, is_spam: true }, fresh.client);
+    expect((await trainedTo(fresh.id, 1, 0)).map((row) => row.word)).toEqual(["__total__", "checkpoint"]);
   });
 });
 

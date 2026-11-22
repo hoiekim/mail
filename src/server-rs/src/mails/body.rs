@@ -9,8 +9,12 @@ use crate::util::get_random_id;
 /// The body of the user's mail `mail_id`, in the client's key order:
 /// `id, html, attachments?, messageId, insight`. `None` when the user holds
 /// no such mail.
+///
+/// An expunged row is kept only so the delta can report it gone; every list
+/// already hides it, so by id it is as missing as a mail that never existed.
+/// The body, mark and delete routes all look a mail up here.
 pub async fn get_mail_body(user_id: &str, mail_id: &str) -> anyhow::Result<Option<Map<String, Value>>> {
-    let Some(mail) = get_mail_by_id(user_id, mail_id).await? else {
+    let Some(mail) = get_mail_by_id(user_id, mail_id).await?.filter(|mail| !mail.expunged) else {
         return Ok(None);
     };
     let mut body = Map::new();

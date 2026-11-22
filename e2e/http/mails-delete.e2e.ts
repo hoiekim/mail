@@ -85,12 +85,20 @@ describe("DELETE /api/mails/:id", () => {
     expect(again.text).toBe('{"status":"failed","message":"Invalid request. You may not manipulate other users\' email"}');
   });
 
-  test("deletes any of the user's rows: sent, spam, draft, saved, already expunged", async () => {
-    for (const row of [{ sent: true }, { is_spam: true }, { draft: true }, { saved: true, read: true }, { expunged: true }, { deleted: true }]) {
+  test("deletes any of the user's live rows: sent, spam, draft, saved, deleted", async () => {
+    for (const row of [{ sent: true }, { is_spam: true }, { draft: true }, { saved: true, read: true }, { deleted: true }]) {
       const mail = await box.mail(row);
       expect({ row, body: (await box.client.delete(`/api/mails/${mail.mail_id}`)).body }).toEqual({ row, body: SUCCESS });
       expect(await readMail(server, mail.mail_id)).toBeUndefined();
     }
+  });
+
+  test("an expunged mail is refused like a missing one, and its row stays for the delta to report", async () => {
+    const mail = await box.mail({ expunged: true });
+    const { status, text } = await box.client.delete(`/api/mails/${mail.mail_id}`);
+    expect(status).toBe(200);
+    expect(text).toBe('{"status":"failed","message":"Invalid request. You may not manipulate other users\' email"}');
+    expect(await readMail(server, mail.mail_id)).toBeDefined();
   });
 
   test("deletes only the one mail", async () => {

@@ -229,15 +229,23 @@ describe("changes made over IMAP, seen over HTTP", () => {
     imap.close();
   });
 
-  test("a message expunged over IMAP is no longer counted over HTTP, though its body is still served by id", async () => {
+  test("a message expunged over IMAP is no longer counted over HTTP, nor served by id", async () => {
     const { imap, http, mails } = await account(2);
     await imap.command("STORE 1 +FLAGS.SILENT (\\Deleted)");
     await imap.command("EXPUNGE");
     expect(await counts(http)).toEqual({ doc_count: 1, unread_doc_count: 1, saved_doc_count: 0 });
-    // The row is kept, marked expunged, and the body route does not look at the mark.
-    const { body } = await http.get(`/api/mails/body/${mails[0]!.mail_id}`);
-    expect(body.status).toBe("success");
-    expect(body.body.id).toBe(mails[0]!.mail_id);
+    // The row is kept, marked expunged, and every by-id route reads the mark.
+    const id = mails[0]!.mail_id;
+    expect((await http.get(`/api/mails/body/${id}`)).body).toEqual({ status: "failed", message: "No email is found." });
+    expect((await http.post("/api/mails/mark", { mail_id: id, read: true })).body).toEqual({
+      status: "failed",
+      message: "Invalid request. You may not manipulate other users' email",
+    });
+    expect((await http.post("/api/mails/spam/mark", { mail_id: id, is_spam: true })).body).toEqual({
+      status: "failed",
+      message: "Mail not found or you don't have permission",
+    });
+    expect(await counts(http)).toEqual({ doc_count: 1, unread_doc_count: 1, saved_doc_count: 0 });
     imap.close();
   });
 

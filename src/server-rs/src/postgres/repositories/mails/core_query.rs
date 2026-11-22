@@ -15,9 +15,13 @@ use crate::params;
 /// not told a mail changed when nothing did. The flip is a membership change
 /// (it moves the mail out of INBOX), so it has to stamp `modseq` or the
 /// client reads an unchanged HIGHESTMODSEQ and never resyncs.
+///
+/// An expunged row matches neither this nor [`build_mail_exists_query`]: it is
+/// kept only so the delta can report it gone, and to a route that takes a
+/// mail id it is as missing as one that never existed.
 pub fn build_mark_mail_spam_query(user_id: &str, mail_id: &str, is_spam: bool, modseq: i64) -> PreparedQuery {
     PreparedQuery {
-        sql: "UPDATE mails SET is_spam = $1, updated = NOW(), modseq = $4\n       WHERE mail_id = $2 AND user_id = $3 AND is_spam IS DISTINCT FROM $1\n       RETURNING mail_id"
+        sql: "UPDATE mails SET is_spam = $1, updated = NOW(), modseq = $4\n       WHERE mail_id = $2 AND user_id = $3 AND expunged = FALSE\n         AND is_spam IS DISTINCT FROM $1\n       RETURNING mail_id"
             .to_string(),
         values: params![is_spam, mail_id, user_id, modseq],
     }
@@ -26,7 +30,7 @@ pub fn build_mark_mail_spam_query(user_id: &str, mail_id: &str, is_spam: bool, m
 /// Distinguishes "no such mail" from "the update matched nothing".
 pub fn build_mail_exists_query(user_id: &str, mail_id: &str) -> PreparedQuery {
     PreparedQuery {
-        sql: "SELECT 1 FROM mails WHERE mail_id = $1 AND user_id = $2 LIMIT 1".to_string(),
+        sql: "SELECT 1 FROM mails WHERE mail_id = $1 AND user_id = $2 AND expunged = FALSE LIMIT 1".to_string(),
         values: params![mail_id, user_id],
     }
 }
@@ -66,6 +70,11 @@ mod tests {
     }
 
     #[test]
+    fn mark_spam_leaves_an_expunged_row_alone() {
+        assert!(build_mark_mail_spam_query(USER, MAIL, true, 1).sql.contains("AND expunged = FALSE"));
+    }
+
+    #[test]
     fn mark_spam_returns_the_touched_id() {
         assert!(build_mark_mail_spam_query(USER, MAIL, true, 1).sql.contains("RETURNING mail_id"));
     }
@@ -78,5 +87,10 @@ mod tests {
         assert!(query.sql.contains("WHERE mail_id = $1 AND user_id = $2"));
         assert!(query.sql.contains("LIMIT 1"));
         assert_eq!(query.values, params![MAIL, USER]);
+    }
+
+    #[test]
+    fn exists_does_not_find_an_expunged_row() {
+        assert!(build_mail_exists_query(USER, MAIL).sql.contains("AND expunged = FALSE"));
     }
 }

@@ -146,8 +146,8 @@ describe("GET /api/mails/attachment/:id — a stored file", () => {
     expect((await get(second)).text).toBe("second");
   });
 
-  test("is served for sent mail, spam, drafts and — like its body — an expunged mail", async () => {
-    const rows = [{ sent: true }, { is_spam: true }, { draft: true }, { expunged: true }];
+  test("is served for sent mail, spam, drafts and deleted mail", async () => {
+    const rows = [{ sent: true }, { is_spam: true }, { draft: true }, { deleted: true }];
     for (const [i, row] of rows.entries()) {
       const id = `77777777-7777-4777-8777-77777777777${i}`;
       writeAttachment(server, id, `content ${i}`);
@@ -155,6 +155,30 @@ describe("GET /api/mails/attachment/:id — a stored file", () => {
       const { status, text } = await get(id);
       expect({ row, status, text }).toEqual({ row, status: 200, text: `content ${i}` });
     }
+  });
+});
+
+describe("GET /api/mails/attachment/:id — an expunged mail", () => {
+  test("its attachment is Not found, like one no mail names, though the file is on disk", async () => {
+    const id = "88888888-8888-4888-8888-888888888881";
+    writeAttachment(server, id, "expunged");
+    await box.mail({ expunged: true, attachments: [attachment(id)] });
+    const { status, text, headers } = await get(id);
+    expect(status).toBe(200);
+    expect(text).toBe('{"status":"failed","message":"Not found"}');
+    expect(headers.get("content-disposition")).toBeNull();
+    expect(fs.existsSync(attachmentPath(server, id))).toBe(true);
+  });
+
+  test("an attachment an expunged mail shares with a live one is served for the live one", async () => {
+    // An IMAP MOVE leaves the source expunged and its copy naming the same file.
+    const id = "88888888-8888-4888-8888-888888888882";
+    writeAttachment(server, id, "moved");
+    const live = await box.mail({ attachments: [attachment(id)] });
+    await box.mail({ expunged: true, attachments: [attachment(id)] });
+    expect((await get(id)).text).toBe("moved");
+    await server.db.query("UPDATE mails SET expunged = TRUE WHERE mail_id = $1", [live.mail_id]);
+    expect((await get(id)).body).toEqual(NOT_FOUND);
   });
 });
 

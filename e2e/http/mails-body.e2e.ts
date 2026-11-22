@@ -264,14 +264,25 @@ describe("GET /api/mails/body/:id — which mails", () => {
     }
   });
 
-  // NOTE: every list hides an expunged mail, but its body is still served by
-  // id — and the read even marks the expunged row read, bumping its `updated`
-  // so it is reported again as a tombstone by the next delta.
-  test("serves an expunged mail by id and marks it read", async () => {
-    const { mail, body } = await bodyOf({ expunged: true, html: "<p>gone</p>" });
-    expect(body.html).toBe("<p>gone</p>");
+  test("refuses an expunged mail like a missing one, and marks nothing", async () => {
+    const mail = await box.mail({ expunged: true, html: "<p>gone</p>", modseq: 4, updated: "2026-01-01T00:00:00Z" });
+    const { status, text } = await box.client.get(`/api/mails/body/${mail.mail_id}`);
+    expect(status).toBe(200);
+    expect(text).toBe('{"status":"failed","message":"No email is found."}');
+    expect((await box.client.head(`/api/mails/body/${mail.mail_id}`)).status).toBe(200);
     const row = await readMail(server, mail.mail_id);
-    expect({ read: row!.read, expunged: row!.expunged }).toEqual({ read: true, expunged: true });
+    expect({ read: row!.read, modseq: String(row!.modseq), updated: new Date(row!.updated).toISOString() }).toEqual({
+      read: false,
+      modseq: "4",
+      updated: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
+  test("an expunged mail stays refused whatever its other flags", async () => {
+    for (const row of [{ sent: true }, { is_spam: true }, { draft: true }, { deleted: true }, { saved: true, read: true }] as SeedRow[]) {
+      const mail = await box.mail({ ...row, expunged: true });
+      expect({ row, body: (await box.client.get(`/api/mails/body/${mail.mail_id}`)).body }).toEqual({ row, body: NOT_FOUND });
+    }
   });
 
   test("ignores the query string", async () => {

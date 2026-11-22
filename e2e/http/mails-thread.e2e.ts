@@ -114,11 +114,11 @@ describe("GET /api/mails/thread/:id — which mail may be opened", () => {
     expect(body.body.map((h: { id: string }) => h.id)).toEqual([mail.mail_id]);
   });
 
-  test("an expunged mail cannot be opened, though its body can", async () => {
+  test("an expunged mail cannot be opened, nor its body read", async () => {
     const box = await newMailbox(server);
     const mail = await box.mail({ expunged: true });
     expect((await box.client.get(`/api/mails/thread/${mail.mail_id}`)).body).toEqual(NOT_FOUND);
-    expect((await box.client.get(`/api/mails/body/${mail.mail_id}`)).body.status).toBe("success");
+    expect((await box.client.get(`/api/mails/body/${mail.mail_id}`)).body).toEqual(NOT_FOUND);
   });
 });
 
