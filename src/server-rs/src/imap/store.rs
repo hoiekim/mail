@@ -790,6 +790,7 @@ mod golden;
 
 #[cfg(test)]
 mod tests {
+    use crate::postgres::Param;
     use super::*;
     use crate::imap::types::{SequenceRange, SequenceSet};
     use crate::imap::util::JsDate;
