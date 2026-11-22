@@ -804,6 +804,12 @@ impl Store {
     }
 }
 
+/// The golden replay of `tests/golden/imapdb/`: this port against what the
+/// Bun server's statement builders, repository and store do.
+#[cfg(test)]
+#[path = "../../tests/golden/imapdb/replay.rs"]
+mod golden;
+
 #[cfg(test)]
 mod tests {
     use super::*;
