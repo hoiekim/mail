@@ -6,11 +6,15 @@ use serde_json::{json, Value};
 
 use super::bounded::BoundedMessage;
 use super::handler::{refusals, CredentialStamp, DataFailure, MailDirectory, MailHandler};
-use super::outgoing::{address_list, resolve_outgoing_sender, split_envelope_recipients, EnvelopeRecipients, OutgoingSender};
+use super::outgoing::{
+    address_list, resolve_outgoing_sender, split_envelope_recipients, EnvelopeRecipients, OutgoingSender,
+};
 use super::transaction_dir::{new_transaction_dir, remove_transaction_dir};
 use super::types::{SmtpEnvelope, SmtpSession};
 use crate::logger;
-use crate::mails::receive::{incoming_mail_from_parsed, save_mail_handler, IncomingMailAddressValue, SaveMailHandlerOptions};
+use crate::mails::receive::{
+    incoming_mail_from_parsed, save_mail_handler, IncomingMailAddressValue, SaveMailHandlerOptions,
+};
 use crate::mails::send::{send_mail, MailDataToSend, SendMailOptions};
 use crate::mails::text_to_html::plain_text_to_html;
 use crate::mime::parser::{parse_message, ParseOptions, ParsedMessage};
@@ -112,9 +116,8 @@ async fn store_incoming(parsed: ParsedMessage, session: &SmtpSession) -> anyhow:
     // address, which the save drops, leaving no envelope sender.
     mail.envelope_from =
         session.envelope.mail_from.as_ref().map(|from| vec![IncomingMailAddressValue::address(from.address.clone())]);
-    mail.envelope_to = Some(
-        session.envelope.rcpt_to.iter().map(|to| IncomingMailAddressValue::address(to.address.clone())).collect(),
-    );
+    mail.envelope_to =
+        Some(session.envelope.rcpt_to.iter().map(|to| IncomingMailAddressValue::address(to.address.clone())).collect());
     // The client address, for the spam check's DNS blocklist lookups.
     let options = SaveMailHandlerOptions { remote_address: Some(session.remote_address.clone()) };
     save_mail_handler(&mail, &options).await
@@ -127,7 +130,12 @@ fn first_from(parsed: &ParsedMessage) -> (Option<&str>, Option<&str>) {
 }
 
 /// What a submission is sent as, from the parsed message and the envelope.
-pub(crate) fn outgoing_mail(parsed: &ParsedMessage, username: &str, user_domain: &str, envelope: &SmtpEnvelope) -> MailDataToSend {
+pub(crate) fn outgoing_mail(
+    parsed: &ParsedMessage,
+    username: &str,
+    user_domain: &str,
+    envelope: &SmtpEnvelope,
+) -> MailDataToSend {
     let (from_address, from_name) = first_from(parsed);
     let envelope_from = envelope.mail_from.as_ref().map(|from| from.address.as_str());
     let addressed_to = address_list(parsed.to.as_ref());
@@ -163,8 +171,95 @@ pub(crate) fn outgoing_mail(parsed: &ParsedMessage, username: &str, user_domain:
 
 /// Sends an authenticated submission through Mailgun and records it in Sent.
 /// Attachments are not carried, as the Bun server carries none.
-async fn send_outgoing(parsed: ParsedMessage, username: &str, user: SignedUser, session: &SmtpSession) -> anyhow::Result<()> {
+async fn send_outgoing(
+    parsed: ParsedMessage,
+    username: &str,
+    user: SignedUser,
+    session: &SmtpSession,
+) -> anyhow::Result<()> {
     let mail = outgoing_mail(&parsed, username, &get_user_domain(username), &session.envelope);
     send_mail(&user, mail, &[], SendMailOptions::default()).await.map_err(anyhow::Error::new)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! What a submission is sent as (`onDataOutgoing` in `smtp.test.ts`).
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::smtp::types::SmtpAddress;
+
+    async fn parse(message: &str) -> ParsedMessage {
+        let dir = tempfile::tempdir().unwrap();
+        let options = ParseOptions { attachment_dir: dir.path().join("tx") };
+        parse_message(message.as_bytes(), &options).await.unwrap()
+    }
+
+    fn envelope(from: &str, to: &[&str]) -> SmtpEnvelope {
+        let address = |address: &str| SmtpAddress { address: address.to_string(), args: None };
+        SmtpEnvelope {
+            mail_from: Some(address(from)),
+            rcpt_to: to.iter().map(|to| address(to)).collect(),
+            ..SmtpEnvelope::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn sends_a_text_only_message_as_html_under_the_users_own_name() {
+        let parsed =
+            parse("From: Alice Example <alice@alice.test.com>\r\nTo: bob@remote.example\r\nSubject: Hi\r\n\r\nline one\r\nline two\r\n")
+                .await;
+        let envelope = envelope("alice@alice.test.com", &["bob@remote.example"]);
+        let mail = outgoing_mail(&parsed, "alice", "alice.test.com", &envelope);
+        assert_eq!(mail.sender, json!("alice"));
+        assert_eq!(mail.sender_full_name, json!("Alice Example"));
+        assert_eq!(mail.to, json!("bob@remote.example"));
+        assert_eq!((mail.cc.clone(), mail.bcc.clone()), (None, None));
+        assert_eq!(mail.subject, json!("Hi"));
+        assert_eq!(mail.html, json!(plain_text_to_html(parsed.text.as_deref().unwrap())));
+        assert!(mail.html.as_str().unwrap().starts_with("<div style=\"white-space: pre-wrap\">"));
+        assert_eq!((mail.in_reply_to, mail.references), (None, None));
+    }
+
+    #[tokio::test]
+    async fn splits_the_envelope_into_to_cc_and_bcc_and_defaults_the_subject() {
+        let parsed =
+            parse("From: shop@alice.test.com\r\nTo: a@remote.example\r\nCc: B <b@remote.example>\r\n\r\nbody\r\n")
+                .await;
+        let rcpt = ["a@remote.example", "b@remote.example", "hidden@remote.example"];
+        let mail = outgoing_mail(&parsed, "alice", "alice.test.com", &envelope("alice@alice.test.com", &rcpt));
+        // A From header naming another account of the user's domain sends as it.
+        assert_eq!(mail.sender, json!("shop"));
+        assert_eq!(mail.sender_full_name, json!("shop"));
+        assert_eq!(mail.to, json!("a@remote.example"));
+        assert_eq!(mail.cc, Some(json!("b@remote.example")));
+        assert_eq!(mail.bcc, Some(json!("hidden@remote.example")));
+        assert_eq!(mail.subject, json!("No Subject"));
+    }
+
+    #[tokio::test]
+    async fn sends_a_header_less_submission_entirely_as_bcc_and_keeps_the_html() {
+        let parsed = parse("Content-Type: text/html\r\n\r\n<p>hi</p>\r\n").await;
+        let mail =
+            outgoing_mail(&parsed, "admin", "test.com", &envelope("", &["x@remote.example", "y@remote.example"]));
+        assert_eq!(mail.sender, json!("admin"));
+        assert_eq!(mail.to, json!(""));
+        assert_eq!(mail.bcc, Some(json!("x@remote.example,y@remote.example")));
+        assert_eq!(mail.html, json!(parsed.html.clone().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn carries_a_replys_in_reply_to_and_references() {
+        let parsed = parse(concat!(
+            "From: alice@alice.test.com\r\nTo: bob@remote.example\r\nSubject: Re: x\r\n",
+            "In-Reply-To: <b@remote.example>\r\nReferences: <a@remote.example> <b@remote.example>\r\n\r\nok\r\n"
+        ))
+        .await;
+        let envelope = envelope("alice@alice.test.com", &["bob@remote.example"]);
+        let mail = outgoing_mail(&parsed, "alice", "alice.test.com", &envelope);
+        assert_eq!(mail.in_reply_to, Some(json!("<b@remote.example>")));
+        assert_eq!(mail.references, Some(vec!["<a@remote.example>".to_string(), "<b@remote.example>".to_string()]));
+    }
 }

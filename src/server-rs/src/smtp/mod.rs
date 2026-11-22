@@ -11,6 +11,8 @@ pub mod connection;
 pub mod data_budget;
 pub mod data_stream;
 pub mod handler;
+#[cfg(test)]
+mod handler_tests;
 mod lanes;
 pub mod listeners;
 pub mod outgoing;

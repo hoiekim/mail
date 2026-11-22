@@ -85,7 +85,12 @@ pub fn resolve_outgoing_sender(
     match selected {
         Some(selected) if recipients.len() != 1 => OutgoingSender {
             sender: account_of(Some(&recipients[selected])).expect("the selected recipient has an account"),
-            recipients: recipients.iter().enumerate().filter(|(index, _)| *index != selected).map(|(_, r)| r.clone()).collect(),
+            recipients: recipients
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != selected)
+                .map(|(_, r)| r.clone())
+                .collect(),
         },
         _ => {
             let envelope_account = from_envelope
@@ -148,7 +153,12 @@ mod tests {
     }
 
     /// `resolveOutgoingSender("admin", "test.com", from, recipients, addressedTo)`.
-    fn resolve(header: Option<&str>, envelope: Option<&str>, recipients: &[&str], addressed_to: &[&str]) -> OutgoingSender {
+    fn resolve(
+        header: Option<&str>,
+        envelope: Option<&str>,
+        recipients: &[&str],
+        addressed_to: &[&str],
+    ) -> OutgoingSender {
         resolve_outgoing_sender("admin", "test.com", header, envelope, &strings(recipients), &strings(addressed_to))
     }
 
@@ -211,7 +221,10 @@ mod tests {
 
     #[test]
     fn never_lets_a_from_header_outside_the_user_domain_supply_the_sender() {
-        assert_eq!(resolve(Some("ceo@irs.gov"), None, &["victim@other.com"], &[]), sent_as("admin", &["victim@other.com"]));
+        assert_eq!(
+            resolve(Some("ceo@irs.gov"), None, &["victim@other.com"], &[]),
+            sent_as("admin", &["victim@other.com"])
+        );
         assert_eq!(
             resolve(Some("ceo@irs.gov"), Some("@test.com"), &["victim@other.com"], &[]),
             sent_as("admin", &["victim@other.com"])
@@ -220,7 +233,10 @@ mod tests {
 
     #[test]
     fn lowercases_a_sender_taken_from_the_envelope() {
-        assert_eq!(resolve(None, Some("Bob@Test.com"), &["outside@other.com"], &[]), sent_as("bob", &["outside@other.com"]));
+        assert_eq!(
+            resolve(None, Some("Bob@Test.com"), &["outside@other.com"], &[]),
+            sent_as("bob", &["outside@other.com"])
+        );
     }
 
     #[test]
@@ -246,7 +262,10 @@ mod tests {
 
     #[test]
     fn keeps_a_lone_same_domain_recipient_rather_than_emptying_the_recipient_list() {
-        assert_eq!(resolve(None, Some("admin@test.com"), &["sales@test.com"], &[]), sent_as("admin", &["sales@test.com"]));
+        assert_eq!(
+            resolve(None, Some("admin@test.com"), &["sales@test.com"], &[]),
+            sent_as("admin", &["sales@test.com"])
+        );
     }
 
     #[test]
@@ -259,7 +278,10 @@ mod tests {
 
     #[test]
     fn falls_back_to_the_username_when_no_address_carries_a_local_part() {
-        assert_eq!(resolve(None, Some("@test.com"), &["outside@other.com"], &[]), sent_as("admin", &["outside@other.com"]));
+        assert_eq!(
+            resolve(None, Some("@test.com"), &["outside@other.com"], &[]),
+            sent_as("admin", &["outside@other.com"])
+        );
     }
 
     #[test]
@@ -297,7 +319,8 @@ mod tests {
 
     #[test]
     fn ignores_a_header_address_that_the_envelope_never_named() {
-        let split = split_envelope_recipients(&strings(&["a@x.com"]), &strings(&["ghost@x.com"]), &strings(&["other@x.com"]));
+        let split =
+            split_envelope_recipients(&strings(&["a@x.com"]), &strings(&["ghost@x.com"]), &strings(&["other@x.com"]));
         assert_eq!(split, EnvelopeRecipients { to: vec![], cc: vec![], bcc: strings(&["a@x.com"]) });
     }
 

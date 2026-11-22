@@ -231,7 +231,9 @@ pub fn username_for_address(address: &str, domain: &str) -> String {
 /// Whether RCPT TO looks `address` up, and under which username.
 pub fn recipient_check(address: &str, email_domain: Option<&str>) -> RecipientCheck {
     match email_domain {
-        Some(domain) if is_local_address(address, domain) => RecipientCheck::Lookup(username_for_address(address, domain)),
+        Some(domain) if is_local_address(address, domain) => {
+            RecipientCheck::Lookup(username_for_address(address, domain))
+        }
         _ => RecipientCheck::Pass,
     }
 }
@@ -316,7 +318,11 @@ impl<D: MailDirectory> MailHandler<D> {
         Ok(())
     }
 
-    async fn authenticate(&self, auth: SmtpAuthRequest, session: &mut SmtpSession) -> Result<SmtpAuthResponse, SmtpHookError> {
+    async fn authenticate(
+        &self,
+        auth: SmtpAuthRequest,
+        session: &mut SmtpSession,
+    ) -> Result<SmtpAuthResponse, SmtpHookError> {
         if let Some(user) = session.user.clone() {
             return Ok(SmtpAuthResponse::accept(user));
         }
@@ -339,11 +345,7 @@ impl<D: MailDirectory> MailHandler<D> {
             let user = match self.directory.get_user(&username).await {
                 Ok(user) => user,
                 Err(error) => {
-                    logger::error_with(
-                        "SMTP: authentication lookup failed",
-                        json!({ "remoteAddress": ip }),
-                        &error,
-                    );
+                    logger::error_with("SMTP: authentication lookup failed", json!({ "remoteAddress": ip }), &error);
                     return Err(refusals::lookup_failed());
                 }
             };
@@ -356,10 +358,7 @@ impl<D: MailDirectory> MailHandler<D> {
                 // Read-only sessions pass this gate and are refused at MAIL
                 // FROM, the one mutating gate this surface has.
                 if username == ADMIN_RO_USERNAME {
-                    logger::info(
-                        "SMTP AUTH success (read-only)",
-                        json!({ "authenticatedAs": username, "ip": ip }),
-                    );
+                    logger::info("SMTP AUTH success (read-only)", json!({ "authenticatedAs": username, "ip": ip }));
                 }
                 return Ok(SmtpAuthResponse::accept(username));
             }
@@ -429,7 +428,8 @@ impl<D: MailDirectory> MailHandler<D> {
     ) -> Result<Result<(), SmtpHookError>, anyhow::Error> {
         self.check_credential_version(session).await.map_err(anyhow::Error::new)?;
 
-        let RecipientCheck::Lookup(username) = recipient_check(&address.address, self.directory.email_domain().as_deref())
+        let RecipientCheck::Lookup(username) =
+            recipient_check(&address.address, self.directory.email_domain().as_deref())
         else {
             return Ok(Ok(()));
         };
@@ -440,10 +440,7 @@ impl<D: MailDirectory> MailHandler<D> {
         if user.is_some() {
             return Ok(Ok(()));
         }
-        logger::warn(
-            "SMTP: refused a recipient with no mailbox",
-            json!({ "remoteAddress": ip, "username": username }),
-        );
+        logger::warn("SMTP: refused a recipient with no mailbox", json!({ "remoteAddress": ip, "username": username }));
         record_recipient_probe(ip).await;
         Ok(Err(refusals::no_such_mailbox()))
     }
@@ -490,7 +487,11 @@ impl<D: MailDirectory> MailHandler<D> {
 }
 
 impl<D: MailDirectory> SmtpHandler for MailHandler<D> {
-    async fn on_auth(&self, auth: SmtpAuthRequest, session: &mut SmtpSession) -> Result<SmtpAuthResponse, SmtpHookError> {
+    async fn on_auth(
+        &self,
+        auth: SmtpAuthRequest,
+        session: &mut SmtpSession,
+    ) -> Result<SmtpAuthResponse, SmtpHookError> {
         self.authenticate(auth, session).await
     }
 

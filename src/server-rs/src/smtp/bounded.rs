@@ -83,7 +83,11 @@ impl BoundedMessage {
         BoundedMessage::with_idle_timeout(stream, remote_address, DATA_IDLE_TIMEOUT)
     }
 
-    pub fn with_idle_timeout(mut stream: SmtpDataStream, remote_address: &str, idle_timeout: Duration) -> BoundedMessage {
+    pub fn with_idle_timeout(
+        mut stream: SmtpDataStream,
+        remote_address: &str,
+        idle_timeout: Duration,
+    ) -> BoundedMessage {
         stream.enforce_size_limit();
         BoundedMessage {
             stream,
