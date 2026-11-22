@@ -31,34 +31,23 @@ use crate::imap::types::{AppendRequest, LoginRequest, SearchCriterion, SearchReq
 // The journal
 // ---------------------------------------------------------------------------
 
-static JOURNAL: Mutex<Vec<(String, String, Value)>> = Mutex::new(Vec::new());
-
-/// Called by the handler's log helpers.
-pub(super) fn journal(level: &str, message: &str, context: &Value) {
-    JOURNAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((
-        level.to_string(),
-        message.to_string(),
-        context.clone(),
-    ));
-}
-
 /// Everything journaled so far, as one text to search. Tests run side by
 /// side, so each one looks for markers only it uses.
 fn journal_text() -> String {
-    let entries = JOURNAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entries = test_support::journal_entries();
     entries.iter().map(|(level, message, context)| format!("{level} {message} {context}\n")).collect()
 }
 
 /// The journal entries of one connection, by the `remote` they name.
 fn journal_of(remote: &str) -> Vec<(String, String, Value)> {
-    let entries = JOURNAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entries = test_support::journal_entries();
     entries.iter().filter(|(_, _, context)| context.get("remote").and_then(Value::as_str) == Some(remote)).cloned().collect()
 }
 
 /// The raw wire text the DEBUG lines carry (`input` of a parse failure,
 /// `command` of a received command) that contains `marker`.
 fn journaled_wire_text(marker: &str) -> Vec<String> {
-    let entries = JOURNAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entries = test_support::journal_entries();
     entries
         .iter()
         .filter(|(level, _, _)| level == "debug")
@@ -104,6 +93,8 @@ struct Recorder {
     dispatched: Arc<Mutex<Vec<Recorded>>>,
     real: bool,
     hook: Option<Hook>,
+    /// Lines taken as the response to an AUTHENTICATE challenge, by tag.
+    sasl: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl Recorder {
@@ -131,6 +122,10 @@ impl Dispatch for Recorder {
         if let Some(hook) = self.hook.clone() {
             hook(session.clone(), tag.to_string(), request).await;
         }
+    }
+
+    async fn sasl_response(&mut self, _session: &Arc<ImapSession>, tag: &str, response: &str) {
+        self.sasl.lock().unwrap().push((tag.to_string(), response.to_string()));
     }
 }
 
@@ -2586,5 +2581,63 @@ mod starttls_pipelining {
 
         assert_eq!(shutdown_imap_sessions(), 1);
         assert_eq!(read_line(&mut upgraded.tls).await, "* BYE Server shutting down\r\n");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The AUTHENTICATE continuation line (auth.test.ts)
+// ---------------------------------------------------------------------------
+
+mod sasl_continuation_line {
+    use super::super::super::auth::AuthConnection;
+    use super::*;
+
+    async fn challenged(tag: &str) -> (Wire, Arc<Mutex<Vec<(String, String)>>>) {
+        let recorder = Recorder::default();
+        let sasl = recorder.sasl.clone();
+        let wire = Wire::open(recorder).await;
+        AuthConnection::set_pending_sasl_tag(&*wire.session, tag);
+        (wire, sasl)
+    }
+
+    #[tokio::test]
+    async fn cancels_the_exchange_on_a_bare_asterisk_without_reaching_the_user_store() {
+        let (wire, sasl) = challenged("D1").await;
+        wire.send("*\r\n").await;
+        settle().await;
+
+        assert!(wire.output().contains("D1 BAD Authentication cancelled\r\n"));
+        assert!(sasl.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn forgets_the_tag_after_the_cancel_so_the_next_line_is_read_as_a_command() {
+        let (wire, _) = challenged("D2").await;
+        wire.send("*\r\n").await;
+        settle().await;
+        let cancelled = wire.output();
+        wire.send("*\r\n").await;
+        settle().await;
+
+        assert!(!wire.output()[cancelled.len()..].contains("Authentication cancelled"));
+    }
+
+    #[tokio::test]
+    async fn feeds_a_base64_continuation_into_the_plain_exchange() {
+        let (wire, sasl) = challenged("D3").await;
+        wire.send("AG5vYm9keQBodW50ZXIy\r\n").await;
+        settle().await;
+
+        assert_eq!(*sasl.lock().unwrap(), [("D3".to_string(), "AG5vYm9keQBodW50ZXIy".to_string())]);
+        assert!(wire.dispatched().is_empty());
+    }
+
+    #[tokio::test]
+    async fn takes_the_response_line_trimmed() {
+        let (wire, sasl) = challenged("D4").await;
+        wire.send("  AG5vYm9keQBodW50ZXIy \r\n").await;
+        settle().await;
+
+        assert_eq!(*sasl.lock().unwrap(), [("D4".to_string(), "AG5vYm9keQBodW50ZXIy".to_string())]);
     }
 }

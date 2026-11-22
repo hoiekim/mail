@@ -1,12 +1,22 @@
-//! Shared pieces of the IMAP unit tests: the lock around process-wide state
-//! and a throwaway TLS certificate.
+//! Shared pieces of the IMAP unit tests: the lock around process-wide state,
+//! a throwaway TLS certificate, the journal the log helpers feed, and a fake
+//! credential backend.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use anyhow::{anyhow, Result};
+use serde_json::Value;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio_rustls::TlsAcceptor;
+
+use super::auth::AuthBackend;
+use crate::models::{SignedUser, User};
+use crate::read_only::{remap_read_only_session, ADMIN_RO_USERNAME, ADMIN_USERNAME};
+use crate::sso::app_password::AppPasswordCheck;
+use crate::sso::Sso;
 
 static PROCESS_WIDE: RwLock<()> = RwLock::const_new(());
 
@@ -94,4 +104,139 @@ pub(crate) fn acceptor() -> Option<TlsAcceptor> {
 /// The server name the test certificate is for.
 pub(crate) fn server_name() -> rustls::pki_types::ServerName<'static> {
     rustls::pki_types::ServerName::try_from("localhost").expect("a valid name")
+}
+
+static JOURNAL: Mutex<Vec<(String, String, Value)>> = Mutex::new(Vec::new());
+
+/// Called by the IMAP log helpers.
+pub(crate) fn journal(level: &str, message: &str, context: &Value) {
+    JOURNAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((
+        level.to_string(),
+        message.to_string(),
+        context.clone(),
+    ));
+}
+
+/// Every journal entry so far, as `(level, message, context)`. Tests run side
+/// by side, so each one looks for markers only it uses.
+pub(crate) fn journal_entries() -> Vec<(String, String, Value)> {
+    JOURNAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+}
+
+/// A call into [`FakeAuthBackend`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum FakeAuthCall {
+    IsLimited(String, Option<String>),
+    Record(String, Option<String>),
+    Reset(String, Option<String>),
+    GetUser(String),
+    /// The password compared, and the digest it was compared against.
+    Verify(String, Option<String>),
+    AppPassword(String, String, String),
+}
+
+/// A credential backend that answers from its own accounts and records
+/// every call made into it. The password comparison is the real one.
+#[derive(Default)]
+pub(crate) struct FakeAuthBackend {
+    pub(crate) users: HashMap<String, User>,
+    pub(crate) lookup_fails: bool,
+    pub(crate) rate_limited: bool,
+    /// What recording a failure answers: true once past the threshold.
+    pub(crate) record_limits: bool,
+    pub(crate) sso: Option<Arc<Sso>>,
+    /// What the provider answers; `Rejected` when unset.
+    pub(crate) app_password: Option<AppPasswordCheck>,
+    pub(crate) calls: Mutex<Vec<FakeAuthCall>>,
+}
+
+impl FakeAuthBackend {
+    pub(crate) fn with_users(users: Vec<User>) -> FakeAuthBackend {
+        FakeAuthBackend {
+            users: users.into_iter().map(|user| (user.username.clone().unwrap(), user)).collect(),
+            ..FakeAuthBackend::default()
+        }
+    }
+
+    pub(crate) fn calls(&self) -> Vec<FakeAuthCall> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    pub(crate) fn called(&self, matches: impl Fn(&FakeAuthCall) -> bool) -> bool {
+        self.calls().iter().any(matches)
+    }
+
+    pub(crate) fn compared(&self) -> Vec<(String, Option<String>)> {
+        self.calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                FakeAuthCall::Verify(password, digest) => Some((password, digest)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn record(&self, call: FakeAuthCall) {
+        self.calls.lock().unwrap().push(call);
+    }
+}
+
+impl AuthBackend for FakeAuthBackend {
+    fn sso(&self) -> Option<Arc<Sso>> {
+        self.sso.clone()
+    }
+
+    fn is_auth_rate_limited(&self, ip: &str, account: Option<&str>) -> bool {
+        self.record(FakeAuthCall::IsLimited(ip.to_string(), account.map(str::to_string)));
+        self.rate_limited
+    }
+
+    async fn record_auth_failure(&self, ip: &str, account: Option<&str>) -> bool {
+        self.record(FakeAuthCall::Record(ip.to_string(), account.map(str::to_string)));
+        self.record_limits
+    }
+
+    fn reset_auth_failures(&self, ip: &str, account: Option<&str>) {
+        self.record(FakeAuthCall::Reset(ip.to_string(), account.map(str::to_string)));
+    }
+
+    async fn get_user(&self, username: &str) -> Result<Option<User>> {
+        self.record(FakeAuthCall::GetUser(username.to_string()));
+        if self.lookup_fails {
+            return Err(anyhow!("connection terminated"));
+        }
+        Ok(self.users.get(username).cloned())
+    }
+
+    async fn verify_password(&self, password: &str, stored_hash: Option<&str>) -> bool {
+        self.record(FakeAuthCall::Verify(password.to_string(), stored_hash.map(str::to_string)));
+        crate::verify_password::verify_password(Some(password), stored_hash).await
+    }
+
+    /// The read-only remap as `read_only::resolve_session_user` does it, with
+    /// the admin row from this backend's own accounts.
+    async fn resolve_session_user(&self, signed_user: Option<SignedUser>) -> Result<Option<(SignedUser, bool)>> {
+        let Some(signed_user) = signed_user else {
+            return Ok(None);
+        };
+        if signed_user.username != ADMIN_RO_USERNAME {
+            return Ok(Some((signed_user, false)));
+        }
+        Ok(self
+            .users
+            .get(ADMIN_USERNAME)
+            .and_then(User::get_signed)
+            .map(|admin| (remap_read_only_session(&admin, ADMIN_RO_USERNAME), true)))
+    }
+
+    async fn check_app_password(
+        &self,
+        _sso: &Sso,
+        username: &str,
+        password: &str,
+        ip: &str,
+    ) -> Result<AppPasswordCheck> {
+        self.record(FakeAuthCall::AppPassword(username.to_string(), password.to_string(), ip.to_string()));
+        Ok(self.app_password.clone().unwrap_or(AppPasswordCheck::Rejected))
+    }
 }

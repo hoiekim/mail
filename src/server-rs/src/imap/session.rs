@@ -16,13 +16,14 @@ use futures_util::Stream;
 use serde_json::json;
 use tokio_rustls::TlsAcceptor;
 
-use super::auth::{handle_authenticate, handle_login, AuthConnection, AuthResult, ServerAuthBackend};
+use super::auth::{handle_authenticate, handle_login, AuthBackend, AuthConnection, AuthResult, ServerAuthBackend};
 use super::capabilities::get_capabilities;
 use super::chunked_write::{write_chunked_to_socket, write_stream_to_socket};
 use super::close_socket::close_socket;
 use super::credential_version::get_credential_password_version;
 use super::idle_manager::{idle_manager, IdleFuture, IdleTarget, IDLE_SOCKET_TIMEOUT_MS, SOCKET_TIMEOUT_MS};
-use super::sequence_resolver::{reconcile_sequence_mapping, set_sequence_mapping, SequenceState};
+use super::message_ops::MailFlagUpdate;
+use super::sequence_resolver::{reconcile_sequence_mapping, set_sequence_mapping, MailboxUids, SequenceState};
 use super::session_registry::{
     register_authenticated_session, unregister_connection, unregister_session, RegisteredSession,
 };
@@ -87,6 +88,24 @@ pub struct ImapSession {
     /// Command slots taken from the throttler, for tests of the pacing.
     #[cfg(test)]
     slots_taken: AtomicU64,
+    /// Stand-ins for the store reads IDLE notifications make, for tests.
+    #[cfg(test)]
+    test_reads: Mutex<TestReads>,
+}
+
+/// What a test answers the mailbox reads of IDLE notifications with.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestReads {
+    pub uids: Option<std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, MailboxUids> + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    pub flags: Option<
+        std::sync::Arc<
+            dyn Fn(Vec<String>) -> futures_util::future::BoxFuture<'static, Result<Option<Vec<MailFlagUpdate>>>>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 
 impl ImapSession {
@@ -103,6 +122,8 @@ impl ImapSession {
             bytes_written: AtomicU64::new(0),
             #[cfg(test)]
             slots_taken: AtomicU64::new(0),
+            #[cfg(test)]
+            test_reads: Mutex::new(TestReads::default()),
         })
     }
 
@@ -159,7 +180,7 @@ impl ImapSession {
         // while this waits its turn (DONE) or while its mailbox read is
         // parked (the heartbeat's force-terminate, which takes no turn).
         let advertised = self.state().seq_state.seq_to_uid.clone();
-        let read = message_ops::read_selected_mailbox_uids(self).await;
+        let read = self.read_selected_mailbox_uids().await;
         let mut pending: Vec<String> = Vec::new();
         let total = {
             let mut state = self.state();
@@ -197,7 +218,7 @@ impl ImapSession {
         let Some(selected_mailbox) = selected else {
             return Ok(());
         };
-        let Some(updates) = message_ops::read_mail_flag_updates(self, &selected_mailbox, mail_ids).await? else {
+        let Some(updates) = self.read_mail_flag_updates(&selected_mailbox, mail_ids).await? else {
             return Ok(());
         };
         for update in updates {
@@ -208,6 +229,35 @@ impl ImapSession {
             self.write(&format!("* {seq} FETCH (FLAGS ({}))\r\n", update.flags().join(" ")));
         }
         Ok(())
+    }
+
+    /// The UIDs of the selected mailbox, for the sequence mapping.
+    async fn read_selected_mailbox_uids(&self) -> MailboxUids {
+        #[cfg(test)]
+        {
+            let read = self.test_reads.lock().unwrap().uids.clone();
+            if let Some(read) = read {
+                return read().await;
+            }
+        }
+        message_ops::read_selected_mailbox_uids(self).await
+    }
+
+    /// The current flags of `mail_ids` as `mailbox` sees them.
+    async fn read_mail_flag_updates(&self, mailbox: &str, mail_ids: &[String]) -> Result<Option<Vec<MailFlagUpdate>>> {
+        #[cfg(test)]
+        {
+            let read = self.test_reads.lock().unwrap().flags.clone();
+            if let Some(read) = read {
+                return read(mail_ids.to_vec()).await;
+            }
+        }
+        message_ops::read_mail_flag_updates(self, mailbox, mail_ids).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_reads(&self, reads: TestReads) {
+        *self.test_reads.lock().unwrap() = reads;
     }
 
     /// Octets queued to the client so far.
@@ -356,20 +406,36 @@ impl ImapSession {
     }
 
     pub async fn authenticate(&self, tag: &str, mechanism: &str, initial_response: Option<&str>) {
+        self.authenticate_with(tag, mechanism, initial_response, &ServerAuthBackend).await;
+    }
+
+    /// AUTHENTICATE, with credentials checked by `backend`.
+    pub async fn authenticate_with(
+        &self,
+        tag: &str,
+        mechanism: &str,
+        initial_response: Option<&str>,
+        backend: &impl AuthBackend,
+    ) {
         if self.refuses_cleartext_auth(tag) {
             return;
         }
-        if let Some(result) = handle_authenticate(tag, mechanism, initial_response, self, &ServerAuthBackend).await {
+        if let Some(result) = handle_authenticate(tag, mechanism, initial_response, self, backend).await {
             self.signed_in(result);
         }
     }
 
     pub async fn login(&self, tag: &str, username: &str, password: &str) -> Result<()> {
+        self.login_with(tag, username, password, &ServerAuthBackend).await
+    }
+
+    /// LOGIN, with credentials checked by `backend`.
+    pub async fn login_with(&self, tag: &str, username: &str, password: &str, backend: &impl AuthBackend) -> Result<()> {
         if self.refuses_cleartext_auth(tag) {
             return Ok(());
         }
         let args = [username.to_string(), password.to_string()];
-        if let Some(result) = handle_login(tag, &args, self, &ServerAuthBackend).await? {
+        if let Some(result) = handle_login(tag, &args, self, backend).await? {
             self.signed_in(result);
         }
         Ok(())
@@ -887,6 +953,17 @@ impl ImapSession {
     /// cleartext, runs the handshake and starts a clean session on the
     /// encrypted stream.
     pub fn start_tls(&self, tag: &str) {
+        self.start_tls_with(tag, get_tls_credentials, crate::tls::acceptor);
+    }
+
+    /// STARTTLS, with the certificate settings and the TLS setup read by the
+    /// two functions given; each is called only once it is needed.
+    pub fn start_tls_with(
+        &self,
+        tag: &str,
+        credentials: impl FnOnce() -> TlsCredentials,
+        acceptor: impl FnOnce() -> anyhow::Result<TlsAcceptor>,
+    ) {
         // RFC 3501 §6.2.1 / RFC 2595 §3: STARTTLS is only valid on a
         // cleartext connection in the not-authenticated state.
         if self.is_tls {
@@ -901,7 +978,7 @@ impl ImapSession {
         // CAPABILITY does not offer STARTTLS without a usable certificate,
         // so reaching here means the client asked for an extension it was
         // not offered.
-        if !matches!(get_tls_credentials(), TlsCredentials::Available { .. }) {
+        if !matches!(credentials(), TlsCredentials::Available { .. }) {
             self.write(&format!("{tag} NO STARTTLS is not available\r\n"));
             return;
         }
@@ -909,7 +986,7 @@ impl ImapSession {
         // Read the key pair before answering: a present but unparseable pair
         // is the last failure that can still be reported as a clean tagged
         // NO, because nothing on the connection has changed yet.
-        let acceptor = match crate::tls::acceptor() {
+        let acceptor = match acceptor() {
             Ok(acceptor) => acceptor,
             Err(error) => {
                 logger::error_with(
@@ -1008,3 +1085,7 @@ impl IdleTarget for ImapSession {
         ImapSession::close(self);
     }
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;

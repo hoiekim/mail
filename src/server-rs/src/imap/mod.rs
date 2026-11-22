@@ -18,6 +18,7 @@ pub mod fetch_format;
 pub mod handler;
 pub mod idle_manager;
 pub mod literal_spool;
+mod log;
 pub mod mailbox_ops;
 pub mod message_ops;
 pub mod parsers;

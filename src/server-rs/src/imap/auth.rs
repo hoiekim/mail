@@ -10,6 +10,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::json;
 
+use super::log;
 use crate::auth_rate_limit;
 use crate::logger;
 use crate::models::{SignedUser, User};
@@ -313,7 +314,7 @@ pub async fn handle_authenticate(
     // would drop a fast sign-in to DEBUG. `authenticatedAs` names the
     // original credential (unchanged by the read-only remap) so a
     // compromised read-only credential does not read in the log as admin.
-    logger::info(
+    log::info(
         "IMAP AUTHENTICATE success",
         json!({
             "component": "imap",
@@ -362,7 +363,7 @@ pub async fn handle_login(
     };
 
     // Auth-audit line, as for AUTHENTICATE.
-    logger::info(
+    log::info(
         "IMAP LOGIN success",
         json!({
             "component": "imap",
@@ -381,3 +382,7 @@ pub async fn handle_login(
         password_version: resolved.password_version,
     }))
 }
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod tests;
