@@ -31,6 +31,8 @@ pub mod session_registry;
 pub mod socket;
 pub mod stream_mutex;
 #[cfg(test)]
+mod stream_slot_tests;
+#[cfg(test)]
 pub(crate) mod test_support;
 pub mod throttler;
 pub mod trace;

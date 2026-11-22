@@ -189,7 +189,7 @@ impl Flood {
 }
 
 async fn settle() {
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 async fn tick() {
@@ -395,6 +395,7 @@ mod literal_continuation {
     async fn reassembles_a_literal_plus_login_instead_of_parsing_its_credentials_as_commands() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send("A1 LOGIN {5+}\r\nadmin {8+}\r\npassword\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -410,14 +411,17 @@ mod literal_continuation {
     async fn prompts_once_per_synchronizing_literal_and_still_reassembles() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send("A1 LOGIN {5}\r\n").await;
+        wire.wait_for_output("+ go ahead\r\n").await;
         settle().await;
         assert_eq!(wire.output(), "+ go ahead\r\n");
 
         wire.send("admin {8}\r\n").await;
+        wire.wait_for_output("+ go ahead\r\n+ go ahead\r\n").await;
         settle().await;
         assert_eq!(wire.output(), "+ go ahead\r\n+ go ahead\r\n");
 
         wire.send("password\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
         let dispatched = wire.dispatched();
         assert_eq!(dispatched.len(), 1);
@@ -431,6 +435,7 @@ mod literal_continuation {
             wire.send([*octet]).await;
             tick().await;
         }
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -444,6 +449,7 @@ mod literal_continuation {
         let wire = Wire::open(Recorder::default()).await;
         // 12 octets: quotes, a backslash, a brace, a space.
         wire.send("A1 LOGIN {5+}\r\nadmin {12+}\r\np@ss \"w\\d {}\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -466,10 +472,12 @@ mod literal_continuation {
         let _spool = spool_test_lock().await;
         let wire = Wire::open(Recorder::default()).await;
         wire.send("a1 APPEND INBOX (\\Seen) {11}\r\n").await;
+        wire.wait_for_output("+ go ahead\r\n").await;
         settle().await;
         assert_eq!(wire.output(), "+ go ahead\r\n");
 
         wire.send("Hello World\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -488,6 +496,7 @@ mod literal_continuation {
         let payload = "pässword".as_bytes();
         assert_eq!(payload.len(), 9);
         wire.send([b"A1 LOGIN {5+}\r\nadmin {9+}\r\n".as_slice(), payload, b"\r\nA2 NOOP\r\n"].concat()).await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1", "A2"]);
@@ -499,6 +508,7 @@ mod literal_continuation {
         let wire = Wire::open(Recorder::default()).await;
         let payload = "café".as_bytes(); // 5 octets, 4 code units
         wire.send_pieces(&[b"A1 SELECT {5+}\r\n", &payload[..4], &[payload[4], b'\r', b'\n']]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -514,6 +524,7 @@ mod literal_continuation {
         wire.send(format!("a1 APPEND INBOX {{{}+}}\r\n", message.len())).await;
         tick().await;
         wire.send(format!("{message}\r\n")).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -527,6 +538,7 @@ mod literal_continuation {
         let wire = Wire::open(Recorder::default()).await;
         // The client counted the CRLF into {N} and sent nothing after it.
         wire.send("a1 APPEND INBOX {13+}\r\nHello World\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -539,6 +551,7 @@ mod literal_continuation {
         let _spool = spool_test_lock().await;
         let wire = Wire::open(Recorder::default()).await;
         wire.send("a1 APPEND INBOX {0+}\r\n\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -551,6 +564,7 @@ mod literal_continuation {
         let wire = Wire::open(Recorder::default()).await;
         // `p@ss{5}` is a password that happens to end in brace-digits.
         wire.send("A1 LOGIN admin p@ss{5}\r\nA2 NOOP\r\n").await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1", "A2"]);
@@ -566,6 +580,7 @@ mod literal_continuation {
         settle().await;
         assert!(wire.dispatched().is_empty());
         wire.send(" \"hunter2\"\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -578,6 +593,7 @@ mod literal_continuation {
     async fn reassembles_two_literals_when_the_first_payload_is_flushed_on_its_own() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 LOGIN {5+}\r\n", b"admin", b" {8+}\r\n", b"password\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -590,6 +606,7 @@ mod literal_continuation {
     async fn emits_exactly_one_continuation_per_synchronizing_declaration() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 LOGIN {5}\r\n", b"admin", b" {8}\r\n", b"password\r\n"]).await;
+        wire.wait_for_output("+ go ahead\r\n+ go ahead\r\n").await;
         settle().await;
 
         assert_eq!(wire.output(), "+ go ahead\r\n+ go ahead\r\n");
@@ -600,6 +617,7 @@ mod literal_continuation {
     async fn reassembles_a_two_literal_rename_whose_first_payload_is_flushed_on_its_own() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 RENAME {5+}\r\n", b"Oldie", b" {5+}\r\n", b"Newie\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -615,6 +633,7 @@ mod literal_continuation {
         let message = "Subject: x\r\n\r\nbody";
         let header = format!("a1 APPEND INBOX {{{}+}}\r\n", message.len());
         wire.send_pieces(&[header.as_bytes(), message.as_bytes(), b"\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -632,6 +651,7 @@ mod literal_continuation {
         settle().await;
         assert!(wire.dispatched().is_empty());
         wire.send(" \"hunter2-crlf-tail\"\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -645,6 +665,7 @@ mod literal_continuation {
     async fn emits_no_extra_continuation_for_a_crlf_ending_payload_in_the_synchronizing_form() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 LOGIN {7}\r\n", b"admin\r\n", b" {8}\r\n", b"password\r\n"]).await;
+        wire.wait_for_output("+ go ahead\r\n+ go ahead\r\n").await;
         settle().await;
 
         assert_eq!(wire.output(), "+ go ahead\r\n+ go ahead\r\n");
@@ -655,6 +676,7 @@ mod literal_continuation {
     async fn waits_for_the_tail_of_a_rename_whose_first_payload_ends_in_crlf() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 RENAME {7+}\r\n", b"Oldie\r\n", b" {5+}\r\n", b"Newie\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -669,6 +691,7 @@ mod literal_continuation {
         let wire = Wire::open(Recorder::default()).await;
         // RFC 3501 §7 requires a tagged completion for every command.
         wire.send("a1 APPEND INBOX {13+}\r\nHello World\r\na2 NOOP\r\n").await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -682,6 +705,7 @@ mod literal_continuation {
         let _spool = spool_test_lock().await;
         let wire = Wire::open(Recorder::default()).await;
         wire.send("a1 APPEND INBOX {13+}\r\nHello World\r\na2 SELECT {5+}\r\nINBOX\r\n").await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["a1", "a2"]);
@@ -694,6 +718,7 @@ mod literal_continuation {
         // `SEARCH SUBJECT {3+}` + ["foo"] is complete on its own; the
         // separating SP is what marks the tail as its continuation.
         wire.send("A1 SEARCH SUBJECT {3+}\r\nfoo FROM {3+}\r\nbar\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -705,6 +730,7 @@ mod literal_continuation {
     async fn still_chains_a_separated_literal_when_the_first_payload_arrives_alone() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 SEARCH SUBJECT {3+}\r\nfoo", b" FROM {3+}\r\nbar\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -716,6 +742,7 @@ mod literal_continuation {
     async fn draws_one_continuation_per_declaration_for_a_chained_search_flushed_alone() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 SEARCH SUBJECT {3}\r\n", b"foo", b" FROM {3}\r\n", b"bar\r\n"]).await;
+        wire.wait_for_output("+ go ahead\r\n+ go ahead\r\n").await;
         settle().await;
 
         assert_eq!(wire.output(), "+ go ahead\r\n+ go ahead\r\n");
@@ -727,6 +754,7 @@ mod literal_continuation {
     async fn chains_a_separated_literal_onto_a_search_whose_payload_spans_two_segments() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 SEARCH SUBJECT {6+}\r\nfoo", b"bar", b" FROM {3+}\r\nbaz\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -738,6 +766,7 @@ mod literal_continuation {
     async fn chains_through_the_uid_wrapper_when_the_payload_arrives_alone() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send_pieces(&[b"A1 UID SEARCH SUBJECT {3+}\r\nfoo", b" FROM {3+}\r\nbar\r\n"]).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -751,6 +780,7 @@ mod literal_continuation {
         // `A1 LOGIN {5+}` + ["admin"] does not parse yet, so this tail is still
         // an argument even though it sits flush against the buffer start.
         wire.send("A1 LOGIN {5+}\r\nadminA2 LOGIN {8+}\r\nhunter22\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -761,6 +791,7 @@ mod literal_continuation {
     async fn processes_a_command_pipelined_behind_a_literal_command() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send("A1 LOGIN {5+}\r\nadmin {8+}\r\npassword\r\nA2 NOOP\r\n").await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1", "A2"]);
@@ -842,6 +873,7 @@ mod literal_ceiling {
         // Withholding the continuation keeps the payload off the wire: the
         // client is still waiting for a permission it never gets.
         wire.send(format!("A1 SELECT {{{}}}\r\n", SMALL_CAP + 1)).await;
+        wire.wait_for_output(&toobig("A1", SMALL_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("A1", SMALL_CAP));
@@ -854,6 +886,7 @@ mod literal_ceiling {
         let wire = Wire::open(Recorder::default()).await;
         // A conforming client sends no payload, so nothing may be swallowed.
         wire.send(format!("A1 SELECT {{{}}}\r\nA2 NOOP\r\n", SMALL_CAP + 1)).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A2"]);
@@ -1038,12 +1071,14 @@ mod literal_ceiling {
         let wire = Wire::open(Recorder::default()).await;
         let declared = SMALL_CAP + 1024;
         wire.send(format!("A1 SELECT {{{declared}+}}\r\n")).await;
+        wire.wait_for_output(&toobig("A1", SMALL_CAP)).await;
         settle().await;
         assert_eq!(wire.output(), toobig("A1", SMALL_CAP));
 
         // The octets are already in flight; they can only be counted out.
         wire.send(vec![b'A'; declared]).await;
         wire.send("\r\nA2 NOOP\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         // The discarded payload produced no commands of its own.
@@ -1065,6 +1100,7 @@ mod literal_ceiling {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         wire.send("\r\nA2 NOOP\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A2"]);
@@ -1097,6 +1133,7 @@ mod literal_ceiling {
         wire.send(&message).await;
         tick().await;
         wire.send("\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -1110,6 +1147,7 @@ mod literal_ceiling {
         let wire = Wire::open_authenticated(Recorder::default()).await;
         // Refused on the declaration, before a single payload octet is held.
         wire.send(format!("a1 APPEND INBOX {{{}+}}\r\n", APPEND_CAP + 1)).await;
+        wire.wait_for_output(&toobig("a1", APPEND_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("a1", APPEND_CAP));
@@ -1133,6 +1171,7 @@ mod literal_ceiling {
         let wire = Wire::open_authenticated(Recorder::default()).await;
         // Synchronizing: the continuation is withheld, nothing is in flight.
         wire.send("a1 APPEND INBOX {4000000000}\r\n").await;
+        wire.wait_for_output(&toobig("a1", APPEND_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("a1", APPEND_CAP));
@@ -1144,6 +1183,7 @@ mod literal_ceiling {
     async fn holds_an_unauthenticated_append_to_the_small_argument_ceiling() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send(format!("a1 APPEND INBOX {{{}+}}\r\n", SMALL_CAP + 4096)).await;
+        wire.wait_for_output(&toobig("a1", SMALL_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("a1", SMALL_CAP));
@@ -1154,6 +1194,7 @@ mod literal_ceiling {
     async fn holds_an_authenticated_appends_mailbox_name_literal_to_the_small_argument_ceiling() {
         let wire = Wire::open_authenticated(Recorder::default()).await;
         wire.send(format!("a1 APPEND {{{}}}\r\n", SMALL_CAP + 1)).await;
+        wire.wait_for_output(&toobig("a1", SMALL_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("a1", SMALL_CAP));
@@ -1165,6 +1206,7 @@ mod literal_ceiling {
         let _spool = spool_test_lock().await;
         let wire = Wire::open_authenticated(Recorder::default()).await;
         wire.send(format!("a1 APPEND INBOX {{5+}}\r\nhello {{{}}}\r\n", SMALL_CAP + 1)).await;
+        wire.wait_for_output(&toobig("a1", SMALL_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("a1", SMALL_CAP));
@@ -1196,6 +1238,7 @@ mod literal_ceiling {
         wire.send("admin").await;
         tick().await;
         wire.send(format!(" {{{}}}\r\n", SMALL_CAP + 1)).await;
+        wire.wait_for_output(&toobig("A1", SMALL_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("A1", SMALL_CAP));
@@ -1297,6 +1340,7 @@ mod unread_command_text_ceiling {
     async fn keeps_the_bound_after_an_over_cap_declaration_armed_the_discard() {
         let wire = Wire::open_with(Recorder::default(), Setup { capacity: Some(NARROW), ..Setup::default() }).await;
         wire.send(format!("A1 LOGIN {{{PENDING_CAP}+}}\r\n")).await;
+        wire.wait_for_output(&toobig("A1", SMALL_CAP)).await;
         settle().await;
         assert_eq!(wire.output(), toobig("A1", SMALL_CAP));
 
@@ -1414,6 +1458,7 @@ mod literal_chain_ceiling {
         wire.send("admin").await;
         tick().await;
         wire.send(format!(" {{{}}}\r\n", PENDING_CAP + 1)).await;
+        wire.wait_for_output(&toobig("A1", SMALL_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("A1", SMALL_CAP));
@@ -1514,6 +1559,7 @@ mod pipelined_literal_declaration {
         let _spool = spool_test_lock().await;
         let wire = Wire::open(Recorder::default()).await;
         wire.send("a1 APPEND INBOX {13+}\r\nHello World\r\na2 SEARCH SUBJECT {3+}\r\nfoo\r\n").await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["a1", "a2"]);
@@ -1523,6 +1569,7 @@ mod pipelined_literal_declaration {
     async fn still_chains_an_argument_tail_that_declares_the_next_literal() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send("A1 LOGIN {5+}\r\nadmin {17+}\r\nhunter2-arg-tail1\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -1533,6 +1580,7 @@ mod pipelined_literal_declaration {
     async fn keeps_an_unseparated_literal_tail_chaining_while_the_command_is_incomplete() {
         let wire = Wire::open(Recorder::default()).await;
         wire.send("A1 LOGIN {5+}\r\nadminA2 LOGIN {8+}\r\nhunter22\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["A1"]);
@@ -1668,6 +1716,7 @@ mod append_literal_spool {
         let message = [0x53, 0x3a, 0x20, 0xff, 0xfe, 0x80, 0x0d, 0x0a, 0x0d, 0x0a, 0xc3];
         wire.send(format!("a1 APPEND INBOX {{{}+}}\r\n", message.len())).await;
         wire.send([message.as_slice(), b"\r\n"].concat()).await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -1682,6 +1731,7 @@ mod append_literal_spool {
         let before = spool_dirs();
         let wire = Wire::open_authenticated(Recorder::default()).await;
         wire.send("a1 APPEND {6+}\r\nDrafts {5+}\r\nhello\r\n").await;
+        wire.wait_for_dispatches(1).await;
         settle().await;
 
         let dispatched = wire.dispatched();
@@ -1697,9 +1747,11 @@ mod append_literal_spool {
         let before = spool_dirs();
         let wire = Wire::open_authenticated(Recorder::default()).await;
         wire.send("a1 APPEND INBOX (\\Seen) {5}\r\n").await;
+        wire.wait_for_output("+ go ahead\r\n").await;
         settle().await;
         assert_eq!(wire.output(), "+ go ahead\r\n");
         wire.send("hello\r\na2 NOOP\r\n").await;
+        wire.wait_for_dispatches(2).await;
         settle().await;
 
         assert_eq!(wire.tags(), ["a1", "a2"]);
@@ -1763,6 +1815,8 @@ mod append_literal_spool {
 
     #[tokio::test]
     async fn removes_the_file_when_an_unauthenticated_session_is_answered_no() {
+        // APPEND is budgeted, and other tests saturate the budget.
+        let _budget = super::super::super::command_budget::test_lock().await;
         let _spool = spool_test_lock().await;
         let before = spool_dirs();
         let wire = Wire::open(Recorder::real()).await;
@@ -1794,6 +1848,7 @@ mod append_literal_spool {
         let before = spool_dirs();
         let wire = Wire::open_authenticated(Recorder::default()).await;
         wire.send(format!("a1 APPEND INBOX {{{}}}\r\n", APPEND_CAP + 1)).await;
+        wire.wait_for_output(&toobig("a1", APPEND_CAP)).await;
         settle().await;
 
         assert_eq!(wire.output(), toobig("a1", APPEND_CAP));
@@ -1994,6 +2049,7 @@ mod serial_drain {
         wire.send("b1 NO").await;
         wire.send("OP").await;
         wire.send("\r\n").await;
+        wire.wait_for_output("b1 OK NOOP completed\r\n").await;
         wire.wait_for_output("b1 OK NOOP completed\r\n").await;
         settle().await;
 
@@ -2639,5 +2695,148 @@ mod sasl_continuation_line {
         settle().await;
 
         assert_eq!(*sasl.lock().unwrap(), [("D4".to_string(), "AG5vYm9keQBodW50ZXIy".to_string())]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The command budget, wired (command-budget-wiring.test.ts)
+// ---------------------------------------------------------------------------
+
+mod command_budget_wiring {
+    use super::super::super::command_budget::{
+        acquire_command_budget, command_budget_capacity, command_budget_in_flight, release_command_budget,
+        reset_command_budget, test_lock,
+    };
+    use super::*;
+
+    /// Every slot taken, as other sessions' commands would hold them.
+    async fn saturate() -> usize {
+        reset_command_budget();
+        let capacity = command_budget_capacity();
+        for _ in 0..capacity {
+            acquire_command_budget().await;
+        }
+        assert_eq!(command_budget_in_flight(), capacity);
+        capacity
+    }
+
+    fn answered(wire: &Wire, tag: &str) -> bool {
+        wire.lines().iter().any(|line| line.starts_with(&format!("{tag} OK")) || line.starts_with(&format!("{tag} NO")) || line.starts_with(&format!("{tag} BAD")))
+    }
+
+    fn logged(wire: &Wire, message: &str) -> Vec<(String, Value)> {
+        journal_of(&wire.remote)
+            .into_iter()
+            .filter(|(_, logged, _)| logged == message)
+            .map(|(level, _, context)| (level, context))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn queues_a_real_select_when_the_budget_is_saturated_and_gives_its_slot_back() {
+        let _lock = test_lock().await;
+        let capacity = saturate().await;
+        let wire = Wire::open(Recorder::real()).await;
+        wire.send("t1 SELECT INBOX\r\n").await;
+        settle().await;
+
+        // Saturated: the command waits for a slot instead of running.
+        assert!(!answered(&wire, "t1"));
+        assert_eq!(command_budget_in_flight(), capacity);
+
+        // One slot frees; the queued SELECT takes it, completes, and gives
+        // its own back.
+        release_command_budget();
+        let received = wire.received.clone();
+        assert!(
+            wait_for(Duration::from_secs(2), || String::from_utf8_lossy(&received.lock().unwrap()).contains("t1 NO")).await
+        );
+        assert_eq!(wire.output(), "t1 NO Not authenticated.\r\n");
+        assert_eq!(command_budget_in_flight(), capacity - 1);
+        reset_command_budget();
+    }
+
+    #[tokio::test]
+    async fn does_not_gate_a_protocol_command_behind_a_saturated_budget() {
+        let _lock = test_lock().await;
+        let capacity = saturate().await;
+        let wire = Wire::open(Recorder::real()).await;
+        wire.send("t2 NOOP\r\n").await;
+        wire.wait_for_output("t2 OK NOOP completed\r\n").await;
+
+        assert_eq!(command_budget_in_flight(), capacity);
+        reset_command_budget();
+    }
+
+    #[tokio::test]
+    async fn keeps_a_starved_but_fast_command_at_info_on_the_budget_wait_alone() {
+        let _lock = test_lock().await;
+        saturate().await;
+        let wire = Wire::open(Recorder::real()).await;
+        wire.send("t1 SELECT INBOX\r\n").await;
+        // Queued past the interesting-duration floor before a slot frees.
+        tokio::time::sleep(Duration::from_millis(INTERESTING_DURATION_MS + 50)).await;
+        release_command_budget();
+        wire.wait_for_output("t1 NO").await;
+        settle().await;
+
+        let completions = logged(&wire, "IMAP command completed");
+        assert_eq!(completions.len(), 1);
+        let (level, payload) = &completions[0];
+        assert_eq!(level, "info");
+        assert!(payload["waitedForCommandBudgetMs"].as_u64().unwrap() >= INTERESTING_DURATION_MS);
+        // Nothing else about it is interesting: the INFO is the wait's.
+        assert!(payload["durationMs"].as_u64().unwrap() < INTERESTING_DURATION_MS);
+        assert!(payload["responseBytes"].as_u64().unwrap() < INTERESTING_RESPONSE_BYTES);
+        assert!(payload["rssDeltaMB"].as_i64().unwrap().abs() < INTERESTING_RSS_DELTA_MB);
+        assert_eq!(payload["cmd"], "SELECT INBOX");
+        reset_command_budget();
+    }
+
+    /// The peer goes while the command waits for a slot: the slot is handed
+    /// straight back, no response is built, and the drop is logged.
+    async fn abandons_a_queued_command(kill: impl FnOnce(&Wire)) {
+        let _lock = test_lock().await;
+        let capacity = saturate().await;
+        let wire = Wire::open(Recorder::real()).await;
+        wire.send("t1 SELECT INBOX\r\n").await;
+        settle().await;
+        assert_eq!(command_budget_in_flight(), capacity);
+
+        kill(&wire);
+        assert!(!wire.session.socket().is_writable());
+        release_command_budget();
+        assert!(wait_for(Duration::from_secs(2), || command_budget_in_flight() == capacity - 1).await);
+        settle().await;
+
+        assert!(logged(&wire, "IMAP command completed").is_empty());
+        let drops = logged(&wire, "IMAP command dropped");
+        assert_eq!(drops.len(), 1);
+        assert_eq!(drops[0].0, "info");
+        assert_eq!(drops[0].1["cmd"], "SELECT INBOX");
+        assert_eq!(drops[0].1["tag"], "t1");
+        assert!(drops[0].1["waitedForCommandBudgetMs"].as_f64().unwrap() >= 0.0);
+        reset_command_budget();
+    }
+
+    #[tokio::test]
+    async fn abandons_a_queued_command_whose_peer_disconnected_while_it_waited() {
+        abandons_a_queued_command(|wire| {
+            wire.session.socket().destroy();
+            assert!(wire.session.socket().is_destroyed());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn abandons_a_queued_command_whose_connection_was_half_closed_by_the_server() {
+        // What the inactivity timeout does: BYE, then the flush-then-destroy
+        // close, which leaves the socket unwritable but not yet destroyed.
+        abandons_a_queued_command(|wire| {
+            wire.session.write("* BYE Timeout\r\n");
+            wire.session.close();
+            assert!(!wire.session.socket().is_destroyed());
+        })
+        .await;
     }
 }
