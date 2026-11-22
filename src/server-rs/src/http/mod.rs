@@ -613,6 +613,16 @@ async fn serve(
         response.headers_mut().insert("connection", http::HeaderValue::from_static("close"));
         return Ok(response);
     }
+    // A declared body past the largest the server reads is refused before
+    // any of it is read, as the Bun server's `maxRequestBodySize` refuses it.
+    let declared = parts.headers.get(http::header::CONTENT_LENGTH).and_then(|value| value.to_str().ok());
+    let declared = declared.and_then(|value| value.trim().parse::<u64>().ok());
+    if declared.is_some_and(|length| length > upload::MAX_REQUEST_BODY_SIZE) {
+        let mut response = hyper::Response::new(full(Bytes::new()));
+        *response.status_mut() = http::StatusCode::PAYLOAD_TOO_LARGE;
+        response.headers_mut().insert("connection", http::HeaderValue::from_static("close"));
+        return Ok(response);
+    }
     let method = parts.method.as_str().to_string();
     let target = request_target(&parts.uri);
     let peer_address = match peer.ip() {

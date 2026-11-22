@@ -291,7 +291,7 @@ const DISCARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Reads the rest of a body that is already over its limit. Answering while
 /// the client is still writing would close the connection under it, and a
 /// reset can cost the client the answer it has not read yet.
-async fn discard_rest(body: &mut Incoming) {
+pub(super) async fn discard_rest(body: &mut Incoming) {
     let discard = async {
         let mut discarded = 0;
         while let Some(Ok(frame)) = body.frame().await {

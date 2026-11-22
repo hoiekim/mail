@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
 
-use super::request::{HttpError, HttpRequest, RawBody};
+use super::request::{discard_rest, HttpError, HttpRequest, RawBody};
 use super::respond::{json, Response};
 use crate::{js, logger};
 
@@ -199,6 +199,9 @@ struct StreamCursor {
     body: Incoming,
     buffer: BytesMut,
     ended: bool,
+    /// Body octets taken in so far, held to [`MAX_REQUEST_BODY_SIZE`] as the
+    /// Bun server's `maxRequestBodySize` holds every body.
+    received: u64,
 }
 
 fn unexpected_end() -> HttpError {
@@ -222,6 +225,12 @@ impl StreamCursor {
                 }
                 Some(Ok(frame)) => {
                     if let Ok(data) = frame.into_data() {
+                        self.received += data.len() as u64;
+                        if self.received > MAX_REQUEST_BODY_SIZE {
+                            self.ended = true;
+                            discard_rest(&mut self.body).await;
+                            return Err(HttpError::new(413, "request entity too large"));
+                        }
                         self.buffer.extend_from_slice(&data);
                         return Ok(());
                     }
@@ -439,7 +448,7 @@ pub async fn parse_uploads(req: &mut HttpRequest) -> anyhow::Result<UploadOutcom
         return Ok(UploadOutcome::default());
     };
 
-    let mut cursor = StreamCursor { body, buffer: BytesMut::new(), ended: false };
+    let mut cursor = StreamCursor { body, buffer: BytesMut::new(), ended: false, received: 0 };
     let mut form = ParsedForm::default();
     match parse_parts(&mut cursor, &boundary, &mut form).await {
         Ok(()) => {}

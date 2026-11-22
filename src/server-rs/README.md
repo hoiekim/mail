@@ -127,8 +127,10 @@ deliberate or unavoidable, and no test pins them:
 - **HTTP parsing.** A `#` inside a request target is dropped by the HTTP
   library before the server sees it. Answers given by the parser itself
   differ in their headers: the 400 for an HTTP/1.1 request without `Host`, a
-  431 for oversized headers, and an unknown method containing digits or `_`
-  (Bun answers 400, Rust closes the connection).
+  431 for oversized headers, the 413 for a body over the 589 MiB the server
+  reads (a JSON one from Rust when the body was streamed past it), and an
+  unknown method containing digits or `_` (Bun answers 400, Rust closes the
+  connection).
 - **Passwords.** Only bcrypt digests are verified. Bun would also verify an
   argon2 digest, which nothing in the app ever writes.
 - **Ordering where Bun's is a race.** A FETCH over several comma-separated
