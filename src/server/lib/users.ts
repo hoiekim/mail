@@ -10,6 +10,7 @@ import { evictSmtpConnections } from "./smtp-registry";
 import { usersTable, USER_ID, TOKEN, EXPIRY } from "./postgres/models";
 import { logger } from "./logger";
 import { hashPassword } from "./verify-password";
+import { isReservedUsername } from "./read-only";
 
 const { APP_HOSTNAME } = process.env;
 
@@ -99,7 +100,11 @@ export const createToken = async (
   const existing = await getUser({ email });
   if (existing?.id) {
     await usersTable.update(existing.id, { [TOKEN]: token, [EXPIRY]: expiry });
-    return { id: existing.id, username: existing.username, token };
+    // A row with no password is a sign-up still in progress: its username is
+    // the placeholder below, not one anybody chose, so the link leaves it out
+    // and the person picks one, as from the first sign-up mail.
+    const username = existing.password === undefined ? undefined : existing.username;
+    return { id: existing.id, username, token };
   }
 
   const userId = crypto.randomUUID();
@@ -191,17 +196,28 @@ export const setUserInfo = async (
     throw new Error("Setting userInfo failed because user token is expired.");
   }
 
-  const expiryTimeout = expiryTimer[id];
-  if (expiryTimeout) clearTimeout(expiryTimeout);
-
-  if (!existingUser.username) {
+  // A sign-up still in progress (no password yet) carries only the
+  // placeholder name `createToken` gave it, so it takes the name asked for, as
+  // a row with no username does. A registered account keeps its own: a reset
+  // never renames it.
+  if (!existingUser.username || existingUser.password === undefined) {
+    // The reserved names are refused even where no row holds them yet: a
+    // sign-up named `admin-ro` would sign in as the read-only view of admin.
+    if (isReservedUsername(username)) {
+      throw new Error("`setUserInfo` failed because username is reserved.");
+    }
     const findUserInfoByUsername = await getUser({ username });
-    if (findUserInfoByUsername) {
+    if (findUserInfoByUsername && findUserInfoByUsername.id !== id) {
       throw new Error("`setUserInfo` failed because username already exists.");
     }
   } else {
     username = existingUser.username;
   }
+
+  // Only once the request is known to go through: a refused name leaves the
+  // sign-up pending, with its reclaim still scheduled.
+  const expiryTimeout = expiryTimer[id];
+  if (expiryTimeout) clearTimeout(expiryTimeout);
 
   // Evict before the write so a failed DELETE aborts the rotation with the row
   // — and so the reset token — intact, leaving a retryable reset rather than a

@@ -17,6 +17,7 @@ use crate::postgres::repositories::users::{
     update_user_columns, UserFilter,
 };
 use crate::postgres::Param;
+use crate::read_only::is_reserved_username;
 use crate::smtp::registry::evict_smtp_connections;
 use crate::verify_password::hash_password;
 use crate::{env, js, logger};
@@ -99,7 +100,11 @@ pub async fn create_token(email: &str) -> Result<CreatedToken> {
                 &[("token", Param::from(&token)), ("expiry", Param::from(&expiry))],
             )
             .await?;
-            return Ok(CreatedToken { id, token, username: existing.username });
+            // A row with no password is a sign-up still in progress: its
+            // username is the placeholder, not a chosen one, so the link
+            // leaves it out, as from the first sign-up mail.
+            let username = existing.password.is_some().then_some(existing.username).flatten();
+            return Ok(CreatedToken { id, token, username });
         }
     }
 
@@ -203,17 +208,29 @@ pub async fn set_user_info(email: &str, username: &str, password: &str, token: O
         }
     }
 
-    clear_timer(&id);
-
-    let username = match existing.username.as_deref().filter(|name| !name.is_empty()) {
+    // A sign-up still in progress (no password yet) carries only its
+    // placeholder name, so it takes the one asked for, as a row with no
+    // username does. A registered account keeps its own.
+    let registered_name = existing.username.as_deref().filter(|name| !name.is_empty() && existing.password.is_some());
+    let username = match registered_name {
         Some(existing_name) => existing_name.to_string(),
         None => {
-            if get_user(&UserQuery::username(username)).await?.is_some() {
+            // Refused even where no row holds it yet: a sign-up named
+            // `admin-ro` would sign in as the read-only view of admin.
+            if is_reserved_username(Some(username)) {
+                bail!("`setUserInfo` failed because username is reserved.");
+            }
+            let taken = get_user(&UserQuery::username(username)).await?;
+            if taken.is_some_and(|other| other.id.as_deref() != Some(id.as_str())) {
                 bail!("`setUserInfo` failed because username already exists.");
             }
             username.to_string()
         }
     };
+
+    // Only once the request is known to go through: a refused name leaves the
+    // sign-up pending, with its reclaim still scheduled.
+    clear_timer(&id);
 
     // Hashed ahead of the delete to keep a bcrypt round out of that window,
     // and sessions evicted before the write so a failed DELETE aborts the

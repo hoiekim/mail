@@ -8,6 +8,7 @@ import {
   type TestServer,
   type TestUser,
 } from "../harness";
+import { ImapClient } from "../harness/imap";
 import { startServer } from "./core-helpers";
 import {
   INTERNAL_ERROR,
@@ -374,13 +375,11 @@ describe("POST /api/users/token — a new address (sign-up)", () => {
       email,
     });
 
-    // The row exists now, so the second link names it the way a reset link
-    // names a registered account: by the placeholder's username.
+    // The same mail as the first, with the new token: the placeholder is
+    // nobody's chosen name, so the link leaves it out and the person picks one.
     const [, again, ...others] = mailsTo(email);
     expect(others).toEqual([]);
-    expect(again!.fields.html).toEqual([
-      authenticationHtml(`https://app.mail.test/set-info/${email}?t=${row.token}&u=${first.username}`),
-    ]);
+    expect(again!.fields.html).toEqual([authenticationHtml(`https://app.mail.test/set-info/${email}?t=${row.token}`)]);
   });
 
   test("answers 500 and keeps the placeholder row when Mailgun refuses the mail; asking again mails a new token", async () => {
@@ -400,7 +399,7 @@ describe("POST /api/users/token — a new address (sign-up)", () => {
     expect(retried.user_id).toBe(row.user_id);
     expect(retried.token).not.toBe(row.token);
     expect(mailsTo(email)).toHaveLength(2);
-    expect(mailsTo(email)[1]!.fields.html![0]).toContain(`?t=${retried.token}&u=${row.username}"`);
+    expect(mailsTo(email)[1]!.fields.html![0]).toContain(`?t=${retried.token}"`);
   });
 });
 
@@ -755,12 +754,14 @@ describe("POST /api/users/set-info — resetting a password", () => {
     const client = server.client();
     const result = await client.post("/api/users/set-info", {
       email: user.email,
-      username: user.username,
+      username: "another-name",
       password: "chosen-after-the-mail",
       token,
     });
+    // A reset never renames the account.
     expect(result.body.body).toEqual({ id: user.id, email: user.email, username: "fullflow", passwordVersion: 2 });
     expect((await client.get("/api/users/login")).body.body.user.username).toBe("fullflow");
+    expect(await userRow(server, "another-name")).toBeUndefined();
   });
 });
 
@@ -780,7 +781,7 @@ describe("POST /api/users/set-info — the username", () => {
     expect((await userRow(server, "takenname"))!.password_version).toBe(1);
   });
 
-  test("is taken from the request only by a row whose own username is empty", async () => {
+  test("is taken from the request by a row whose own username is empty", async () => {
     await createUser(server, "occupied");
     const [row] = await server.db.query<{ user_id: string }>(
       "INSERT INTO users (username, password, email, token) VALUES ('', 'x', 'nameless@elsewhere.example', 'nameless-token') RETURNING user_id"
@@ -816,15 +817,26 @@ describe("POST /api/users/set-info — completing a new sign-up", () => {
     return placeholder;
   };
 
-  test("sets the first password on the placeholder row with the mailed token, and signs the caller in", async () => {
+  /** Signs in over IMAP and answers the tagged status. */
+  const imapLogin = async (username: string, password: string) => {
+    const imap = await ImapClient.connect(server);
+    try {
+      return (await imap.command(`LOGIN ${username} ${password}`)).status;
+    } finally {
+      imap.close();
+    }
+  };
+
+  test("sets the chosen username and the first password on the placeholder row, and signs the caller in", async () => {
     const email = "hopeful@elsewhere.example";
     const placeholder = await signUp(email);
-    const { user_id: id, username } = placeholder;
+    const id = placeholder.user_id;
+    const username = "hopeful";
 
     const client = server.client();
     const result = await client.post("/api/users/set-info", {
       email,
-      username: "hopeful",
+      username,
       password: "a-first-password",
       token: placeholder.token,
     });
@@ -833,12 +845,12 @@ describe("POST /api/users/set-info — completing a new sign-up", () => {
       `{"status":"success","body":{"id":"${id}","email":"${email}","username":"${username}","passwordVersion":2}}`
     );
 
-    // The same row, now with a password. The placeholder already has a
-    // username, so the one asked for is not taken (see "the username" above).
+    // The same row, now named as asked and with a password: the placeholder
+    // name was nobody's choice.
     const row = (await userRowByEmail(server, email))!;
     expect(row.password).toMatch(/^\$2b\$10\$[./A-Za-z0-9]{53}$/);
     expect(row).toMatchObject({ user_id: id, username, password_version: 2, token: null, expiry: null });
-    expect(await userRow(server, "hopeful")).toBeUndefined();
+    expect(await userRow(server, placeholder.username)).toBeUndefined();
 
     const cookie = onlySetCookie(result);
     expectSessionCookie(cookie, { secure: true });
@@ -850,9 +862,16 @@ describe("POST /api/users/set-info — completing a new sign-up", () => {
     });
     expect((await client.get("/api/users/login")).body.body.user).toEqual({ id, email, username, passwordVersion: 2 });
 
-    // The password signs in from now on, and the token is spent.
+    // The chosen name and the password sign in from now on, over HTTP and
+    // IMAP; the placeholder name does not. The token is spent.
     const login = await server.client().post("/api/users/login", { username, password: "a-first-password" });
     expect(login.body.body).toEqual({ id, email, username, passwordVersion: 2 });
+    const byPlaceholder = await server.client().post("/api/users/login", {
+      username: placeholder.username,
+      password: "a-first-password",
+    });
+    expect(byPlaceholder.body).toEqual(INVALID_CREDENTIALS);
+    expect(await imapLogin(username, "a-first-password")).toBe("OK");
     const again = await server.client().post("/api/users/set-info", {
       email,
       username: "hopeful",
@@ -903,10 +922,69 @@ describe("POST /api/users/set-info — completing a new sign-up", () => {
     const second = (await userRowByEmail(server, email))!;
     expect(second.token).not.toBe(first.token);
 
+    // The re-issued link lets the person choose a name, as the first did.
+    const link = mailsTo(email).at(-1)!.fields.html![0]!;
+    expect(link).toContain(`?t=${second.token}"`);
+    expect(link).not.toContain("&u=");
+
     const body = { email, username: "twice", password: "a-first-password" };
     expect((await server.client().post("/api/users/set-info", { ...body, token: first.token })).status).toBe(500);
-    expect((await server.client().post("/api/users/set-info", { ...body, token: second.token })).body.status).toBe("success");
+    const result = await server.client().post("/api/users/set-info", { ...body, token: second.token });
+    expect(result.body.body).toEqual({ id: first.user_id, email, username: "twice", passwordVersion: 2 });
+    expect(await imapLogin("twice", "a-first-password")).toBe("OK");
   });
+
+  test("a name another account has is refused, and the sign-up stays pending", async () => {
+    await createUser(server, "claimed");
+    const email = "second-comer@elsewhere.example";
+    const placeholder = await signUp(email);
+    const body = { email, password: "a-first-password", token: placeholder.token };
+
+    // `admin` and `admin-ro` have rows on this server, so they are taken too.
+    for (const username of ["claimed", "admin", "admin-ro"]) {
+      const result = await server.client().post("/api/users/set-info", { ...body, username });
+      expect({ username, status: result.status, body: result.body }).toEqual({ username, status: 500, body: INTERNAL_ERROR });
+      expect(result.setCookies).toEqual([]);
+    }
+    const after = (await userRowByEmail(server, email))!;
+    expect(after).toMatchObject({
+      user_id: placeholder.user_id,
+      username: placeholder.username,
+      password: null,
+      token: placeholder.token,
+    });
+
+    // The same token then completes it under a free name.
+    const result = await server.client().post("/api/users/set-info", { ...body, username: "second-comer" });
+    expect(result.body.body.username).toBe("second-comer");
+  });
+
+  test("a reserved name is refused even where no account holds it yet", async () => {
+    // Without ADMIN_RO_PASSWORD no `admin-ro` row exists. A sign-up by that
+    // name would sign in as the read-only view of admin's mail.
+    const bare = await startServer({ production: true });
+    try {
+      const email = "grabber@elsewhere.example";
+      expect((await bare.client().post("/api/users/token", { email })).body).toEqual(SUCCESS);
+      const placeholder = (await userRowByEmail(bare, email))!;
+      expect(await userRow(bare, "admin-ro")).toBeUndefined();
+
+      const result = await bare.client().post("/api/users/set-info", {
+        email,
+        username: "admin-ro",
+        password: "a-first-password",
+        token: placeholder.token,
+      });
+      expect(result.status).toBe(500);
+      expect(result.body).toEqual(INTERNAL_ERROR);
+      expect(await userRow(bare, "admin-ro")).toBeUndefined();
+      expect((await userRowByEmail(bare, email))!).toMatchObject({ username: placeholder.username, password: null });
+      const login = await bare.client().post("/api/users/login", { username: "admin-ro", password: "a-first-password" });
+      expect(login.body).toEqual(INVALID_CREDENTIALS);
+    } finally {
+      await bare.stop();
+    }
+  }, 90_000);
 
   test("an expired sign-up is a 500, and its row is removed so the address can start again", async () => {
     const email = "late@elsewhere.example";
