@@ -5,7 +5,7 @@ use mail_server::postgres::initialize::{
     boot_maintenance, initialize_admin_read_only_user, initialize_admin_user, initialize_postgres,
 };
 use mail_server::postgres::pool;
-use mail_server::{env, http, push};
+use mail_server::{env, http, push, smtp};
 use tokio_util::sync::CancellationToken;
 
 /// Ceiling on the startup-failure alarm, so a wedged webhook cannot hold the exit.
@@ -40,11 +40,11 @@ async fn start() -> anyhow::Result<()> {
     initialize_admin_read_only_user().await?;
     push::init_push()?;
     let http_server = http::initialize_http().await?;
-    placeholder_listener("SMTP_PORT", 25, false).await?;
+    // Sweeps `attachments/.incoming`, then opens SMTP_PORT, and with a
+    // certificate SMTPS_PORT and SMTP_SUBMISSION_PORT.
+    let smtp_servers = smtp::initialize_mail_smtp().await?;
     placeholder_listener("IMAP_PORT", 143, false).await?;
     if mail_server::tls::is_tls_available() {
-        placeholder_listener("SMTPS_PORT", 465, true).await?;
-        placeholder_listener("SMTP_SUBMISSION_PORT", 587, false).await?;
         placeholder_listener("IMAP_TLS_PORT", 993, true).await?;
     }
     push::clean_subscriptions();
@@ -68,6 +68,14 @@ async fn start() -> anyhow::Result<()> {
 
     http_server.stop().await;
     println!("HTTP server closed");
+
+    // In-flight DATA gets SMTP_CLOSE_TIMEOUT_MS before the rest are answered
+    // 421; this runs at the same time as the IMAP close.
+    let close_smtp = async {
+        smtp::close_smtp_servers(&smtp_servers).await;
+        println!("SMTP servers closed");
+    };
+    close_smtp.await;
 
     let _ = maintenance.await;
     println!("Boot maintenance stopped");
