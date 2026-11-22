@@ -2255,3 +2255,341 @@ mod command_diagnostic {
         assert!(!is_interesting_command(0, 99, 4095, 99));
     }
 }
+
+// ---------------------------------------------------------------------------
+// A final BYE on a connection whose peer stopped reading
+// (session-close-flush.test.ts)
+// ---------------------------------------------------------------------------
+
+mod close_flush {
+    use super::super::super::close_socket::CLOSE_FLUSH_TIMEOUT_MS;
+    use super::super::super::idle_manager::IdleManager;
+    use super::*;
+
+    const FILL_WRITES: usize = 200;
+
+    fn fill() -> String {
+        format!("* 1 FETCH (BODY[] {{1000}}\r\n{})\r\n", "x".repeat(1000))
+    }
+
+    /// A connection whose client reads nothing until asked to, with far more
+    /// queued for it than the stream holds.
+    struct Stalled {
+        client: DuplexStream,
+        session: Arc<ImapSession>,
+        _shared: RwLockReadGuard<'static, ()>,
+    }
+
+    async fn stalled(prefill: bool) -> Stalled {
+        let shared = test_support::shared().await;
+        let (server, client) = tokio::io::duplex(NARROW);
+        let port = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+        let handler = ImapRequestHandler::with_dispatch(
+            Box::new(server),
+            Peer { address: "203.0.113.7".into(), port },
+            false,
+            Recorder::real(),
+        );
+        let session = handler.session().clone();
+        tokio::spawn(handler.run());
+        if prefill {
+            for _ in 0..FILL_WRITES {
+                assert!(session.write(&fill()));
+            }
+        }
+        Stalled { client, session, _shared: shared }
+    }
+
+    impl Stalled {
+        /// Reads everything until the server ends the connection.
+        async fn read_to_end(&mut self) -> (String, bool) {
+            let mut received = Vec::new();
+            let ended = tokio::time::timeout(Duration::from_secs(5), self.client.read_to_end(&mut received)).await.is_ok();
+            (String::from_utf8_lossy(&received).into_owned(), ended)
+        }
+    }
+
+    async fn past_the_flush_window() {
+        tokio::time::sleep(Duration::from_millis(CLOSE_FLUSH_TIMEOUT_MS + 600)).await;
+    }
+
+    #[tokio::test]
+    async fn delivers_bye_when_the_literal_ceiling_closes_a_session_whose_peer_stopped_reading() {
+        let mut connection = stalled(true).await;
+        connection.client.write_all(b"A1 APPEND INBOX {999999999+}\r\n").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(700)).await;
+
+        let (received, ended) = connection.read_to_end().await;
+        assert!(received.contains("* BYE Command too long\r\n"));
+        assert!(ended);
+    }
+
+    #[tokio::test]
+    async fn delivers_bye_when_the_chained_literal_cap_closes_the_session() {
+        let mut connection = stalled(true).await;
+        let chain = format!("A1 APPEND INBOX {}\r\n", "{10+}\r\n0123456789".repeat(80));
+        connection.client.write_all(chain.as_bytes()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(700)).await;
+
+        let (received, ended) = connection.read_to_end().await;
+        assert!(received.contains("* BYE Command too long\r\n"));
+        assert!(ended);
+    }
+
+    #[tokio::test]
+    async fn stops_reading_the_socket_the_moment_it_tears_the_session_down() {
+        let mut connection = stalled(true).await;
+        connection.client.write_all(b"A1 APPEND INBOX {999999999+}\r\n").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let _ = connection.client.write_all(b"A2 CAPABILITY\r\n").await;
+        tokio::time::sleep(Duration::from_millis(550)).await;
+
+        let (received, _) = connection.read_to_end().await;
+        let after_bye = received.split("* BYE Command too long\r\n").nth(1).unwrap_or_default();
+        assert!(!after_bye.contains("CAPABILITY"));
+    }
+
+    #[tokio::test]
+    async fn destroys_a_peer_that_never_reads_rather_than_waiting_on_it_forever() {
+        let connection = stalled(true).await;
+        let mut client = connection.client;
+        client.write_all(b"A1 APPEND INBOX {999999999+}\r\n").await.unwrap();
+        past_the_flush_window().await;
+
+        assert!(connection.session.socket().is_destroyed());
+        drop(client);
+    }
+
+    #[tokio::test]
+    async fn delivers_bye_when_the_socket_timeout_fires_on_a_backpressured_session() {
+        let mut connection = stalled(true).await;
+        // The inactivity timeout is five minutes; this is what runs then.
+        connection.session.socket().fire_timeout();
+        tokio::time::sleep(Duration::from_millis(700)).await;
+
+        let (received, ended) = connection.read_to_end().await;
+        assert!(received.contains("* BYE Timeout\r\n"));
+        assert!(ended);
+    }
+
+    #[tokio::test]
+    async fn destroys_a_logout_whose_peer_never_reads_its_bye() {
+        let connection = stalled(true).await;
+        let mut client = connection.client;
+        client.write_all(b"A1 LOGOUT\r\n").await.unwrap();
+        past_the_flush_window().await;
+
+        assert!(connection.session.socket().is_destroyed());
+        drop(client);
+    }
+
+    #[tokio::test]
+    async fn delivers_bye_and_closes_when_the_idle_sweep_ends_an_idle_session() {
+        let connection = stalled(true).await;
+        // A manager of its own: the process's one is swept by other tests.
+        let manager = IdleManager::new();
+        manager.add_idle_session("close-flush-sweep", connection.session.clone(), "t1", "INBOX", "alice");
+        manager.shutdown();
+        past_the_flush_window().await;
+
+        assert!(connection.session.socket().is_destroyed());
+        drop(connection.client);
+    }
+
+    #[tokio::test]
+    async fn closes_a_logout_promptly_instead_of_lingering_out_the_flush_grace() {
+        let mut connection = stalled(false).await;
+        let started = std::time::Instant::now();
+        connection.client.write_all(b"A1 LOGOUT\r\n").await.unwrap();
+
+        let (received, ended) = connection.read_to_end().await;
+        assert!(received.contains("* BYE IMAP4rev1 Server logging out\r\n"));
+        assert!(received.contains("A1 OK LOGOUT completed\r\n"));
+        assert!(ended);
+        // The grace period is two seconds; a client that reads does not pay it.
+        assert!(started.elapsed() < Duration::from_millis(1000));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// STARTTLS (starttls-pipelining.test.ts, and the STARTTLS cases of
+// proxy.test.ts and shutdown.test.ts)
+// ---------------------------------------------------------------------------
+
+mod starttls_pipelining {
+    use tokio::io::AsyncRead;
+
+    use super::super::super::auth::AuthConnection;
+    use super::super::super::session_registry::{
+        get_connected_session_count, reset_connected_sessions, shutdown_imap_sessions,
+    };
+    use super::*;
+
+    async fn read_line<R: AsyncRead + Unpin>(stream: &mut R) -> String {
+        let mut line = Vec::new();
+        let mut octet = [0u8; 1];
+        while !line.ends_with(b"\r\n") {
+            match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut octet)).await {
+                Ok(Ok(1)) => line.push(octet[0]),
+                _ => break,
+            }
+        }
+        String::from_utf8_lossy(&line).into_owned()
+    }
+
+    struct Upgraded {
+        tls: tokio_rustls::client::TlsStream<DuplexStream>,
+        dispatched: Arc<Mutex<Vec<Recorded>>>,
+        /// The session each dispatched command ran on.
+        sessions: Arc<Mutex<Vec<Arc<ImapSession>>>>,
+        cleartext: Arc<ImapSession>,
+    }
+
+    impl Upgraded {
+        fn tags(&self) -> Vec<String> {
+            self.dispatched.lock().unwrap().iter().map(|recorded| recorded.tag.clone()).collect()
+        }
+
+        async fn command(&mut self, line: &str) {
+            self.tls.write_all(line.as_bytes()).await.unwrap();
+            self.tls.flush().await.unwrap();
+        }
+    }
+
+    /// Sends `first` in one write; its STARTTLS is answered OK the way the
+    /// session answers it, optionally leaving a SASL exchange half-done, and
+    /// the client completes the handshake. `None` without the `openssl`
+    /// command to make a certificate with.
+    async fn upgrade(first: &str, leave_sasl_pending: bool) -> Option<Upgraded> {
+        let Some(acceptor) = test_support::acceptor() else {
+            eprintln!("skipped: no openssl to make a test certificate with");
+            return None;
+        };
+        let sessions: Arc<Mutex<Vec<Arc<ImapSession>>>> = Arc::default();
+        let recorder = Recorder::with_hook({
+            let sessions = sessions.clone();
+            move |session, tag, request| {
+                sessions.lock().unwrap().push(session.clone());
+                let acceptor = acceptor.clone();
+                Box::pin(async move {
+                    if matches!(request, ImapRequest::Starttls) {
+                        session.write(&format!("{tag} OK Begin TLS negotiation now\r\n"));
+                        if leave_sasl_pending {
+                            AuthConnection::set_pending_sasl_tag(&*session, "Z9");
+                        }
+                        session.state().tls_upgrade = Some(acceptor);
+                    } else {
+                        handle_request(&session, &tag, request).await;
+                    }
+                })
+            }
+        });
+        let dispatched = recorder.dispatched.clone();
+        let (server, mut client) = tokio::io::duplex(1 << 20);
+        let handler = ImapRequestHandler::with_dispatch(
+            Box::new(server),
+            Peer { address: "203.0.113.7".into(), port: 51000 },
+            false,
+            recorder,
+        );
+        let cleartext = handler.session().clone();
+        tokio::spawn(handler.run());
+
+        assert!(read_line(&mut client).await.starts_with("* OK [CAPABILITY "));
+        client.write_all(first.as_bytes()).await.unwrap();
+        loop {
+            let line = read_line(&mut client).await;
+            assert!(!line.is_empty(), "the STARTTLS is answered");
+            if line.ends_with("OK Begin TLS negotiation now\r\n") {
+                break;
+            }
+        }
+        let tls = crate::tls::insecure_connector().connect(test_support::server_name(), client).await.expect("the handshake");
+        Some(Upgraded { tls, dispatched, sessions, cleartext })
+    }
+
+    #[tokio::test]
+    async fn drops_cleartext_commands_buffered_behind_starttls() {
+        let _shared = test_support::shared().await;
+        // One segment: the upgrade, then an injected command.
+        let Some(mut upgraded) = upgrade("a1 STARTTLS\r\na2 CAPABILITY\r\n", false).await else {
+            return;
+        };
+        upgraded.command("b1 NOOP\r\n").await;
+
+        // The injected command is answered on neither side; the first thing
+        // inside TLS is the answer to the client's own first command.
+        assert_eq!(read_line(&mut upgraded.tls).await, "b1 OK NOOP completed\r\n");
+        assert_eq!(upgraded.tags(), ["a1", "b1"]);
+    }
+
+    #[tokio::test]
+    async fn drops_a_command_pipelined_behind_a_literal_bearing_starttls() {
+        let _shared = test_support::shared().await;
+        let Some(mut upgraded) = upgrade("A1 STARTTLS {0+}\r\nA2 CAPABILITY\r\n", false).await else {
+            return;
+        };
+        upgraded.command("b1 NOOP\r\n").await;
+
+        assert_eq!(read_line(&mut upgraded.tls).await, "b1 OK NOOP completed\r\n");
+        assert_eq!(upgraded.tags(), ["A1", "b1"]);
+    }
+
+    #[tokio::test]
+    async fn drops_a_literal_declaring_command_pipelined_behind_a_literal_bearing_starttls() {
+        let _shared = test_support::shared().await;
+        let Some(mut upgraded) = upgrade("A1 STARTTLS {0+}\r\nA2 SELECT {5+}\r\nINBOX\r\n", false).await else {
+            return;
+        };
+        upgraded.command("b1 NOOP\r\n").await;
+
+        assert_eq!(read_line(&mut upgraded.tls).await, "b1 OK NOOP completed\r\n");
+        assert_eq!(upgraded.tags(), ["A1", "b1"]);
+    }
+
+    #[tokio::test]
+    async fn clears_a_half_finished_sasl_exchange_across_the_upgrade() {
+        let _shared = test_support::shared().await;
+        // Were the pending exchange carried over, the client's first command
+        // inside TLS would be consumed as its response.
+        let Some(mut upgraded) = upgrade("a1 STARTTLS\r\n", true).await else {
+            return;
+        };
+        upgraded.command("b1 CAPABILITY\r\n").await;
+
+        let capability = read_line(&mut upgraded.tls).await;
+        assert!(capability.starts_with("* CAPABILITY "), "{capability:?}");
+        assert_eq!(read_line(&mut upgraded.tls).await, "b1 OK CAPABILITY completed\r\n");
+        assert!(!capability.contains("Z9"));
+    }
+
+    #[tokio::test]
+    async fn keeps_the_client_the_socket_reported_across_starttls() {
+        let _shared = test_support::shared().await;
+        let Some(mut upgraded) = upgrade("a1 STARTTLS\r\n", false).await else {
+            return;
+        };
+        upgraded.command("b1 NOOP\r\n").await;
+        assert_eq!(read_line(&mut upgraded.tls).await, "b1 OK NOOP completed\r\n");
+
+        let inside = upgraded.sessions.lock().unwrap().last().cloned().unwrap();
+        assert!(!Arc::ptr_eq(&inside, &upgraded.cleartext), "the upgrade starts a clean session");
+        assert!(inside.is_tls());
+        assert_eq!(inside.socket().remote(), "203.0.113.7:51000");
+    }
+
+    #[tokio::test]
+    async fn the_shutdown_sweep_tracks_only_the_upgraded_session() {
+        let _exclusive = test_support::exclusive().await;
+        reset_connected_sessions();
+        let Some(mut upgraded) = upgrade("a1 STARTTLS\r\n", false).await else {
+            return;
+        };
+        upgraded.command("b1 NOOP\r\n").await;
+        assert_eq!(read_line(&mut upgraded.tls).await, "b1 OK NOOP completed\r\n");
+        assert_eq!(get_connected_session_count(), 1);
+
+        assert_eq!(shutdown_imap_sessions(), 1);
+        assert_eq!(read_line(&mut upgraded.tls).await, "* BYE Server shutting down\r\n");
+    }
+}
