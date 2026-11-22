@@ -13,6 +13,7 @@ import { startServer } from "./core-helpers";
 import {
   ANONYMOUS_LOGIN_TEXT,
   INTERNAL_ERROR,
+  NOT_LOGGED_IN,
   SESSION_ID,
   expectSessionCookie,
   isAbout,
@@ -549,23 +550,56 @@ describe("a session row that no longer counts", () => {
     expect((await whoAmI(client)).user?.passwordVersion).toBe(9);
   });
 
-  // NOTE: the generation check reads the user row and takes a missing row as
-  // generation 1, so a session outlives the account it was issued to: neither
-  // a deleted nor a soft-deleted user ends its sessions. Pinned as it is.
-  test("a session whose user row is gone still reads as signed in", async () => {
+  test("a session whose user row is deleted is rejected and deleted", async () => {
     const erin = await createUser(dev, "erin");
-    const soft = await signedIn(dev, "erin");
-    await dev.db.query("UPDATE users SET is_deleted = TRUE WHERE user_id = $1", [erin.id]);
-    expect((await whoAmI(soft.client)).user?.username).toBe("erin");
-
+    const { client, id } = await signedIn(dev, "erin");
+    const other = await signedIn(dev, "alice");
     await dev.db.query("DELETE FROM users WHERE user_id = $1", [erin.id]);
-    expect((await whoAmI(soft.client)).user).toEqual({
-      id: erin.id,
-      email: erin.email,
-      username: "erin",
-      passwordVersion: 1,
-    });
+
+    const { result } = await whoAmI(client);
+    expect(result.text).toBe(ANONYMOUS_LOGIN_TEXT);
+    expect(result.setCookies).toEqual([]);
+    // Deleted before the response, not behind it.
+    expect(await sessionRow(dev, id)).toBeUndefined();
+    // Signed out everywhere, not only on this route.
+    const gated = await client.get("/api/mails/accounts");
+    expect({ status: gated.status, body: gated.body }).toEqual({ status: 401, body: NOT_LOGGED_IN });
+    // Another user's session is left alone.
+    expect((await whoAmI(other.client)).user?.username).toBe("alice");
   });
+
+  test("a session whose user is soft-deleted is rejected and deleted, and does not come back with the user", async () => {
+    const frank = await createUser(dev, "frank");
+    const { client, id } = await signedIn(dev, "frank");
+    await dev.db.query("UPDATE users SET is_deleted = TRUE WHERE user_id = $1", [frank.id]);
+
+    const { result } = await whoAmI(client);
+    expect(result.text).toBe(ANONYMOUS_LOGIN_TEXT);
+    expect(result.setCookies).toEqual([]);
+    expect(await sessionRow(dev, id)).toBeUndefined();
+
+    // Restoring the account restores no session: signing in again does.
+    await dev.db.query("UPDATE users SET is_deleted = FALSE WHERE user_id = $1", [frank.id]);
+    expect((await whoAmI(client)).user).toBeUndefined();
+    const again = await signedIn(dev, "frank");
+    expect((await whoAmI(again.client)).user?.username).toBe("frank");
+  });
+
+  test("a read-only session ends with admin's row, which it is a view onto", async () => {
+    const ro = await startServer({ env: { ADMIN_RO_PASSWORD: "read-only-password-e2e" } });
+    try {
+      const client = ro.client();
+      await client.login("admin-ro", "read-only-password-e2e");
+      const id = sessionIdOf(client);
+      expect((await whoAmI(client)).user?.username).toBe("admin");
+
+      await ro.db.query("UPDATE users SET is_deleted = TRUE WHERE username = 'admin'");
+      expect((await whoAmI(client)).user).toBeUndefined();
+      expect(await sessionRow(ro, id)).toBeUndefined();
+    } finally {
+      await ro.stop();
+    }
+  }, 90_000);
 });
 
 describe("a request without a session", () => {

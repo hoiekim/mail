@@ -322,6 +322,19 @@ describe("the ten-minute re-check of a single sign-on session", () => {
     // With password sign-in off, that ends it.
     await expectSessionEnded(server, client, row.session_id);
   });
+
+  test("ends with its account, deleted or soft-deleted, before the provider is asked anything", async () => {
+    const deleted = await signedIn(server, issuer, person("dora"));
+    const softDeleted = await signedIn(server, issuer, person("emil"));
+    await makeRecheckDue(server);
+    issuer.clearCalls();
+
+    await server.db.query("DELETE FROM users WHERE username = 'dora'");
+    await server.db.query("UPDATE users SET is_deleted = TRUE WHERE username = 'emil'");
+    await expectSessionEnded(server, deleted.client, deleted.row.session_id);
+    await expectSessionEnded(server, softDeleted.client, softDeleted.row.session_id);
+    expect(issuer.calls).toEqual([]);
+  });
 });
 
 describe("sessions and the sign-in mode", () => {

@@ -186,8 +186,9 @@ impl PostgresSessionStore {
         PostgresSessionStore
     }
 
-    /// The live session with this id. An expired row, or one minted before
-    /// the user's credential was last rotated, is deleted and reads as absent.
+    /// The live session with this id. An expired row, one whose user is gone,
+    /// or one minted before the user's credential was last rotated, is
+    /// deleted and reads as absent.
     pub async fn get(&self, session_id: &str) -> Result<Option<RuntimeSession>, DbError> {
         let Some(model) = search_session(session_id).await? else {
             return Ok(None);
@@ -206,10 +207,19 @@ impl PostgresSessionStore {
 
         // The revocation fence: a grant proves itself current on every read.
         let stamped_version = model.session_password_version.unwrap_or(1);
-        let current_version = find_user_model_by_id(&model.session_user_id)
-            .await?
-            .and_then(|user| user.password_version)
-            .unwrap_or(1);
+        // A session ends with its account; the read leaves out a soft-deleted
+        // row, so a deleted and a soft-deleted user both find nothing.
+        let Some(user_row) = find_user_model_by_id(&model.session_user_id).await? else {
+            logger::info(
+                "Session rejected: its user no longer exists",
+                json!({ "session_id": session_id, "user_id": model.session_user_id }),
+            );
+            if let Err(error) = delete_session(session_id).await {
+                logger::error_with("Failed to delete session", json!({ "session_id": session_id }), &error);
+            }
+            return Ok(None);
+        };
+        let current_version = user_row.password_version.unwrap_or(1);
         if stamped_version < current_version {
             logger::info(
                 "Session rejected: credential rotated after the session was issued",
