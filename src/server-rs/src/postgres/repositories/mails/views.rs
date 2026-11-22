@@ -21,7 +21,7 @@
 //! let filter = membership_condition(Some("Junk"), false, "m."); // " AND m.is_spam = TRUE"
 //! ```
 
-const INBOX_ACCOUNTS_PREFIX: &str = "INBOX/accounts/";
+pub const INBOX_ACCOUNTS_PREFIX: &str = "INBOX/accounts/";
 
 /// The name the INBOX tree's mapping rows are recorded under in
 /// `mail_mailbox_uid`. Matched case-insensitively on the way in, per RFC 3501
@@ -86,24 +86,6 @@ pub fn domain_view_for_destination(destination: &str) -> Option<&'static str> {
         || destination.starts_with(INBOX_ACCOUNTS_PREFIX)
         || is_utility_view(Some(destination));
     scoped.then_some(INBOX_VIEW)
-}
-
-/// The `mail_mailbox_uid` name an EXPUNGE on `mailbox` is confined to, or
-/// `None` for a view whose rows file none there: the unified
-/// `Sent Messages`, since the sent lane records no domain view row.
-///
-/// A mapped box is its own rows. INBOX and the utility views are the INBOX
-/// tree's scope rows, which `domain_view_for_destination` records. Their
-/// predicate alone is not enough: INBOX shows every received mail, so a copy
-/// filed into Trash (`\Deleted` by being there) or into a user mailbox shows
-/// in INBOX as well, and the scope row is all that tells a message flagged in
-/// INBOX from one INBOX merely shows. Without it an INBOX EXPUNGE destroys
-/// everything the user moved to Trash.
-pub fn expunge_scope(mailbox: Option<&str>, sent: bool) -> Option<&str> {
-    match mailbox {
-        Some(name) if !is_utility_view(mailbox) => Some(name),
-        _ => (!sent).then_some(INBOX_VIEW),
-    }
 }
 
 pub fn membership_filter(mailbox: Option<&str>, sent: bool) -> MembershipFilter {
@@ -331,43 +313,6 @@ mod tests {
                 is_inbox_tree(read_side, false),
                 "{destination}"
             );
-        }
-    }
-
-    // views.test.ts — "expungeScope"
-
-    #[test]
-    fn expunge_confines_a_mapped_box_to_its_own_rows() {
-        for mailbox in ["INBOX/accounts/admin", "Archive", "Starred", "Trash"] {
-            assert_eq!(expunge_scope(Some(mailbox), false), Some(mailbox), "{mailbox}");
-        }
-        assert_eq!(
-            expunge_scope(Some("Sent Messages/accounts/admin"), true),
-            Some("Sent Messages/accounts/admin")
-        );
-    }
-
-    #[test]
-    fn expunge_confines_inbox_and_the_utility_views_to_the_inbox_trees_scope_rows() {
-        // The regression: a copy MOVE files into Trash is listed in INBOX
-        // flagged \Deleted, and an EXPUNGE bounded by the predicate alone
-        // destroyed it. It has a Trash row and no INBOX row.
-        assert_eq!(expunge_scope(None, false), Some(INBOX_VIEW));
-        assert_eq!(expunge_scope(Some(DRAFTS_VIEW), false), Some(INBOX_VIEW));
-        assert_eq!(expunge_scope(Some(JUNK_VIEW), false), Some(INBOX_VIEW));
-        assert_eq!(expunge_scope(Some("drafts"), false), Some(INBOX_VIEW));
-    }
-
-    #[test]
-    fn expunge_leaves_the_unified_sent_view_unconfined() {
-        assert_eq!(expunge_scope(None, true), None);
-    }
-
-    #[test]
-    fn expunge_names_the_rows_the_writes_into_each_domain_view_record() {
-        assert_eq!(expunge_scope(None, false), domain_view_for_destination("INBOX"));
-        for view in [DRAFTS_VIEW, JUNK_VIEW] {
-            assert_eq!(expunge_scope(Some(view), false), domain_view_for_destination(view), "{view}");
         }
     }
 }

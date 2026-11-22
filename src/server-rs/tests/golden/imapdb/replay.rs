@@ -342,6 +342,7 @@ fn the_count_and_uid_list_builders_emit_the_same_sql_and_values() {
         ("allUids", query::build_all_uids_query),
         ("firstUnseenUid", query::build_first_unseen_uid_query),
         ("expungeDeletedSelect", query::build_expunge_deleted_select_query),
+        ("expungeDeletedInbox", query::build_expunge_deleted_inbox_query),
     ] {
         let cases = list(&fixture, group);
         assert_eq!(cases.len(), 20, "{group}");

@@ -25,7 +25,7 @@ import { IS_SPAM, DRAFT } from "../../models";
  * repository. `views.test.ts` pins the two copies together.
  */
 
-const INBOX_ACCOUNTS_PREFIX = "INBOX/accounts/";
+export const INBOX_ACCOUNTS_PREFIX = "INBOX/accounts/";
 
 /**
  * The name the INBOX tree's mapping rows are recorded under in
@@ -117,27 +117,6 @@ export const domainViewForDestination = (destination: string): string | undefine
   isUtilityView(destination)
     ? INBOX_VIEW
     : undefined;
-
-/**
- * The `mail_mailbox_uid` name an EXPUNGE on `mailbox` is confined to, or
- * `undefined` for a view whose rows file none there — the unified `Sent
- * Messages`, since the sent lane records no domain view row.
- *
- * A mapped box is its own rows. INBOX and the utility views are the INBOX
- * tree's scope rows, which `domainViewForDestination` records. Their
- * predicate alone is not enough: INBOX shows every received mail, so a copy
- * filed into Trash — `\Deleted` by being there — or into a user mailbox shows
- * in INBOX as well, and the scope row is all that tells a message flagged in
- * INBOX from one INBOX merely shows. Without it an INBOX EXPUNGE destroys
- * everything the user moved to Trash.
- */
-export const expungeScope = (
-  mailbox: string | null,
-  sent: boolean
-): string | undefined => {
-  if (mailbox !== null && !isUtilityView(mailbox)) return mailbox;
-  return sent ? undefined : INBOX_VIEW;
-};
 
 export const membershipFilter = (
   mailbox: string | null,

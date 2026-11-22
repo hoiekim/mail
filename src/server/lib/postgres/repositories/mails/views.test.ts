@@ -11,7 +11,6 @@ import {
   domainViewForDestination,
   isInboxTree,
   INBOX_VIEW,
-  expungeScope,
 } from "./views";
 
 describe("utility views", () => {
@@ -235,38 +234,6 @@ describe("domainViewForDestination — which writes record INBOX membership", ()
       expect(domainViewForDestination(destination) !== undefined, destination).toBe(
         isInboxTree(readSide, false)
       );
-    }
-  });
-});
-
-describe("expungeScope — which rows an EXPUNGE may remove", () => {
-  it("confines a mapped box to its own rows", () => {
-    for (const mailbox of ["INBOX/accounts/admin", "Archive", "Starred", "Trash"]) {
-      expect(expungeScope(mailbox, false), mailbox).toBe(mailbox);
-    }
-    expect(expungeScope("Sent Messages/accounts/admin", true)).toBe("Sent Messages/accounts/admin");
-  });
-
-  it("confines INBOX and the utility views to the INBOX tree's scope rows", () => {
-    // The regression: INBOX shows every received mail, so a copy MOVE files
-    // into Trash is listed in INBOX flagged \Deleted, and an EXPUNGE bounded
-    // by the predicate alone destroyed everything the user moved to Trash.
-    // The copy has a Trash row and no INBOX row; the scope is what spares it.
-    expect(expungeScope(null, false)).toBe(INBOX_VIEW);
-    expect(expungeScope(DRAFTS_VIEW, false)).toBe(INBOX_VIEW);
-    expect(expungeScope(JUNK_VIEW, false)).toBe(INBOX_VIEW);
-    expect(expungeScope("drafts", false)).toBe(INBOX_VIEW);
-  });
-
-  it("leaves the unified Sent view unconfined: the sent lane records no scope row", () => {
-    expect(expungeScope(null, true)).toBeUndefined();
-  });
-
-  it("names the rows the writes into each domain view record", () => {
-    // A view confined to a name nothing records would never expunge at all.
-    expect(expungeScope(null, false)).toBe(domainViewForDestination("INBOX"));
-    for (const view of [DRAFTS_VIEW, JUNK_VIEW]) {
-      expect(expungeScope(view, false), view).toBe(domainViewForDestination(view));
     }
   });
 });

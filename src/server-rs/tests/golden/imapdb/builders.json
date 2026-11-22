@@ -1230,11 +1230,11 @@
     "mailbox": null,
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "INBOX"
+    null
    ]
   },
   {
@@ -1242,7 +1242,7 @@
     "mailbox": null,
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
@@ -1254,11 +1254,11 @@
     "mailbox": "Drafts",
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "INBOX"
+    "Drafts"
    ]
   },
   {
@@ -1266,11 +1266,11 @@
     "mailbox": "Drafts",
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
-    null
+    "Drafts"
    ]
   },
   {
@@ -1278,11 +1278,11 @@
     "mailbox": "Junk",
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "INBOX"
+    "Junk"
    ]
   },
   {
@@ -1290,11 +1290,11 @@
     "mailbox": "Junk",
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
-    null
+    "Junk"
    ]
   },
   {
@@ -1302,11 +1302,11 @@
     "mailbox": "junk",
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "INBOX"
+    "junk"
    ]
   },
   {
@@ -1314,11 +1314,11 @@
     "mailbox": "junk",
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
-    null
+    "junk"
    ]
   },
   {
@@ -1463,6 +1463,328 @@
     "11111111-1111-4111-8111-111111111111",
     "true",
     "Projects/Wörk \"2024\""
+   ]
+  }
+ ],
+ "expungeDeletedInbox": [
+  {
+   "args": {
+    "mailbox": null,
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": null,
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Drafts",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Drafts",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Junk",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Junk",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "junk",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "junk",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "INBOX/accounts/a",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "INBOX/accounts/a",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Sent Messages/accounts/a",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Sent Messages/accounts/a",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Archive",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Archive",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Starred",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Starred",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Trash",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Trash",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Projects/Wörk \"2024\"",
+    "sent": false
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "false",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
+   ]
+  },
+  {
+   "args": {
+    "mailbox": "Projects/Wörk \"2024\"",
+    "sent": true
+   },
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
+   "values": [
+    "11111111-1111-4111-8111-111111111111",
+    "true",
+    "INBOX",
+    "INBOX/accounts/%",
+    "%.copy@server",
+    "Starred",
+    "Trash"
    ]
   }
  ],

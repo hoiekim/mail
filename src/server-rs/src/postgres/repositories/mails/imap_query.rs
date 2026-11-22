@@ -19,12 +19,15 @@ use std::fmt;
 use serde_json::json;
 
 use super::model::{
-    PartialMailModel, ANSWERED, DELETED, DRAFT, EXPUNGED, MAILBOX, MAIL_ID, MAIL_MAILBOX_UID, MODSEQ, READ, SAVED,
-    SENT, UID, UID_DOMAIN, USER_ID,
+    PartialMailModel, ANSWERED, DELETED, DRAFT, EXPUNGED, MAILBOX, MAIL_ID, MAIL_MAILBOX_UID, MESSAGE_ID, MODSEQ, READ,
+    SAVED, SENT, UID, UID_DOMAIN, USER_ID,
 };
+use super::pivot_decisions::{STARRED_MAILBOX, TRASH_MAILBOX};
 use super::table::{Filter, PreparedQuery};
+use super::thread::COPY_MESSAGE_ID_SUFFIX;
 use super::views::{
-    expunge_scope, membership_condition, membership_expression, membership_filter, uses_domain_uid_space,
+    membership_condition, membership_expression, membership_filter, uses_domain_uid_space, INBOX_ACCOUNTS_PREFIX,
+    INBOX_VIEW,
 };
 use crate::imap::types::SequenceRange;
 use crate::imap::util::JsDate;
@@ -787,9 +790,10 @@ fn with_membership(
     filters
 }
 
-/// The rows an EXPUNGE addresses on a domain view with no `expunge_scope`:
-/// the unified `Sent Messages`. EXPUNGE removes `\Deleted` messages from the
-/// selected mailbox, so a mail the box does not show is out of reach.
+/// The rows an EXPUNGE addresses on a domain view of the sent lane, the
+/// unified `Sent Messages` (the received lane's views take
+/// `build_expunge_deleted_inbox_query`). EXPUNGE removes `\Deleted` messages
+/// from the selected mailbox, so a mail the box does not show is out of reach.
 pub fn build_expunge_deleted_filters(user_id: &str, mailbox: Option<&str>, sent: bool) -> Vec<(&'static str, Filter)> {
     with_membership(
         vec![
@@ -803,19 +807,52 @@ pub fn build_expunge_deleted_filters(user_id: &str, mailbox: Option<&str>, sent:
     )
 }
 
-/// The twin for every box with an `expunge_scope`: the `\Deleted` mails of
-/// the box and the UID each holds there. A mapped box joins its own rows and
-/// numbers by them; INBOX and the utility views join the INBOX tree's scope
-/// rows, keep their predicate on top (an INBOX EXPUNGE must not collect spam
-/// the client never saw) and number by `uid_domain`.
-pub fn build_expunge_deleted_select_query(user_id: &str, mailbox: Option<&str>, sent: bool) -> PreparedQuery {
-    let uid = if uses_domain_uid_space(mailbox) { format!("m.{UID_DOMAIN}") } else { format!("x.{UID}") };
+/// The rows an EXPUNGE addresses on INBOX or a utility view of the received
+/// lane, with the `uid_domain` the view numbers them by: its `\Deleted`
+/// mails, less those filed somewhere else.
+///
+/// INBOX shows every received mail, so a copy filed into Trash (`\Deleted` by
+/// being there) or into a user mailbox is listed in INBOX too, and the view's
+/// predicate alone let an INBOX EXPUNGE destroy everything the user had moved
+/// to Trash. A mail is the view's to expunge when
+///
+/// - it holds a row in the INBOX tree: `INBOX`, or a per-address box when the
+///   INBOX row was skipped on a `uid_domain` collision; or
+/// - it is not a copy and holds no row but the Starred / Trash pivots its own
+///   flags add. That is mail stored before the mapping rows were written: the
+///   STORE that flags it `\Deleted` files it into Trash like any other mail.
+///
+/// Left out is a COPY / MOVE copy (`COPY_MESSAGE_ID_SUFFIX`) or a mail filed
+/// into a user mailbox, with no row in the INBOX tree. A mail APPENDed into
+/// Trash or Starred holds only that row, like old mail flagged in INBOX, and
+/// the two cannot be told apart, so it stays in reach.
+pub fn build_expunge_deleted_inbox_query(user_id: &str, mailbox: Option<&str>, sent: bool) -> PreparedQuery {
     PreparedQuery {
         sql: format!(
-            "\n      SELECT m.{MAIL_ID} as mail_id, {uid} as uid FROM mails m\n      JOIN {MAIL_MAILBOX_UID} x\n        ON x.{USER_ID} = m.{USER_ID}\n        AND x.{MAILBOX} = $3\n        AND x.{MAIL_ID} = m.{MAIL_ID}\n      WHERE m.{USER_ID} = $1 AND m.{SENT} = $2\n        AND m.{DELETED} = TRUE AND m.{EXPUNGED} = FALSE{}\n    ",
+            "\n      SELECT m.{MAIL_ID} as mail_id, m.{UID_DOMAIN} as uid FROM mails m\n      WHERE m.{USER_ID} = $1 AND m.{SENT} = $2\n        AND m.{DELETED} = TRUE AND m.{EXPUNGED} = FALSE{}\n        AND (\n          EXISTS (\n            SELECT 1 FROM {MAIL_MAILBOX_UID} x\n            WHERE x.{USER_ID} = m.{USER_ID} AND x.{MAIL_ID} = m.{MAIL_ID}\n              AND (x.{MAILBOX} = $3 OR x.{MAILBOX} LIKE $4)\n          )\n          OR (\n            m.{MESSAGE_ID} NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM {MAIL_MAILBOX_UID} x\n              WHERE x.{USER_ID} = m.{USER_ID} AND x.{MAIL_ID} = m.{MAIL_ID}\n                AND x.{MAILBOX} NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
             membership_condition(mailbox, sent, "m.")
         ),
-        values: params![user_id, sent, expunge_scope(mailbox, sent)],
+        values: params![
+            user_id,
+            sent,
+            INBOX_VIEW,
+            format!("{INBOX_ACCOUNTS_PREFIX}%"),
+            format!("%{COPY_MESSAGE_ID_SUFFIX}"),
+            STARRED_MAILBOX,
+            TRASH_MAILBOX
+        ],
+    }
+}
+
+/// The mapped-box twin: the `\Deleted` mails of the box and the UID each
+/// holds there.
+pub fn build_expunge_deleted_select_query(user_id: &str, mailbox: Option<&str>, sent: bool) -> PreparedQuery {
+    PreparedQuery {
+        sql: format!(
+            "\n      SELECT m.{MAIL_ID} as mail_id, x.{UID} as uid FROM mails m\n      JOIN {MAIL_MAILBOX_UID} x\n        ON x.{USER_ID} = m.{USER_ID}\n        AND x.{MAILBOX} = $3\n        AND x.{MAIL_ID} = m.{MAIL_ID}\n      WHERE m.{USER_ID} = $1 AND m.{SENT} = $2\n        AND m.{DELETED} = TRUE AND m.{EXPUNGED} = FALSE{}\n    ",
+            membership_condition(mailbox, sent, "m.")
+        ),
+        values: params![user_id, sent, mailbox],
     }
 }
 
@@ -1322,19 +1359,47 @@ mod tests {
         }
     }
 
+    // imap-query.test.ts — "an INBOX, Drafts or Junk EXPUNGE"
+
+    const RECEIVED_VIEWS: [Option<&str>; 3] = [None, Some("Drafts"), Some("Junk")];
+
     #[test]
-    fn confines_an_inbox_drafts_or_junk_expunge_to_the_inbox_trees_scope_rows() {
-        // A copy filed into Trash is listed in INBOX flagged \Deleted; joining
-        // INBOX's scope rows leaves it to Trash. The predicate stays on top so
-        // an INBOX EXPUNGE does not collect quarantined spam.
-        for mailbox in [None, Some("Drafts"), Some("Junk")] {
-            let query = build_expunge_deleted_select_query(USER, mailbox, false);
-            assert!(query.sql.contains("JOIN mail_mailbox_uid x"));
-            assert!(query.sql.contains("AND x.mailbox = $3"));
+    fn an_inbox_expunge_keeps_the_views_own_rule_and_numbers_by_uid_domain() {
+        for mailbox in RECEIVED_VIEWS {
+            let query = build_expunge_deleted_inbox_query(USER, mailbox, false);
             assert!(query.sql.contains(&membership_expression(mailbox, false, "m.")));
             assert!(query.sql.contains("m.deleted = TRUE AND m.expunged = FALSE"));
             assert!(query.sql.contains("m.uid_domain as uid"));
-            assert_eq!(query.values, params![USER, false, "INBOX"]);
+            // No JOIN: a mail with no mapping row at all must still be found.
+            assert!(!query.sql.contains("JOIN"));
+        }
+    }
+
+    #[test]
+    fn an_inbox_expunge_takes_a_mail_holding_a_row_in_the_inbox_tree() {
+        let query = build_expunge_deleted_inbox_query(USER, None, false);
+        assert!(query.sql.contains("AND (x.mailbox = $3 OR x.mailbox LIKE $4)"));
+        assert_eq!(query.values[2..4], params!["INBOX", "INBOX/accounts/%"]);
+    }
+
+    #[test]
+    fn an_inbox_expunge_takes_mail_with_no_row_but_the_pivots_unless_it_is_a_copy() {
+        // Old mail has no row, and the STORE that flags it files it into
+        // Trash; a COPY / MOVE copy into Trash differs only by its Message-ID.
+        let query = build_expunge_deleted_inbox_query(USER, None, false);
+        assert!(query.sql.contains("m.message_id NOT LIKE $5"));
+        assert!(query.sql.contains("AND NOT EXISTS ("));
+        assert!(query.sql.contains("x.mailbox NOT IN ($6, $7)"));
+        assert_eq!(query.values[4..], params!["%.copy@server", "Starred", "Trash"]);
+    }
+
+    #[test]
+    fn an_inbox_expunge_binds_every_placeholder_it_uses() {
+        for mailbox in RECEIVED_VIEWS {
+            let query = build_expunge_deleted_inbox_query(USER, mailbox, false);
+            assert!(query.sql.contains("$7") && !query.sql.contains("$8"));
+            assert_eq!(query.values.len(), 7);
+            assert_eq!(query.values[..2], params![USER, false]);
         }
     }
 

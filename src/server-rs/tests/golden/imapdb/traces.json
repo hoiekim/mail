@@ -26082,11 +26082,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -26149,11 +26153,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -26190,11 +26198,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -26216,11 +26228,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -26254,11 +26270,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -26308,11 +26328,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -27123,11 +27147,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -27190,11 +27218,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -27231,11 +27263,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -27257,11 +27293,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -27295,11 +27335,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -27349,11 +27393,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -97156,11 +97204,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -97201,11 +97253,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -97603,11 +97659,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -97648,11 +97708,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -98956,11 +99020,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -99001,11 +99069,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],
@@ -99402,11 +99474,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     },
     {
@@ -99447,11 +99523,15 @@
    ],
    "statements": [
     {
-     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n        AND (\n          EXISTS (\n            SELECT 1 FROM mail_mailbox_uid x\n            WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n              AND (x.mailbox = $3 OR x.mailbox LIKE $4)\n          )\n          OR (\n            m.message_id NOT LIKE $5\n            AND NOT EXISTS (\n              SELECT 1 FROM mail_mailbox_uid x\n              WHERE x.user_id = m.user_id AND x.mail_id = m.mail_id\n                AND x.mailbox NOT IN ($6, $7)\n            )\n          )\n        )\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "INBOX"
+      "INBOX",
+      "INBOX/accounts/%",
+      "%.copy@server",
+      "Starred",
+      "Trash"
      ]
     }
    ],

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createUser, type TestServer, type TestUser } from "../harness";
+import { addr, createUser, insertMail, type TestServer, type TestUser } from "../harness";
 import { ImapClient, lit, openSession } from "../harness/imap";
 import { crlf, deliver, mailDomain, startImapServer, type DeliveredMail } from "./support";
 
@@ -26,6 +26,13 @@ const inbox = async (count: number): Promise<Box> => {
 };
 
 const uids = async (imap: ImapClient, command = "FETCH 1:* (UID)") => (await imap.command(command)).untagged;
+
+/** The mailboxes a mail has a `mail_mailbox_uid` row under. */
+const filedUnder = async (mailId: string): Promise<string[]> =>
+  (await server.db.query<{ mailbox: string }>(
+    "SELECT mailbox FROM mail_mailbox_uid WHERE mail_id = $1 ORDER BY mailbox",
+    [mailId]
+  )).map((row) => row.mailbox);
 
 beforeAll(async () => {
   server = await startImapServer();
@@ -180,14 +187,45 @@ describe("EXPUNGE", () => {
     imap.close();
   });
 
-  test("in INBOX it leaves mail appended to Trash", async () => {
+  test("in INBOX it removes mail stored before mailboxes were recorded, though flagging it filed it into Trash", async () => {
+    // Mail written before the mapping rows were has none, not even INBOX's.
+    // The STORE that flags it files it into Starred and Trash like any other
+    // mail; unlike a copy filed there, it stays INBOX's to expunge.
+    const { imap, user, domain } = await inbox(1);
+    const to = [addr(`hello@${domain}`)];
+    const alreadyFlagged = await insertMail(server, user.id, { to, uid_domain: 100, deleted: true });
+    const flaggedNow = await insertMail(server, user.id, { to, uid_domain: 101 });
+    await imap.command("SELECT INBOX");
+    expect(await uids(imap)).toEqual(["* 1 FETCH (UID 1)", "* 2 FETCH (UID 100)", "* 3 FETCH (UID 101)"]);
+    await imap.command("STORE 3 +FLAGS.SILENT (\\Flagged \\Deleted)");
+    expect(await filedUnder(alreadyFlagged.mail_id)).toEqual([]);
+    expect(await filedUnder(flaggedNow.mail_id)).toEqual(["Starred", "Trash"]);
+    expect((await imap.command("EXPUNGE")).lines).toEqual(["* 3 EXPUNGE", "* 2 EXPUNGE", "A6 OK EXPUNGE completed"]);
+    const rows = await server.db.query(
+      "SELECT uid_domain, expunged FROM mails WHERE user_id = $1 ORDER BY uid_domain",
+      [user.id]
+    );
+    expect(rows).toEqual([
+      { uid_domain: 1, expunged: false },
+      { uid_domain: 100, expunged: true },
+      { uid_domain: 101, expunged: true },
+    ]);
+    imap.close();
+  });
+
+  test("in INBOX it also removes mail appended to Trash", async () => {
+    // NOTE: looks like the data-loss bug above, for APPEND rather than MOVE or
+    // COPY. Mail appended to Trash holds a Trash row and nothing else, exactly
+    // like old mail the STORE above filed into Trash, and unlike a COPY / MOVE
+    // copy it has no derived Message-ID to tell it by. Keeping old mail
+    // deletable wins; telling the two apart needs a column recording why a
+    // mail is in Trash.
     const { imap } = await inbox(1);
     await imap.command(["APPEND Trash ", lit("Subject: appended\r\n\r\nx\r\n")]);
     await imap.command("SELECT INBOX");
     await imap.command("STORE 1 +FLAGS.SILENT (\\Deleted)");
-    expect((await imap.command("EXPUNGE")).lines).toEqual(["* 1 EXPUNGE", "A6 OK EXPUNGE completed"]);
-    expect(await uids(imap, "FETCH 1:* (UID FLAGS)")).toEqual(["* 1 FETCH (UID 2 FLAGS (\\Deleted))"]);
-    expect((await imap.command("STATUS Trash (MESSAGES)")).untagged).toEqual(['* STATUS "Trash" (MESSAGES 1)']);
+    expect((await imap.command("EXPUNGE")).lines).toEqual(["* 2 EXPUNGE", "* 1 EXPUNGE", "A6 OK EXPUNGE completed"]);
+    expect((await imap.command("STATUS Trash (MESSAGES)")).untagged).toEqual(['* STATUS "Trash" (MESSAGES 0)']);
     imap.close();
   });
 
