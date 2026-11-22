@@ -31,7 +31,7 @@ use crate::postgres::repositories::mails::{
 use crate::spam::service::check_spam;
 use crate::spam::types::{EmailContext, SpamCheckResult};
 use crate::users::{get_user, UserQuery};
-use crate::util::{address_to_username, get_domain, get_random_id, is_local_address};
+use crate::util::{get_domain, get_random_id, is_local_address, recipient_username};
 use crate::{js, logger, push};
 
 /// One mailbox of an incoming address header or envelope, or a group with
@@ -587,17 +587,21 @@ pub async fn save_buffer(bytes: &[u8]) -> anyhow::Result<String> {
     Ok(id)
 }
 
-fn local_recipients<'a>(data: &'a IncomingMail, domain: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+fn envelope_addresses(data: &IncomingMail) -> impl Iterator<Item = &str> {
     data.envelope_to
         .iter()
         .flatten()
         .filter_map(|entry| entry.address.as_deref())
-        .filter(move |address| !address.is_empty() && is_local_address(address, domain))
+        .filter(|address| !address.is_empty())
+}
+
+fn local_recipients<'a>(data: &'a IncomingMail, domain: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    envelope_addresses(data).filter(move |address| is_local_address(address, domain))
 }
 
 /// The usernames of the local envelope recipients, one per recipient.
 fn usernames_of(data: &IncomingMail, domain: &str) -> Vec<String> {
-    local_recipients(data, domain).map(address_to_username).collect()
+    envelope_addresses(data).filter_map(|address| recipient_username(address, domain)).collect()
 }
 
 /// The per-account mailboxes of the local envelope recipients.

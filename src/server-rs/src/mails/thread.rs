@@ -97,7 +97,7 @@ pub async fn get_thread(user: &SignedUser, mail_id: &str) -> DbResult<Vec<Map<St
     Ok(rows
         .into_iter()
         .map(|row| {
-            let mut header = to_mail_header_data(&row.record);
+            let mut header = to_mail_header_data(&row.record, &user.username);
             if row.is_spam() {
                 header.insert("spam".into(), Value::Bool(true));
             }

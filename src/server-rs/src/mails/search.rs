@@ -17,6 +17,6 @@ pub async fn search_mail(user: &SignedUser, value: &str) -> Vec<Map<String, Valu
     search_mails(&user.id, value)
         .await
         .iter()
-        .map(|result| to_search_header_data(&result.row, &result.highlight))
+        .map(|result| to_search_header_data(&result.row, &result.highlight, &user.username))
         .collect()
 }
