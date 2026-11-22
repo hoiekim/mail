@@ -6,16 +6,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use futures_util::future::BoxFuture;
 use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
+use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use super::close_socket::CLOSE_FLUSH_TIMEOUT_MS;
 use super::handler::serve_connection;
 use super::idle_manager::idle_manager;
 use super::session_registry::shutdown_imap_sessions;
+use super::socket::BoxedStream;
 use crate::alarm::spawn_alarm_keyed;
 use crate::proxy_protocol::{is_proxy_protocol_enabled, read_proxy_header, unmapped, Peer, Prefixed};
 use crate::tls::{get_tls_credentials, TlsCredentials};
@@ -64,6 +67,19 @@ pub fn get_imap_tls_port() -> Result<u16> {
     port_setting(env::var("IMAP_TLS_PORT").as_deref(), 993).context("IMAP_TLS_PORT")
 }
 
+/// Where an implicit-TLS listener takes its certificate from, once per
+/// connection, so a renewed certificate is picked up without a restart.
+type AcceptorSource = Arc<dyn Fn() -> Result<TlsAcceptor> + Send + Sync>;
+
+/// What a connection is handed to once IMAP can be spoken on it: the stream,
+/// the client it is from, and whether it is inside TLS.
+type Serve = Arc<dyn Fn(BoxedStream, Peer, bool) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// The IMAP connection driver.
+fn serve_imap() -> Serve {
+    Arc::new(|stream, peer, is_tls| Box::pin(serve_connection(stream, peer, is_tls)))
+}
+
 struct ImapServer {
     stop: CancellationToken,
     /// One permit per connection the port may still take.
@@ -79,22 +95,26 @@ pub struct ImapServers {
 /// Takes one accepted connection to the point where IMAP is spoken on it —
 /// the PROXY header when a TCP proxy is in front, then the TLS handshake on
 /// the implicit-TLS port — and serves it.
-async fn accept_connection(mut stream: TcpStream, address: SocketAddr, is_tls: bool, proxied: bool) {
+async fn accept_connection(
+    mut stream: TcpStream,
+    address: SocketAddr,
+    tls: Option<AcceptorSource>,
+    proxied: bool,
+    serve: Serve,
+) {
     let _ = stream.set_nodelay(true);
 
     if !proxied {
         let peer = Peer { address: address.ip().to_string(), port: address.port() };
-        if !is_tls {
-            serve_connection(Box::new(stream), peer, false).await;
+        let Some(tls) = tls else {
+            serve(Box::new(stream), peer, false).await;
             return;
-        }
-        // The certificate is read now, so a renewed one is picked up
-        // without a restart.
-        let Ok(acceptor) = crate::tls::acceptor() else {
+        };
+        let Ok(acceptor) = tls() else {
             return;
         };
         if let Ok(Ok(stream)) = tokio::time::timeout(DIRECT_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
-            serve_connection(Box::new(stream), peer, true).await;
+            serve(Box::new(stream), peer, true).await;
         }
         return;
     }
@@ -114,24 +134,25 @@ async fn accept_connection(mut stream: TcpStream, address: SocketAddr, is_tls: b
         }
     };
     let stream = Prefixed::new(rest, stream);
-    if !is_tls {
-        serve_connection(Box::new(stream), peer, false).await;
+    let Some(tls) = tls else {
+        serve(Box::new(stream), peer, false).await;
         return;
-    }
-    let Ok(acceptor) = crate::tls::acceptor() else {
+    };
+    let Ok(acceptor) = tls() else {
         return;
     };
     if let Ok(Ok(stream)) = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
-        serve_connection(Box::new(stream), peer, true).await;
+        serve(Box::new(stream), peer, true).await;
     }
 }
 
 async fn accept_loop(
     listener: TcpListener,
-    is_tls: bool,
+    tls: Option<AcceptorSource>,
     proxied: bool,
     stop: CancellationToken,
     connections: Arc<Semaphore>,
+    serve: Serve,
 ) {
     loop {
         let accepted = tokio::select! {
@@ -153,20 +174,25 @@ async fn accept_loop(
             drop(stream);
             continue;
         };
+        let (tls, serve) = (tls.clone(), serve.clone());
         tokio::spawn(async move {
-            accept_connection(stream, address, is_tls, proxied).await;
+            accept_connection(stream, address, tls, proxied, serve).await;
             drop(slot);
         });
     }
 }
 
-async fn listen(port: u16, is_tls: bool) -> Result<ImapServer> {
-    let listener = crate::net::bind_all(port).await.with_context(|| format!("IMAP could not listen on port {port}"))?;
+/// Starts accepting on `listener`.
+fn start(listener: TcpListener, tls: Option<AcceptorSource>, proxied: bool, serve: Serve) -> ImapServer {
     let stop = CancellationToken::new();
     let connections = Arc::new(Semaphore::new(IMAP_MAX_CONNECTIONS as usize));
-    let accepting =
-        tokio::spawn(accept_loop(listener, is_tls, is_proxy_protocol_enabled(), stop.clone(), connections.clone()));
-    Ok(ImapServer { stop, connections, accepting })
+    let accepting = tokio::spawn(accept_loop(listener, tls, proxied, stop.clone(), connections.clone(), serve));
+    ImapServer { stop, connections, accepting }
+}
+
+async fn listen(port: u16, tls: Option<AcceptorSource>) -> Result<ImapServer> {
+    let listener = crate::net::bind_all(port).await.with_context(|| format!("IMAP could not listen on port {port}"))?;
+    Ok(start(listener, tls, is_proxy_protocol_enabled(), serve_imap()))
 }
 
 /// Opens the IMAP listeners: the plain port always, the implicit-TLS port
@@ -177,7 +203,7 @@ pub async fn initialize_imap() -> Result<ImapServers> {
     let mut servers = Vec::new();
 
     let port = get_imap_port()?;
-    servers.push(listen(port, false).await?);
+    servers.push(listen(port, None).await?);
     logger::info("IMAP server listening", json!({ "component": "imap", "port": port }));
 
     match get_tls_credentials() {
@@ -204,7 +230,7 @@ pub async fn initialize_imap() -> Result<ImapServers> {
             // as it does when the Bun server builds its TLS listener.
             crate::tls::server_config().context("IMAP could not load its TLS certificate")?;
             let port = get_imap_tls_port()?;
-            servers.push(listen(port, true).await?);
+            servers.push(listen(port, Some(Arc::new(crate::tls::acceptor))).await?);
             logger::info("IMAP server listening over TLS", json!({ "component": "imap", "port": port }));
         }
         TlsCredentials::Unconfigured => {
@@ -244,170 +270,5 @@ pub async fn close_imap_servers(servers: ImapServers) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-
-    use super::super::close_socket::CLOSE_FLUSH_TIMEOUT_MS;
-    use super::*;
-
-    const BYE: &str = "* BYE Server shutting down\r\n";
-
-    /// A plain listener on an ephemeral loopback port.
-    async fn serve(proxied: bool) -> (ImapServers, u16) {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let stop = CancellationToken::new();
-        let connections = Arc::new(Semaphore::new(IMAP_MAX_CONNECTIONS as usize));
-        let accepting = tokio::spawn(accept_loop(listener, false, proxied, stop.clone(), connections.clone()));
-        (ImapServers { servers: vec![ImapServer { stop, connections, accepting }] }, port)
-    }
-
-    async fn connect(port: u16) -> BufReader<TcpStream> {
-        BufReader::new(TcpStream::connect(("127.0.0.1", port)).await.unwrap())
-    }
-
-    async fn line(client: &mut BufReader<TcpStream>) -> String {
-        let mut line = String::new();
-        client.read_line(&mut line).await.unwrap();
-        line
-    }
-
-    // The shutdown sweep is process-wide, so the tests that run it take turns.
-    static SWEEP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    #[tokio::test]
-    async fn greets_and_serves_a_connection() {
-        let _sweep = SWEEP.lock().await;
-        let (servers, port) = serve(false).await;
-        let mut client = connect(port).await;
-        assert!(line(&mut client).await.starts_with("* OK [CAPABILITY IMAP4rev1 "));
-        client.get_mut().write_all(b"a1 NOOP\r\n").await.unwrap();
-        assert_eq!(line(&mut client).await, "a1 OK NOOP completed\r\n");
-        assert!(close_imap_servers(servers).await);
-    }
-
-    #[tokio::test]
-    async fn shutdown_tells_an_idle_client_bye_and_closes_promptly() {
-        let _sweep = SWEEP.lock().await;
-        let (servers, port) = serve(false).await;
-        let mut client = connect(port).await;
-        assert!(line(&mut client).await.starts_with("* OK"));
-
-        let started = std::time::Instant::now();
-        let drained = close_imap_servers(servers).await;
-
-        // Without the sweep the listener would wait out the inactivity
-        // timeout and this would come back false at the bound.
-        assert!(drained);
-        // A client that closes on FIN goes as soon as the BYE lands.
-        let mut rest = String::new();
-        client.read_to_string(&mut rest).await.unwrap();
-        assert_eq!(rest, BYE);
-        drop(client);
-        assert!(started.elapsed() < Duration::from_millis(CLOSE_FLUSH_TIMEOUT_MS + 500));
-        // The port is closed.
-        assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn shutdown_closes_within_the_flush_window_when_the_client_keeps_its_side_open() {
-        let _sweep = SWEEP.lock().await;
-        let (servers, port) = serve(false).await;
-        let mut client = connect(port).await;
-        assert!(line(&mut client).await.starts_with("* OK"));
-
-        // The client reads the BYE but never closes its own side.
-        let started = std::time::Instant::now();
-        let drained = close_imap_servers(servers).await;
-        assert!(drained);
-        assert!(started.elapsed() < Duration::from_millis(IMAP_SHUTDOWN_TIMEOUT_MS));
-        assert_eq!(line(&mut client).await, BYE);
-    }
-
-    #[tokio::test]
-    async fn shutdown_stops_waiting_at_the_bound_on_a_connection_no_session_owns() {
-        let _sweep = SWEEP.lock().await;
-        // Behind a proxy a connection has no session until its PROXY header
-        // arrives; this one never sends it.
-        let (servers, port) = serve(true).await;
-        let _silent = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        let started = std::time::Instant::now();
-        let drained = close_imap_servers(servers).await;
-        assert!(!drained);
-        let elapsed = started.elapsed();
-        assert!(elapsed >= Duration::from_millis(IMAP_SHUTDOWN_TIMEOUT_MS - 50), "{elapsed:?}");
-        assert!(elapsed < Duration::from_millis(IMAP_SHUTDOWN_TIMEOUT_MS + 1000), "{elapsed:?}");
-    }
-
-    #[tokio::test]
-    async fn a_proxied_listener_waits_for_the_header_and_reports_its_client() {
-        let _sweep = SWEEP.lock().await;
-        let (servers, port) = serve(true).await;
-        let mut client = connect(port).await;
-        // Nothing is said before the header.
-        let early = tokio::time::timeout(Duration::from_millis(100), line(&mut client)).await;
-        assert!(early.is_err());
-        client.get_mut().write_all(b"PROXY TCP4 203.0.113.7 10.0.0.1 51000 143\r\nA1 NOOP\r\n").await.unwrap();
-        assert!(line(&mut client).await.starts_with("* OK [CAPABILITY "));
-        assert_eq!(line(&mut client).await, "A1 OK NOOP completed\r\n");
-
-        // A connection that starts with anything else is dropped unanswered.
-        let mut stranger = connect(port).await;
-        stranger.get_mut().write_all(b"A1 CAPABILITY\r\n").await.unwrap();
-        let mut said = String::new();
-        stranger.read_to_string(&mut said).await.unwrap();
-        assert_eq!(said, "");
-
-        assert!(close_imap_servers(servers).await);
-    }
-
-    #[tokio::test]
-    async fn the_connection_past_the_limit_is_closed_without_a_greeting() {
-        let _sweep = SWEEP.lock().await;
-        let (servers, port) = serve(false).await;
-        let mut clients = Vec::new();
-        for _ in 0..IMAP_MAX_CONNECTIONS {
-            let mut client = connect(port).await;
-            assert!(line(&mut client).await.starts_with("* OK"));
-            clients.push(client);
-        }
-        let mut extra = connect(port).await;
-        let mut said = String::new();
-        // Closed at once: end of stream, or a reset, and not one octet.
-        let _ = extra.read_to_string(&mut said).await;
-        assert_eq!(said, "");
-
-        // A slot comes back when a connection leaves.
-        drop(clients.pop());
-        let mut greeted = false;
-        for _ in 0..50 {
-            let mut next = connect(port).await;
-            let mut greeting = String::new();
-            if next.read_line(&mut greeting).await.is_ok() && greeting.starts_with("* OK") {
-                greeted = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(greeted);
-        assert!(close_imap_servers(servers).await);
-    }
-
-    #[test]
-    fn ports_follow_number_or_default() {
-        assert_eq!(port_setting(None, 143).unwrap(), 143);
-        assert_eq!(port_setting(Some("1143"), 143).unwrap(), 1143);
-        assert_eq!(port_setting(Some(" 1143 "), 143).unwrap(), 1143);
-        // Not a number at all, or zero: the default.
-        assert_eq!(port_setting(Some("not-a-port"), 143).unwrap(), 143);
-        assert_eq!(port_setting(Some("143abc"), 993).unwrap(), 993);
-        assert_eq!(port_setting(Some(""), 993).unwrap(), 993);
-        assert_eq!(port_setting(Some("0"), 143).unwrap(), 143);
-        // A number that is no port cannot be listened on.
-        assert!(port_setting(Some("70000"), 143).is_err());
-        assert!(port_setting(Some("-1"), 143).is_err());
-        assert!(port_setting(Some("143.5"), 143).is_err());
-    }
-}
+#[path = "server_tests.rs"]
+mod tests;

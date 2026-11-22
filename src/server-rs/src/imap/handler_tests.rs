@@ -313,10 +313,6 @@ impl Wire {
         String::from_utf8_lossy(&self.received.lock().unwrap()[self.greeting..]).into_owned()
     }
 
-    fn output_bytes(&self) -> Vec<u8> {
-        self.received.lock().unwrap()[self.greeting..].to_vec()
-    }
-
     /// The server's lines after its greeting.
     fn lines(&self) -> Vec<String> {
         self.output().split_inclusive("\r\n").map(str::to_string).collect()
@@ -2110,7 +2106,6 @@ mod socket_errors {
     use rustls::AlertDescription;
 
     use super::super::super::socket::{is_peer_cert_rejection, socket_error_context};
-    use super::*;
 
     fn alert(description: AlertDescription) -> io::Error {
         io::Error::new(io::ErrorKind::InvalidData, rustls::Error::AlertReceived(description))
