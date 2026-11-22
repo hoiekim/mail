@@ -157992,14 +157992,13 @@
   {
    "step": 1107,
    "op": "expunge",
-   "ok": [
-    0
-   ]
+   "ok": []
   },
   {
    "step": 1108,
    "op": "getAllUids",
    "ok": [
+    0,
     6,
     7,
     11,
@@ -158031,8 +158030,8 @@
    "step": 1110,
    "op": "countMessages",
    "ok": {
-    "total": 20,
-    "unread": 6
+    "total": 21,
+    "unread": 7
    }
   },
   {
@@ -158044,6 +158043,7 @@
    "step": 1112,
    "op": "getAllUids",
    "ok": [
+    0,
     6,
     7,
     11,
@@ -158069,12 +158069,12 @@
   {
    "step": 1113,
    "op": "getFirstUnseenUid",
-   "ok": 125
+   "ok": 0
   },
   {
    "step": 1114,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1115,
@@ -158139,7 +158139,7 @@
   {
    "step": 1124,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1125,
@@ -158169,7 +158169,7 @@
   {
    "step": 1129,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1130,
@@ -158205,8 +158205,8 @@
    "step": 1135,
    "op": "countMessages",
    "ok": {
-    "total": 0,
-    "unread": 0
+    "total": 1,
+    "unread": 1
    }
   },
   {
@@ -158217,17 +158217,19 @@
   {
    "step": 1137,
    "op": "getAllUids",
-   "ok": []
+   "ok": [
+    133
+   ]
   },
   {
    "step": 1138,
    "op": "getFirstUnseenUid",
-   "ok": null
+   "ok": 133
   },
   {
    "step": 1139,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1140,
@@ -159164,8 +159166,8 @@
    "step": 1228,
    "op": "countMessages",
    "ok": {
-    "total": 20,
-    "unread": 6
+    "total": 21,
+    "unread": 7
    }
   },
   {
@@ -159177,6 +159179,7 @@
    "step": 1230,
    "op": "getAllUids",
    "ok": [
+    0,
     6,
     7,
     11,
@@ -159202,12 +159205,12 @@
   {
    "step": 1231,
    "op": "getFirstUnseenUid",
-   "ok": 125
+   "ok": 0
   },
   {
    "step": 1232,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1233,
@@ -159272,7 +159275,7 @@
   {
    "step": 1242,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1243,
@@ -159302,7 +159305,7 @@
   {
    "step": 1247,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1248,
@@ -159338,8 +159341,8 @@
    "step": 1253,
    "op": "countMessages",
    "ok": {
-    "total": 0,
-    "unread": 0
+    "total": 1,
+    "unread": 1
    }
   },
   {
@@ -159350,17 +159353,19 @@
   {
    "step": 1255,
    "op": "getAllUids",
-   "ok": []
+   "ok": [
+    133
+   ]
   },
   {
    "step": 1256,
    "op": "getFirstUnseenUid",
-   "ok": null
+   "ok": 133
   },
   {
    "step": 1257,
    "op": "getHighestModseq",
-   "ok": 244
+   "ok": 243
   },
   {
    "step": 1258,
@@ -159913,7 +159918,23 @@
   {
    "step": 1299,
    "op": "fetch",
-   "ok": []
+   "ok": [
+    [
+     "mail(a0000000-0000-4000-8000-000000000001 <direct1@example.com>)",
+     {
+      "read": false,
+      "saved": false,
+      "deleted": true,
+      "draft": false,
+      "answered": false,
+      "mail_id": "mail(a0000000-0000-4000-8000-000000000001 <direct1@example.com>)",
+      "uid": {
+       "domain": 0,
+       "account": 133
+      }
+     }
+    ]
+   ]
   },
   {
    "step": 1300,
@@ -165655,10 +165676,10 @@
     "deleted": true,
     "draft": false,
     "answered": false,
-    "expunged": true,
+    "expunged": false,
     "insight": null,
     "uid_domain": 0,
-    "modseq": 244,
+    "modseq": 243,
     "spam_score": 0,
     "spam_reasons": null,
     "is_spam": false,
@@ -170867,7 +170888,7 @@
     "expunged": false,
     "insight": null,
     "uid_domain": 1,
-    "modseq": 4,
+    "modseq": 3,
     "spam_score": 0,
     "spam_reasons": null,
     "is_spam": false,
@@ -170926,7 +170947,7 @@
     "expunged": false,
     "insight": null,
     "uid_domain": 2,
-    "modseq": 5,
+    "modseq": 4,
     "spam_score": 0,
     "spam_reasons": null,
     "is_spam": false,
@@ -173187,7 +173208,7 @@
     "uid_kind": "modseq",
     "uid_scope": "",
     "sent": false,
-    "last_uid": 245
+    "last_uid": 243
    },
    {
     "user_id": "a0000000-0000-4000-8000-000000000002",
@@ -173257,7 +173278,7 @@
     "uid_kind": "modseq",
     "uid_scope": "",
     "sent": false,
-    "last_uid": 6
+    "last_uid": 5
    }
   ],
   "mailboxes": [

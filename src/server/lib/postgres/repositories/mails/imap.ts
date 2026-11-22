@@ -656,7 +656,7 @@ export const expungeDeletedMails = async (
       { [EXPUNGED]: true, updated: DB_NOW, [MODSEQ]: await getNextModseq(user_id) },
       [MAIL_ID]
     );
-    // Map the UPDATE's returned mail_ids back to their per-account UIDs
+    // Map the UPDATE's returned mail_ids back to their UIDs in the box
     // via the SELECT snapshot. This is the wire signal for EXPUNGE
     // responses.
     return rows

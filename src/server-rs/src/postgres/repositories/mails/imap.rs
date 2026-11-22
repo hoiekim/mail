@@ -40,7 +40,7 @@ use super::model::{
 };
 use super::set_flags_query::build_set_mail_flags_queries;
 use super::table::{run, run_query, Filter, Record, SetValue};
-use super::views::uses_domain_uid_space;
+use super::views::{expunge_scope, uses_domain_uid_space};
 use crate::imap::session_format::BodySource;
 use crate::imap::types::{json_number, json_string, StoreOperation};
 use crate::postgres::{DbError, DbResult, Param};
@@ -735,8 +735,9 @@ async fn expunged_data(user_id: &str) -> DbResult<[(&'static str, SetValue); 3]>
     ])
 }
 
-/// Marks the mails `lookup` finds in a mapped box expunged, and returns the
-/// UID each held there. Nothing is reserved or written when it finds none.
+/// Marks the mails `lookup` resolves through `mail_mailbox_uid` expunged, and
+/// returns the UID each held in the box. Nothing is reserved or written when it
+/// finds none.
 async fn expunge_mapped(user_id: &str, lookup: &super::table::PreparedQuery) -> DbResult<Vec<i64>> {
     let selected = run_query(lookup).await?;
     if selected.rows.is_empty() {
@@ -765,8 +766,13 @@ async fn expunge_domain(user_id: &str, filters: &[(&str, Filter)]) -> DbResult<V
 
 /// EXPUNGE: marks the mailbox's `\Deleted` messages expunged (the rows stay)
 /// and returns their UIDs. A database fault reads as nothing expunged.
+///
+/// Only the unified Sent view takes the single UPDATE. Every other box joins
+/// the mapping rows that file a mail into it: its own, or INBOX's scope rows
+/// for INBOX and the utility views, so a copy the user put in Trash is not
+/// destroyed by an EXPUNGE in a view that merely shows it (`expunge_scope`).
 pub async fn expunge_deleted_mails(user_id: &str, mailbox: Option<&str>, sent: bool) -> Vec<i64> {
-    let expunged = if uses_domain_uid_space(mailbox) {
+    let expunged = if expunge_scope(mailbox, sent).is_none() {
         expunge_domain(user_id, &build_expunge_deleted_filters(user_id, mailbox, sent)).await
     } else {
         expunge_mapped(user_id, &build_expunge_deleted_select_query(user_id, mailbox, sent)).await
@@ -1496,19 +1502,38 @@ mod tests {
     // EXPUNGE over the pool.
 
     #[tokio::test]
-    async fn a_domain_expunge_reserves_a_mod_sequence_then_marks_the_deleted_rows() {
+    async fn a_unified_sent_expunge_reserves_a_mod_sequence_then_marks_the_deleted_rows() {
         let (uids, trace) = with_script(
             vec![rows(json!([{ "next_uid": 31 }])), rows(json!([{ "uid": 2 }, { "uid": 7 }]))],
-            expunge_deleted_mails(USER, None, false),
+            expunge_deleted_mails(USER, None, true),
         )
         .await;
         assert_eq!(uids, vec![2, 7]);
         assert!(trace[0].sql.contains("INSERT INTO mail_uid_counters"));
         assert_eq!(
             trace[1].sql,
-            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid"
+            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 RETURNING uid_domain as uid"
         );
-        assert_eq!(trace[1].values, params![true, 31, USER, false, true, false, false, false]);
+        assert_eq!(trace[1].values, params![true, 31, USER, true, true, false]);
+    }
+
+    #[tokio::test]
+    async fn an_inbox_expunge_marks_only_the_rows_filed_into_inbox() {
+        // A copy filed into Trash is listed in INBOX flagged \Deleted but has
+        // no INBOX row, so the lookup leaves it out and it is never marked.
+        let (uids, trace) = with_script(
+            vec![
+                rows(json!([{ "mail_id": MAIL, "uid": 2 }])),
+                rows(json!([{ "next_uid": 31 }])),
+                rows(json!([{ "mail_id": MAIL }])),
+            ],
+            expunge_deleted_mails(USER, None, false),
+        )
+        .await;
+        assert_eq!(uids, vec![2]);
+        assert_eq!(trace[0], build_expunge_deleted_select_query(USER, None, false));
+        assert_eq!(trace[0].values, params![USER, false, "INBOX"]);
+        assert_eq!(trace[2].values, params![true, 31, MAIL]);
     }
 
     #[tokio::test]

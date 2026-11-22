@@ -23,7 +23,9 @@ use super::model::{
     SENT, UID, UID_DOMAIN, USER_ID,
 };
 use super::table::{Filter, PreparedQuery};
-use super::views::{membership_condition, membership_expression, membership_filter, uses_domain_uid_space};
+use super::views::{
+    expunge_scope, membership_condition, membership_expression, membership_filter, uses_domain_uid_space,
+};
 use crate::imap::types::SequenceRange;
 use crate::imap::util::JsDate;
 use crate::postgres::Param;
@@ -785,10 +787,9 @@ fn with_membership(
     filters
 }
 
-/// The rows an EXPUNGE addresses on a domain view. EXPUNGE removes
-/// `\Deleted` messages from the selected mailbox, so a mail the box does not
-/// show is out of reach: an INBOX EXPUNGE must not collect spam the client
-/// never saw.
+/// The rows an EXPUNGE addresses on a domain view with no `expunge_scope`:
+/// the unified `Sent Messages`. EXPUNGE removes `\Deleted` messages from the
+/// selected mailbox, so a mail the box does not show is out of reach.
 pub fn build_expunge_deleted_filters(user_id: &str, mailbox: Option<&str>, sent: bool) -> Vec<(&'static str, Filter)> {
     with_membership(
         vec![
@@ -802,15 +803,19 @@ pub fn build_expunge_deleted_filters(user_id: &str, mailbox: Option<&str>, sent:
     )
 }
 
-/// The mapped-box twin: the `\Deleted` mails of the box and the UID each
-/// holds there.
+/// The twin for every box with an `expunge_scope`: the `\Deleted` mails of
+/// the box and the UID each holds there. A mapped box joins its own rows and
+/// numbers by them; INBOX and the utility views join the INBOX tree's scope
+/// rows, keep their predicate on top (an INBOX EXPUNGE must not collect spam
+/// the client never saw) and number by `uid_domain`.
 pub fn build_expunge_deleted_select_query(user_id: &str, mailbox: Option<&str>, sent: bool) -> PreparedQuery {
+    let uid = if uses_domain_uid_space(mailbox) { format!("m.{UID_DOMAIN}") } else { format!("x.{UID}") };
     PreparedQuery {
         sql: format!(
-            "\n      SELECT m.{MAIL_ID} as mail_id, x.{UID} as uid FROM mails m\n      JOIN {MAIL_MAILBOX_UID} x\n        ON x.{USER_ID} = m.{USER_ID}\n        AND x.{MAILBOX} = $3\n        AND x.{MAIL_ID} = m.{MAIL_ID}\n      WHERE m.{USER_ID} = $1 AND m.{SENT} = $2\n        AND m.{DELETED} = TRUE AND m.{EXPUNGED} = FALSE{}\n    ",
+            "\n      SELECT m.{MAIL_ID} as mail_id, {uid} as uid FROM mails m\n      JOIN {MAIL_MAILBOX_UID} x\n        ON x.{USER_ID} = m.{USER_ID}\n        AND x.{MAILBOX} = $3\n        AND x.{MAIL_ID} = m.{MAIL_ID}\n      WHERE m.{USER_ID} = $1 AND m.{SENT} = $2\n        AND m.{DELETED} = TRUE AND m.{EXPUNGED} = FALSE{}\n    ",
             membership_condition(mailbox, sent, "m.")
         ),
-        values: params![user_id, sent, mailbox],
+        values: params![user_id, sent, expunge_scope(mailbox, sent)],
     }
 }
 
@@ -1275,6 +1280,15 @@ mod tests {
     #[test]
     fn restricts_a_domain_expunge_to_deleted_rows_the_box_still_shows() {
         assert_eq!(
+            build_expunge_deleted_filters(USER, None, true),
+            vec![
+                ("user_id", Filter::from(USER)),
+                ("sent", Filter::from(true)),
+                ("deleted", Filter::from(true)),
+                ("expunged", Filter::from(false)),
+            ]
+        );
+        assert_eq!(
             build_expunge_deleted_filters(USER, None, false),
             vec![
                 ("user_id", Filter::from(USER)),
@@ -1303,7 +1317,24 @@ mod tests {
             }
             assert!(query.sql.contains("m.deleted = TRUE AND m.expunged = FALSE"));
             assert!(query.sql.contains("AND x.mailbox = $3"));
+            assert!(query.sql.contains("x.uid as uid"));
             assert_eq!(query.values, params![USER, false, mailbox]);
+        }
+    }
+
+    #[test]
+    fn confines_an_inbox_drafts_or_junk_expunge_to_the_inbox_trees_scope_rows() {
+        // A copy filed into Trash is listed in INBOX flagged \Deleted; joining
+        // INBOX's scope rows leaves it to Trash. The predicate stays on top so
+        // an INBOX EXPUNGE does not collect quarantined spam.
+        for mailbox in [None, Some("Drafts"), Some("Junk")] {
+            let query = build_expunge_deleted_select_query(USER, mailbox, false);
+            assert!(query.sql.contains("JOIN mail_mailbox_uid x"));
+            assert!(query.sql.contains("AND x.mailbox = $3"));
+            assert!(query.sql.contains(&membership_expression(mailbox, false, "m.")));
+            assert!(query.sql.contains("m.deleted = TRUE AND m.expunged = FALSE"));
+            assert!(query.sql.contains("m.uid_domain as uid"));
+            assert_eq!(query.values, params![USER, false, "INBOX"]);
         }
     }
 

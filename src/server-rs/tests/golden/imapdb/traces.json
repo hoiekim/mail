@@ -26053,22 +26053,42 @@
     {
      "rows": [
       {
-       "next_uid": 31
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
       }
      ]
     },
     {
      "rows": [
       {
-       "uid": 2
+       "next_uid": 34
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333"
       },
       {
-       "uid": 7
+       "mail_id": "22222222-2222-4222-8222-222222222222"
       }
      ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -26079,22 +26099,18 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
-      "31",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "false",
-      "false"
+      "34",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
    "returned": [
-    2,
-    7
+    9,
+    4
    ]
   },
   {
@@ -26107,15 +26123,39 @@
     {
      "rows": [
       {
-       "next_uid": 32
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
       }
      ]
     },
     {
-     "rows": []
+     "rows": [
+      {
+       "next_uid": 35
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
+       "mail_id": "44444444-4444-4444-8444-444444444444"
+      }
+     ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -26126,16 +26166,35 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
-      "32",
+      "35",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
+     ]
+    }
+   ],
+   "returned": []
+  },
+  {
+   "fn": "expungeDeletedMails",
+   "args": {
+    "mailbox": null,
+    "sent": false
+   },
+   "script": [
+    {
+     "rows": []
+    }
+   ],
+   "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "true",
-      "false",
-      "false",
-      "false"
+      "INBOX"
      ]
     }
    ],
@@ -26156,6 +26215,52 @@
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    }
+   ],
+   "returned": []
+  },
+  {
+   "fn": "expungeDeletedMails",
+   "args": {
+    "mailbox": null,
+    "sent": false
+   },
+   "script": [
+    {
+     "rows": [
+      {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "error": {
+      "code": "08006",
+      "message": "scripted fault 08006"
+     }
+    }
+   ],
+   "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -26178,7 +26283,19 @@
     {
      "rows": [
       {
-       "next_uid": 33
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
+       "next_uid": 36
       }
      ]
     },
@@ -26191,6 +26308,14 @@
    ],
    "statements": [
     {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
+    {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
@@ -26200,16 +26325,12 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
-      "33",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "false",
-      "false"
+      "36",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
@@ -26973,22 +27094,42 @@
     {
      "rows": [
       {
-       "next_uid": 31
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
       }
      ]
     },
     {
      "rows": [
       {
-       "uid": 2
+       "next_uid": 34
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333"
       },
       {
-       "uid": 7
+       "mail_id": "22222222-2222-4222-8222-222222222222"
       }
      ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -26999,21 +27140,18 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
-      "31",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "true"
+      "34",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
    "returned": [
-    2,
-    7
+    9,
+    4
    ]
   },
   {
@@ -27026,15 +27164,39 @@
     {
      "rows": [
       {
-       "next_uid": 32
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
       }
      ]
     },
     {
-     "rows": []
+     "rows": [
+      {
+       "next_uid": 35
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
+       "mail_id": "44444444-4444-4444-8444-444444444444"
+      }
+     ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -27045,15 +27207,35 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
-      "32",
+      "35",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
+     ]
+    }
+   ],
+   "returned": []
+  },
+  {
+   "fn": "expungeDeletedMails",
+   "args": {
+    "mailbox": "Junk",
+    "sent": false
+   },
+   "script": [
+    {
+     "rows": []
+    }
+   ],
+   "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
       "11111111-1111-4111-8111-111111111111",
       "false",
-      "true",
-      "false",
-      "true"
+      "INBOX"
      ]
     }
    ],
@@ -27074,6 +27256,52 @@
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    }
+   ],
+   "returned": []
+  },
+  {
+   "fn": "expungeDeletedMails",
+   "args": {
+    "mailbox": "Junk",
+    "sent": false
+   },
+   "script": [
+    {
+     "rows": [
+      {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "error": {
+      "code": "08006",
+      "message": "scripted fault 08006"
+     }
+    }
+   ],
+   "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -27096,7 +27324,19 @@
     {
      "rows": [
       {
-       "next_uid": 33
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
+       "next_uid": 36
       }
      ]
     },
@@ -27109,6 +27349,14 @@
    ],
    "statements": [
     {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
+    {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
@@ -27118,15 +27366,12 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
-      "33",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "true"
+      "36",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
@@ -96885,6 +97130,18 @@
     {
      "rows": [
       {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
        "next_uid": 31
       }
      ]
@@ -96892,15 +97149,20 @@
     {
      "rows": [
       {
-       "uid": 2
-      },
-      {
-       "uid": 7
+       "mail_id": "22222222-2222-4222-8222-222222222222"
       }
      ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -96911,22 +97173,17 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
       "31",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "false",
-      "false"
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
    "returned": [
-    2,
-    7
+    4
    ]
   },
   {
@@ -96944,12 +97201,11 @@
    ],
    "statements": [
     {
-     "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
-      "modseq",
-      "",
-      "false"
+      "false",
+      "INBOX"
      ]
     }
    ],
@@ -97321,6 +97577,18 @@
     {
      "rows": [
       {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
        "next_uid": 31
       }
      ]
@@ -97328,15 +97596,20 @@
     {
      "rows": [
       {
-       "uid": 2
-      },
-      {
-       "uid": 7
+       "mail_id": "22222222-2222-4222-8222-222222222222"
       }
      ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -97347,22 +97620,17 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
       "31",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "false",
-      "false"
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
    "returned": [
-    2,
-    7
+    4
    ]
   },
   {
@@ -97380,12 +97648,11 @@
    ],
    "statements": [
     {
-     "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
-      "modseq",
-      "",
-      "false"
+      "false",
+      "INBOX"
      ]
     }
    ],
@@ -98663,6 +98930,18 @@
     {
      "rows": [
       {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
        "next_uid": 31
       }
      ]
@@ -98670,15 +98949,20 @@
     {
      "rows": [
       {
-       "uid": 2
-      },
-      {
-       "uid": 7
+       "mail_id": "22222222-2222-4222-8222-222222222222"
       }
      ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -98689,21 +98973,17 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND draft = $7 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
       "31",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "true"
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
    "returned": [
-    2,
-    7
+    4
    ]
   },
   {
@@ -98721,12 +99001,11 @@
    ],
    "statements": [
     {
-     "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
-      "modseq",
-      "",
-      "false"
+      "false",
+      "INBOX"
      ]
     }
    ],
@@ -99097,6 +99376,18 @@
     {
      "rows": [
       {
+       "mail_id": "22222222-2222-4222-8222-222222222222",
+       "uid": 4
+      },
+      {
+       "mail_id": "33333333-3333-4333-8333-333333333333",
+       "uid": 9
+      }
+     ]
+    },
+    {
+     "rows": [
+      {
        "next_uid": 31
       }
      ]
@@ -99104,15 +99395,20 @@
     {
      "rows": [
       {
-       "uid": 2
-      },
-      {
-       "uid": 7
+       "mail_id": "22222222-2222-4222-8222-222222222222"
       }
      ]
     }
    ],
    "statements": [
+    {
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+     "values": [
+      "11111111-1111-4111-8111-111111111111",
+      "false",
+      "INBOX"
+     ]
+    },
     {
      "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
      "values": [
@@ -99123,21 +99419,17 @@
      ]
     },
     {
-     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 RETURNING uid_domain as uid",
+     "sql": "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE mail_id IN ($3, $4) RETURNING mail_id",
      "values": [
       "true",
       "31",
-      "11111111-1111-4111-8111-111111111111",
-      "false",
-      "true",
-      "false",
-      "true"
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
      ]
     }
    ],
    "returned": [
-    2,
-    7
+    4
    ]
   },
   {
@@ -99155,12 +99447,11 @@
    ],
    "statements": [
     {
-     "sql": "\n    INSERT INTO mail_uid_counters (user_id, uid_kind, uid_scope, sent, last_uid)\n    VALUES ($1, $2, $3, $4, (\n      SELECT COALESCE(MAX(modseq), 0) + 1 FROM mails\n      WHERE user_id = $1\n    ))\n    ON CONFLICT (user_id, uid_kind, uid_scope, sent)\n    DO UPDATE SET last_uid = mail_uid_counters.last_uid + 1\n    RETURNING last_uid AS next_uid\n  ",
+     "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
      "values": [
       "11111111-1111-4111-8111-111111111111",
-      "modseq",
-      "",
-      "false"
+      "false",
+      "INBOX"
      ]
     }
    ],

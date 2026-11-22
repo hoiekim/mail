@@ -1230,11 +1230,11 @@
     "mailbox": null,
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = FALSE AND m.draft = FALSE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    null
+    "INBOX"
    ]
   },
   {
@@ -1242,7 +1242,7 @@
     "mailbox": null,
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
@@ -1254,11 +1254,11 @@
     "mailbox": "Drafts",
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "Drafts"
+    "INBOX"
    ]
   },
   {
@@ -1266,11 +1266,11 @@
     "mailbox": "Drafts",
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.draft = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
-    "Drafts"
+    null
    ]
   },
   {
@@ -1278,11 +1278,11 @@
     "mailbox": "Junk",
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "Junk"
+    "INBOX"
    ]
   },
   {
@@ -1290,11 +1290,11 @@
     "mailbox": "Junk",
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
-    "Junk"
+    null
    ]
   },
   {
@@ -1302,11 +1302,11 @@
     "mailbox": "junk",
     "sent": false
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "false",
-    "junk"
+    "INBOX"
    ]
   },
   {
@@ -1314,11 +1314,11 @@
     "mailbox": "junk",
     "sent": true
    },
-   "sql": "\n      SELECT m.mail_id as mail_id, x.uid as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
+   "sql": "\n      SELECT m.mail_id as mail_id, m.uid_domain as uid FROM mails m\n      JOIN mail_mailbox_uid x\n        ON x.user_id = m.user_id\n        AND x.mailbox = $3\n        AND x.mail_id = m.mail_id\n      WHERE m.user_id = $1 AND m.sent = $2\n        AND m.deleted = TRUE AND m.expunged = FALSE AND m.is_spam = TRUE\n    ",
    "values": [
     "11111111-1111-4111-8111-111111111111",
     "true",
-    "junk"
+    null
    ]
   },
   {

@@ -799,7 +799,9 @@ for (const [mailbox, sent] of SCOPES) {
   const args = { mailbox, sent };
   const expunge = () => repository.expungeDeletedMails(USER, mailbox, sent);
   const domainScoped = mailbox === null || mailbox === "Junk";
-  if (domainScoped) {
+  // Only the unified Sent view expunges with one UPDATE; INBOX and Junk join
+  // the INBOX tree's scope rows, as a mapped box joins its own.
+  if (domainScoped && sent) {
     await traced("repository", "expungeDeletedMails", args, [reserved(31), rows({ uid: 2 }, { uid: 7 })], expunge);
     await traced("repository", "expungeDeletedMails", args, [reserved(32), rows()], expunge);
     await traced("repository", "expungeDeletedMails", args, [fault("08006")], expunge);
@@ -1024,11 +1026,13 @@ for (const box of BOXES) {
   const domainScoped =
     box.toUpperCase() === "INBOX" || box === "Sent Messages" || ["drafts", "junk"].includes(box.toLowerCase());
   const found = rows({ mail_id: MAIL, uid: 4 }, { mail_id: OTHER_MAIL, uid: 9 });
+  // EXPUNGE takes the one-UPDATE branch on the unified Sent view only: INBOX
+  // and the utility views join the INBOX tree's scope rows.
   await traced(
     "store",
     "expunge",
     { box },
-    domainScoped ? [reserved(31), rows({ uid: 2 }, { uid: 7 })] : [found, reserved(31), rows({ mail_id: MAIL })],
+    box === "Sent Messages" ? [reserved(31), rows({ uid: 2 }, { uid: 7 })] : [found, reserved(31), rows({ mail_id: MAIL })],
     () => store.expunge(box)
   );
   await traced("store", "expunge", { box }, [fault("08006")], () => store.expunge(box));
