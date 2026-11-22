@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
+use super::mime_types;
 use super::respond::{Body, Response};
 use crate::js;
 
@@ -20,44 +21,14 @@ fn has_parent_segment(decoded_path: &str) -> bool {
     decoded_path.split(['/', '\\']).any(|segment| segment == "..")
 }
 
-/// The content type the Bun server gives a file of this name.
+/// The content type the Bun server gives a file of this name: by the text
+/// after the last dot, in any letter case. A name that only starts with a
+/// dot has no extension.
 pub fn content_type_of(path: &Path) -> &'static str {
-    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    match extension.as_str() {
-        "html" | "htm" => "text/html;charset=utf-8",
-        "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx" => "text/javascript;charset=utf-8",
-        "css" => "text/css;charset=utf-8",
-        "json" | "map" => "application/json;charset=utf-8",
-        "txt" => "text/plain;charset=utf-8",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "svg" => "image/svg+xml",
-        "ico" => "image/x-icon",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "md" => "text/markdown",
-        "xml" => "application/xml",
-        "pdf" => "application/pdf",
-        "woff" => "font/woff",
-        "woff2" => "font/woff2",
-        "ttf" => "font/ttf",
-        "otf" => "font/otf",
-        "eot" => "application/vnd.ms-fontobject",
-        "wasm" => "application/wasm",
-        "webmanifest" => "application/manifest+json",
-        "manifest" => "text/cache-manifest",
-        "mp3" => "audio/mpeg",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        "ogg" => "audio/ogg",
-        "wav" => "audio/x-wav",
-        "zip" => "application/zip",
-        "gz" => "application/gzip",
-        "csv" => "text/csv",
-        "yaml" | "yml" => "text/yaml",
-        "toml" => "application/toml",
-        _ => "application/octet-stream",
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => mime_types::content_type_for_extension(&name[dot + 1..]),
+        _ => mime_types::DEFAULT_TYPE,
     }
 }
 

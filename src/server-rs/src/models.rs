@@ -101,19 +101,12 @@ pub struct SsoSession {
     pub recheck_at: DateTime<Utc>,
 }
 
-/// `SameSite` as the session cookie stores it.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SameSite {
-    Strict,
-    Lax,
-    None,
-    /// `true` in the stored JSON, which serializes as `Strict`.
-    True,
-    /// `false` or absent: no attribute.
-    Unset,
-}
-
 /// A session cookie's attributes while the server handles a request.
+///
+/// `secure` and `same_site` are stored as JSON text and held here as the
+/// values that text parses to, whatever they are: a row is written back the
+/// way it was read. Anything truthy in `secure` means a `Secure` cookie; of
+/// `same_site` only `true`, `"strict"`, `"lax"` and `"none"` name an attribute.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeCookie {
     pub original_max_age: Option<i64>,
@@ -123,8 +116,29 @@ pub struct RuntimeCookie {
     pub http_only: Option<bool>,
     pub path: Option<String>,
     pub domain: Option<String>,
-    pub secure: Option<bool>,
-    pub same_site: SameSite,
+    pub secure: Option<serde_json::Value>,
+    pub same_site: Option<serde_json::Value>,
+}
+
+impl RuntimeCookie {
+    /// Whether the cookie carries the `Secure` attribute.
+    pub fn is_secure(&self) -> bool {
+        self.secure.as_ref().is_some_and(crate::js::is_truthy)
+    }
+
+    /// The value of the `SameSite` attribute, when the cookie has one.
+    pub fn same_site_attribute(&self) -> Option<&'static str> {
+        match self.same_site.as_ref()? {
+            serde_json::Value::Bool(true) => Some("Strict"),
+            serde_json::Value::String(value) => match value.as_str() {
+                "strict" => Some("Strict"),
+                "lax" => Some("Lax"),
+                "none" => Some("None"),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 /// A stored session, as the store hands it to the request pipeline.

@@ -15,6 +15,7 @@ use super::route::{ApiResponse, Reply, Route};
 use crate::alarm::spawn_alarm_keyed;
 use crate::http::rate_limit::{get_client_ip, mailgun_events_limiter};
 use crate::http::request::HttpRequest;
+use crate::js::{NonFinite, PathKey};
 use crate::postgres::repositories::mailgun_events::{insert_mailgun_event, MailgunEvent};
 use crate::{env, js, logger};
 
@@ -40,7 +41,7 @@ fn hex_digit(byte: u8) -> Option<u8> {
 fn verify_signature(signature: Option<&Value>, key: &str) -> bool {
     // The body is caller-supplied JSON: anything that is not three non-empty
     // strings is refused before any of it is used.
-    let Some(sig) = signature.filter(|value| is_truthy(value)) else {
+    let Some(sig) = signature.filter(|value| js::is_truthy(value)) else {
         return false;
     };
     let field = |name: &str| sig.get(name).and_then(Value::as_str).filter(|value| !value.is_empty());
@@ -58,17 +59,6 @@ fn verify_signature(signature: Option<&Value>, key: &str) -> bool {
     let expected = mac.finalize().into_bytes();
     let provided = lenient_hex(signature);
     provided.len() == expected.len() && bool::from(provided.ct_eq(&expected))
-}
-
-/// JavaScript truthiness of a JSON value.
-fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
 }
 
 const KNOWN_MAILGUN_EVENTS: [&str; 11] = [
@@ -121,33 +111,47 @@ fn safe_occurred_at(raw: Option<&Value>) -> String {
     }
 }
 
-fn js_number(value: &Value) -> String {
-    match value.as_i64() {
-        Some(integer) => integer.to_string(),
-        None => js::number_to_string(value.as_f64().unwrap_or(f64::NAN)),
+/// `String(value)` for the JSON value at `path` of the request body, as a
+/// template string would print it. `non_finite` names the numbers of the
+/// body that were too large for a double: `null` in the value, `Infinity`
+/// in JavaScript.
+fn js_string(value: &Value, path: &mut Vec<PathKey>, non_finite: &[NonFinite]) -> String {
+    if let Some(infinity) = js::non_finite_at(non_finite, path) {
+        return infinity.to_string();
     }
-}
-
-/// `String(value)` for a JSON value, as a template string would print it.
-fn js_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(flag) => flag.to_string(),
-        Value::Number(_) => js_number(value),
+        Value::Number(_) => js::json_number_to_string(value).unwrap_or_default(),
         Value::String(text) => text.clone(),
-        Value::Array(items) => items
-            .iter()
-            .map(|item| if item.is_null() { String::new() } else { js_string(item) })
-            .collect::<Vec<_>>()
-            .join(","),
+        // An array joins its items with commas; `null` among them prints as nothing.
+        Value::Array(items) => {
+            let mut printed = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                path.push(PathKey::Index(index));
+                let absent = item.is_null() && js::non_finite_at(non_finite, path).is_none();
+                printed.push(if absent { String::new() } else { js_string(item, path, non_finite) });
+                path.pop();
+            }
+            printed.join(",")
+        }
         Value::Object(_) => "[object Object]".to_string(),
     }
 }
 
-fn extract_reason(data: &Value) -> Option<String> {
+/// The path of `event-data.delivery-status.code` in the request body.
+fn code_path() -> Vec<PathKey> {
+    ["event-data", "delivery-status", "code"].iter().map(|key| PathKey::Key(key.to_string())).collect()
+}
+
+fn extract_reason(data: &Value, non_finite: &[NonFinite]) -> Option<String> {
     // Unsigned JSON: anything but an object with string fields reads as absent.
     let status = data.get("delivery-status").filter(|value| value.is_object() || value.is_array())?;
-    let code = status.get("code").filter(|value| !value.is_null()).map(js_string);
+    let mut path = code_path();
+    let code = status
+        .get("code")
+        .filter(|value| !value.is_null() || js::non_finite_at(non_finite, &path).is_some())
+        .map(|value| js_string(value, &mut path, non_finite));
     let text = |key: &str| status.get(key).and_then(Value::as_str).map(str::to_string);
     let parts: Vec<String> = [code, text("message"), text("description")]
         .into_iter()
@@ -158,9 +162,10 @@ fn extract_reason(data: &Value) -> Option<String> {
 }
 
 /// The unsigned `event-data` object for the JSONB column, or a redaction
-/// marker when it is larger than any real event.
+/// marker when it is larger than any real event. The size is that of the
+/// data as `JSON.stringify` writes it, in bytes.
 fn bounded_raw(data: &Value) -> Value {
-    if data.to_string().len() <= MAX_RAW_BYTES {
+    if js::json_stringify(data).len() <= MAX_RAW_BYTES {
         data.clone()
     } else {
         json!({ "redacted": format!("event-data exceeded {MAX_RAW_BYTES} bytes") })
@@ -181,7 +186,7 @@ async fn post_mailgun_events(req: &mut HttpRequest) -> anyhow::Result<Reply> {
 
     const MALFORMED: &str = "Malformed event payload";
     let data = req.body.get("event-data").cloned().unwrap_or(Value::Null);
-    let truthy = |key: &str| data.get(key).is_some_and(is_truthy);
+    let truthy = |key: &str| data.get(key).is_some_and(js::is_truthy);
     if !truthy("id") || !truthy("event") {
         return Ok(ApiResponse::failed(MALFORMED).into());
     }
@@ -208,7 +213,7 @@ async fn post_mailgun_events(req: &mut HttpRequest) -> anyhow::Result<Reply> {
     if over_cap(raw_message_id, MAX_MESSAGE_ID_LENGTH) {
         return Ok(ApiResponse::failed(MALFORMED).into());
     }
-    let reason = extract_reason(&data);
+    let reason = extract_reason(&data, &req.non_finite);
     if reason.as_deref().is_some_and(|reason| js::utf16_len(reason) > MAX_REASON_LENGTH) {
         return Ok(ApiResponse::failed(MALFORMED).into());
     }
@@ -271,10 +276,39 @@ mod tests {
     #[test]
     fn reasons() {
         let data = json!({ "delivery-status": { "code": 550, "message": "No such user", "description": " " } });
-        assert_eq!(extract_reason(&data).as_deref(), Some("550 · No such user"));
-        assert_eq!(extract_reason(&json!({ "delivery-status": "nope" })), None);
-        assert_eq!(extract_reason(&json!({ "delivery-status": { "message": 5 } })), None);
-        assert_eq!(extract_reason(&json!({})), None);
+        assert_eq!(extract_reason(&data, &[]).as_deref(), Some("550 · No such user"));
+        assert_eq!(extract_reason(&json!({ "delivery-status": "nope" }), &[]), None);
+        assert_eq!(extract_reason(&json!({ "delivery-status": { "message": 5 } }), &[]), None);
+        assert_eq!(extract_reason(&json!({}), &[]), None);
+    }
+
+    #[test]
+    fn codes_print_as_javascript_prints_them() {
+        let reason = |body: &str| {
+            let parsed = js::json_parse_full(body).unwrap();
+            extract_reason(&parsed.value["event-data"], &parsed.non_finite)
+        };
+        let with_code = |code: &str| format!(r#"{{"event-data":{{"delivery-status":{{"code":{code}}}}}}}"#);
+        assert_eq!(reason(&with_code("1e21")).as_deref(), Some("1e+21"));
+        assert_eq!(reason(&with_code("550.0")).as_deref(), Some("550"));
+        assert_eq!(reason(&with_code("[1,[2,null],null,\"x\"]")).as_deref(), Some("1,2,,,x"));
+        assert_eq!(reason(&with_code("{\"smtp\":550}")).as_deref(), Some("[object Object]"));
+        assert_eq!(reason(&with_code("null")), None);
+        // Too large for a double: Infinity, also inside an array.
+        assert_eq!(reason(&with_code("1e400")).as_deref(), Some("Infinity"));
+        assert_eq!(reason(&with_code("-1e400")).as_deref(), Some("-Infinity"));
+        assert_eq!(reason(&with_code("[1e400, 2.50, -0]")).as_deref(), Some("Infinity,2.5,0"));
+    }
+
+    #[test]
+    fn the_raw_copy_is_measured_as_javascript_writes_it() {
+        // 1e21 is "1e+21" to JSON.stringify: one byte more than serde_json's "1e21".
+        let pad = "x".repeat(MAX_RAW_BYTES - r#"{"n":1e+21,"pad":""}"#.len());
+        let fits = js::json_parse(&format!(r#"{{"n":1e21,"pad":"{pad}"}}"#)).unwrap();
+        assert_eq!(js::json_stringify(&fits).len(), MAX_RAW_BYTES);
+        assert_eq!(bounded_raw(&fits), fits);
+        let over = js::json_parse(&format!(r#"{{"n":1e21,"pad":"{pad}x"}}"#)).unwrap();
+        assert_eq!(bounded_raw(&over), json!({ "redacted": "event-data exceeded 16384 bytes" }));
     }
 
     #[test]
