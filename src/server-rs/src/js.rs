@@ -6,7 +6,7 @@
 //! client can observe has to come out the same here, so those built-ins are
 //! reproduced in one place instead of approximated at each call site.
 
-use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, SecondsFormat, TimeZone, Timelike, Utc};
 
 /// `string.length`: the number of UTF-16 code units.
 pub fn utf16_len(s: &str) -> usize {
@@ -89,241 +89,14 @@ pub fn utc_string(date: &DateTime<Utc>) -> String {
     )
 }
 
-fn digits(s: &str, n: usize) -> Option<(i64, &str)> {
-    if s.len() < n || !s.as_bytes()[..n].iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    Some((s[..n].parse().ok()?, &s[n..]))
-}
-
-fn utc_ms(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64) -> Option<i64> {
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
-        return None;
-    }
-    // 24:00:00.000 is the one hour-24 spelling ECMAScript allows.
-    if h > 24 || (h == 24 && (mi != 0 || s != 0 || ms != 0)) || mi > 59 || s > 59 {
-        return None;
-    }
-    let date = NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32)?;
-    let days = date.signed_duration_since(NaiveDate::from_ymd_opt(1970, 1, 1)?).num_days();
-    Some(days * 86_400_000 + h * 3_600_000 + mi * 60_000 + s * 1000 + ms)
-}
-
-/// The ECMAScript date-time string format: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`,
-/// each optionally followed by `THH:mm`, `THH:mm:ss`, `THH:mm:ss.sss` and an
-/// offset (`Z`, `+HH:mm`). A date-only form is UTC; a date-time with no offset
-/// is local time, and this server runs in UTC.
-fn parse_iso(input: &str) -> Option<i64> {
-    let (sign, rest) = match input.as_bytes().first()? {
-        b'+' => (1, &input[1..]),
-        b'-' => (-1, &input[1..]),
-        _ => (0, input),
-    };
-    let (year, mut rest) = if sign == 0 {
-        digits(rest, 4)?
-    } else {
-        let (y, r) = digits(rest, 6)?;
-        if sign == -1 && y == 0 {
-            return None;
-        }
-        (y * sign, r)
-    };
-    let (mut month, mut day) = (1, 1);
-    if let Some(r) = rest.strip_prefix('-') {
-        let (m, r) = digits(r, 2)?;
-        month = m;
-        rest = r;
-        if let Some(r) = rest.strip_prefix('-') {
-            let (d, r) = digits(r, 2)?;
-            day = d;
-            rest = r;
-        }
-    }
-    if rest.is_empty() {
-        return utc_ms(year, month, day, 0, 0, 0, 0);
-    }
-    let rest = rest.strip_prefix('T').or_else(|| rest.strip_prefix('t'))?;
-    let (hour, rest) = digits(rest, 2)?;
-    let rest = rest.strip_prefix(':')?;
-    let (minute, mut rest) = digits(rest, 2)?;
-    let (mut second, mut millis) = (0, 0);
-    if let Some(r) = rest.strip_prefix(':') {
-        let (s, r) = digits(r, 2)?;
-        second = s;
-        rest = r;
-        if let Some(r) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(',')) {
-            let count = r.bytes().take_while(u8::is_ascii_digit).count();
-            if count == 0 {
-                return None;
-            }
-            let fraction = format!("{:0<3}", &r[..count.min(3)]);
-            millis = fraction.parse().ok()?;
-            rest = &r[count..];
-        }
-    }
-    let offset_minutes = match rest {
-        "" => 0,
-        "Z" | "z" => 0,
-        _ => {
-            let sign = match rest.as_bytes()[0] {
-                b'+' => 1,
-                b'-' => -1,
-                _ => return None,
-            };
-            let (oh, r) = digits(&rest[1..], 2)?;
-            let r = r.strip_prefix(':').unwrap_or(r);
-            let (om, r) = if r.is_empty() { (0, r) } else { digits(r, 2)? };
-            if !r.is_empty() || oh > 23 || om > 59 {
-                return None;
-            }
-            sign * (oh * 60 + om)
-        }
-    };
-    Some(utc_ms(year, month, day, hour, minute, second, millis)? - offset_minutes * 60_000)
-}
-
-fn month_from_name(word: &str) -> Option<i64> {
-    let lower = word.to_ascii_lowercase();
-    if lower.len() < 3 {
-        return None;
-    }
-    MONTHS
-        .iter()
-        .position(|m| lower.starts_with(&m.to_ascii_lowercase()))
-        .map(|i| i as i64 + 1)
-}
-
-/// The legacy formats `Date.parse` falls back to, as far as real clients send
-/// them: RFC 2822 / `toUTCString()` (`Sat, 21 Nov 2026 05:53:08 GMT`,
-/// `21 Nov 2026 05:53:08 +0100`) and `toString()`-style
-/// (`Nov 21 2026 05:53:08 GMT+0100`, `November 21, 2026`).
-fn parse_legacy(input: &str) -> Option<i64> {
-    let cleaned: String = input
-        .chars()
-        .map(|c| if c == ',' { ' ' } else { c })
-        .collect();
-    // Drop a trailing parenthesized zone name such as "(Coordinated Universal Time)".
-    let cleaned = match cleaned.find('(') {
-        Some(at) => cleaned[..at].to_string(),
-        None => cleaned,
-    };
-    let mut words: Vec<&str> = cleaned.split_whitespace().collect();
-    if words.is_empty() {
-        return None;
-    }
-    // A leading weekday name carries no information.
-    if words[0].len() >= 3
-        && WEEKDAYS
-            .iter()
-            .any(|d| words[0].to_ascii_lowercase().starts_with(&d.to_ascii_lowercase()))
-        && month_from_name(words[0]).is_none()
-    {
-        words.remove(0);
-    }
-    let (mut day, mut month, mut year) = (None, None, None);
-    let mut time: Option<(i64, i64, i64)> = None;
-    let mut offset_minutes: Option<i64> = None;
-    let mut pm: Option<bool> = None;
-    for word in words {
-        let upper = word.to_ascii_uppercase();
-        if word.contains(':') && time.is_none() {
-            let (clock, zone) = match word.find(|c| c == '+' || c == '-') {
-                Some(at) => (&word[..at], Some(&word[at..])),
-                None => (word, None),
-            };
-            let parts: Vec<&str> = clock.split(':').collect();
-            if parts.len() < 2 || parts.len() > 3 {
-                return None;
-            }
-            let h = parts[0].parse().ok()?;
-            let m = parts[1].parse().ok()?;
-            let s = if parts.len() == 3 { parts[2].parse().ok()? } else { 0 };
-            time = Some((h, m, s));
-            if let Some(zone) = zone {
-                offset_minutes = Some(parse_zone_offset(zone)?);
-            }
-        } else if upper == "AM" || upper == "PM" {
-            pm = Some(upper == "PM");
-        } else if upper == "GMT" || upper == "UTC" || upper == "UT" || upper == "Z" {
-            offset_minutes.get_or_insert(0);
-        } else if let Some(zone) = upper
-            .strip_prefix("GMT")
-            .or_else(|| upper.strip_prefix("UTC"))
-            .filter(|rest| rest.starts_with('+') || rest.starts_with('-'))
-        {
-            offset_minutes = Some(parse_zone_offset(zone)?);
-        } else if (word.starts_with('+') || word.starts_with('-')) && time.is_some() {
-            offset_minutes = Some(parse_zone_offset(word)?);
-        } else if let Some(m) = month_from_name(word) {
-            if month.is_some() {
-                return None;
-            }
-            month = Some(m);
-        } else if word.bytes().all(|b| b.is_ascii_digit()) {
-            let n: i64 = word.parse().ok()?;
-            if word.len() >= 3 || (day.is_some() && year.is_none()) {
-                if year.is_some() {
-                    return None;
-                }
-                year = Some(n);
-            } else if day.is_none() {
-                day = Some(n);
-            } else {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    let (mut h, mi, s) = time.unwrap_or((0, 0, 0));
-    if let Some(pm) = pm {
-        if !(1..=12).contains(&h) {
-            return None;
-        }
-        h = h % 12 + if pm { 12 } else { 0 };
-    }
-    let mut year = year?;
-    if (0..50).contains(&year) {
-        year += 2000;
-    } else if (50..100).contains(&year) {
-        year += 1900;
-    }
-    let ms = utc_ms(year, month?, day?, h, mi, s, 0)?;
-    Some(ms - offset_minutes.unwrap_or(0) * 60_000)
-}
-
-fn parse_zone_offset(zone: &str) -> Option<i64> {
-    let sign = match zone.as_bytes().first()? {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
-    let body: String = zone[1..].chars().filter(|c| *c != ':').collect();
-    if body.is_empty() || !body.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let (h, m) = match body.len() {
-        1 | 2 => (body.parse::<i64>().ok()?, 0),
-        3 => (body[..1].parse().ok()?, body[1..].parse().ok()?),
-        4 => (body[..2].parse().ok()?, body[2..].parse().ok()?),
-        _ => return None,
-    };
-    Some(sign * (h * 60 + m))
-}
-
 /// `Date.parse(input)`: milliseconds since the epoch, or `None` for NaN.
 ///
-/// Covers the ECMAScript format and the RFC 2822 / `Date.prototype.toString`
-/// shapes. JavaScriptCore accepts further legacy spellings that no client of
-/// this API sends; those read as invalid here.
+/// Bun's `Date.parse` is lenient well beyond the ECMAScript format
+/// (`"5"` is 1 May 2001, `1-Jan-2026` is a date). The exact rules live with
+/// the IMAP date handling, where they were verified against the Bun runtime
+/// on thousands of inputs.
 pub fn date_parse(input: &str) -> Option<i64> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let ms = parse_iso(trimmed).or_else(|| parse_legacy(trimmed))?;
-    // ECMAScript's time range is ±8.64e15 ms around the epoch.
-    (ms.abs() <= 8_640_000_000_000_000).then_some(ms)
+    crate::imap::util::date_parse(input)
 }
 
 fn is_uri_unreserved(byte: u8) -> bool {
@@ -396,7 +169,8 @@ pub fn decode_uri_component(value: &str) -> Option<String> {
 /// `Number(value)` for a string: whitespace is trimmed, an empty string is 0,
 /// and anything that is not a complete numeric literal is NaN.
 pub fn number_from_str(value: &str) -> f64 {
-    let trimmed = value.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    // JavaScript's own whitespace set: U+0085, which Rust counts, is not in it.
+    let trimmed = trim(value);
     if trimmed.is_empty() {
         return 0.0;
     }
@@ -424,29 +198,145 @@ pub fn number_from_str(value: &str) -> f64 {
     trimmed.parse().unwrap_or(f64::NAN)
 }
 
-/// `String(number)` for the values this server formats: integers print
-/// without a fraction, everything else as the shortest round-trip decimal.
+/// `String(number)`: ECMAScript's Number::toString. The shortest digits that
+/// read back as the same double, written plainly while the decimal point
+/// falls within 21 digits to the left or 6 zeros to the right, and with an
+/// exponent (`1e+21`, `1e-7`) beyond that.
 pub fn number_to_string(value: f64) -> String {
     if value.is_nan() {
         return "NaN".into();
     }
+    if value == 0.0 {
+        return "0".into();
+    }
     if value.is_infinite() {
         return if value > 0.0 { "Infinity".into() } else { "-Infinity".into() };
     }
-    if value == value.trunc() && value.abs() < 1e21 {
-        return format!("{}", value as i128);
+    // `{:e}` prints the shortest round-trip digits as `d.ddde<exponent>`.
+    let scientific = format!("{:e}", value.abs());
+    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let exponent: i32 = exponent.parse().unwrap_or(0);
+    let count = digits.len() as i32;
+    // Where the decimal point sits, counted in digits from the left.
+    let point = exponent + 1;
+
+    let mut out = String::new();
+    if value < 0.0 {
+        out.push('-');
     }
-    let mut buffer = ryu_like(value);
-    if let Some(stripped) = buffer.strip_suffix(".0") {
-        buffer = stripped.to_string();
+    if count <= point && point <= 21 {
+        out.push_str(&digits);
+        out.extend(std::iter::repeat('0').take((point - count) as usize));
+    } else if 0 < point && point <= 21 {
+        out.push_str(&digits[..point as usize]);
+        out.push('.');
+        out.push_str(&digits[point as usize..]);
+    } else if -6 < point && point <= 0 {
+        out.push_str("0.");
+        out.extend(std::iter::repeat('0').take((-point) as usize));
+        out.push_str(&digits);
+    } else {
+        let power = point - 1;
+        out.push_str(&digits[..1]);
+        if count > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('e');
+        out.push(if power < 0 { '-' } else { '+' });
+        out.push_str(&power.abs().to_string());
     }
-    buffer
+    out
 }
 
-fn ryu_like(value: f64) -> String {
-    // `{}` on f64 is the shortest representation that round-trips, which is
-    // also what ECMAScript's Number::toString produces for ordinary magnitudes.
-    format!("{value}")
+/// `JSON.stringify(text)` for a string given as UTF-16 code units, which may
+/// hold a lone surrogate (the half a `slice` left of a character outside the
+/// basic plane). JavaScript writes such a half as a `\udXXX` escape, and so
+/// does this; a Rust `String` could not carry it at all.
+pub fn json_quote_utf16(units: &[u16]) -> String {
+    let mut out = String::with_capacity(units.len() + 2);
+    out.push('"');
+    for decoded in char::decode_utf16(units.iter().copied()) {
+        match decoded {
+            Ok('"') => out.push_str("\\\""),
+            Ok('\\') => out.push_str("\\\\"),
+            Ok('\u{8}') => out.push_str("\\b"),
+            Ok('\u{c}') => out.push_str("\\f"),
+            Ok('\n') => out.push_str("\\n"),
+            Ok('\r') => out.push_str("\\r"),
+            Ok('\t') => out.push_str("\\t"),
+            Ok(c) if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            Ok(c) => out.push(c),
+            Err(lone) => out.push_str(&format!("\\u{:04x}", lone.unpaired_surrogate())),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `JSON.stringify(value)`: compact, with numbers written as JavaScript
+/// writes them (`1e+21` where `serde_json` writes `1e21`), so the text is as
+/// long as the Bun server's wherever a length is measured.
+pub fn json_stringify(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    write_json(value, &mut out);
+    out
+}
+
+/// JavaScript truthiness of a JSON value: `null`, `false`, `0` and `""` are
+/// falsy, everything else — every array and object included — is truthy.
+pub fn is_truthy(value: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+/// `String(value)` for a JSON number, or `None` for any other value.
+pub fn json_number_to_string(value: &serde_json::Value) -> Option<String> {
+    let number = value.as_number()?;
+    Some(match (number.as_i64(), number.as_u64()) {
+        (Some(integer), _) => integer.to_string(),
+        (None, Some(integer)) => number_to_string(integer as f64),
+        (None, None) => number_to_string(number.as_f64().unwrap_or(f64::NAN)),
+    })
+}
+
+fn write_json(value: &serde_json::Value, out: &mut String) {
+    use serde_json::Value;
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Number(_) => out.push_str(&json_number_to_string(value).unwrap_or_default()),
+        Value::String(text) => out.push_str(&serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into())),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_json(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            out.push('{');
+            for (index, (key, item)) in map.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).unwrap_or_else(|_| "\"\"".into()));
+                out.push(':');
+                write_json(item, out);
+            }
+            out.push('}');
+        }
+    }
 }
 
 #[cfg(test)]
@@ -499,15 +389,112 @@ mod tests {
     }
 
     #[test]
-    fn numbers() {
+    fn numbers_from_text() {
         assert_eq!(number_from_str(" 12 "), 12.0);
         assert_eq!(number_from_str(""), 0.0);
+        assert_eq!(number_from_str(" \t\n"), 0.0);
         assert!(number_from_str("12abc").is_nan());
         assert!(number_from_str("nan").is_nan());
+        assert!(number_from_str("infinity").is_nan());
         assert_eq!(number_from_str("0x10"), 16.0);
-        assert_eq!(number_to_string(3.0), "3");
-        assert_eq!(number_to_string(0.5), "0.5");
+        assert_eq!(number_from_str("0b101"), 5.0);
+        assert!(number_from_str("0x").is_nan());
+        assert!(number_from_str("-0x10").is_nan());
+        assert_eq!(number_from_str("+5"), 5.0);
+        assert_eq!(number_from_str("5."), 5.0);
+        assert_eq!(number_from_str(".5e1"), 5.0);
+        assert!(number_from_str(".").is_nan());
+        assert!(number_from_str("1e").is_nan());
+        // The whitespace JavaScript trims: a no-break space and a byte order
+        // mark are in it, U+0085 (which Rust calls whitespace) is not.
+        assert_eq!(number_from_str("\u{a0}7\u{feff}"), 7.0);
+        assert!(number_from_str("\u{85}7").is_nan());
     }
+
+    #[test]
+    fn numbers_to_text() {
+        for (value, text) in [
+            (3.0, "3"),
+            (0.5, "0.5"),
+            (-0.0, "0"),
+            (-1.5, "-1.5"),
+            (100.0, "100"),
+            (1e21, "1e+21"),
+            (1e20, "100000000000000000000"),
+            (123456789012345680000.0, "123456789012345680000"),
+            (1.5e300, "1.5e+300"),
+            (1e-7, "1e-7"),
+            (0.000001, "0.000001"),
+            (1.25e-7, "1.25e-7"),
+            (0.30000000000000004, "0.30000000000000004"),
+            (9007199254740993.0, "9007199254740992"),
+            (5e-324, "5e-324"),
+            (1.7976931348623157e308, "1.7976931348623157e+308"),
+            (-2.5e-10, "-2.5e-10"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+        ] {
+            assert_eq!(number_to_string(value), text, "{value:e}");
+        }
+        assert_eq!(number_to_string(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn quoting_utf16() {
+        let units: Vec<u16> = "a\"b\\c\n\u{1}é😀".encode_utf16().collect();
+        assert_eq!(json_quote_utf16(&units), "\"a\\\"b\\\\c\\n\\u0001é😀\"");
+        // A cut through the middle of a character leaves its first half.
+        let cut: Vec<u16> = "x😀".encode_utf16().take(2).collect();
+        assert_eq!(json_quote_utf16(&cut), "\"x\\ud83d\"");
+        assert_eq!(json_quote_utf16(&[0xdc00, 0x61]), "\"\\udc00a\"");
+    }
+
+    #[test]
+    fn stringify_like_javascript() {
+        let value = json_parse(r#"{"a":1.0,"b":1e21,"c":1e-7,"d":[1.5,-0.0,true,null,"x\n"],"e":123456789012345678901}"#).unwrap();
+        assert_eq!(
+            json_stringify(&value),
+            r#"{"a":1,"b":1e+21,"c":1e-7,"d":[1.5,0,true,null,"x\n"],"e":123456789012345680000}"#
+        );
+    }
+}
+
+/// One step into a JSON document: an object's key or an array's index.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathKey {
+    Key(String),
+    Index(usize),
+}
+
+/// A number in a JSON text that is outside the range of a double. JavaScript
+/// reads it as `Infinity` or `-Infinity`, which JSON cannot carry: the parsed
+/// value holds `null` at `path`, and this records what was there.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NonFinite {
+    pub path: Vec<PathKey>,
+    pub negative: bool,
+}
+
+/// What [`json_parse_full`] makes of a JSON text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedJson {
+    pub value: serde_json::Value,
+    pub non_finite: Vec<NonFinite>,
+}
+
+impl ParsedJson {
+    /// `Infinity` or `-Infinity` when the number at `path` was one, as text.
+    pub fn non_finite_at(&self, path: &[PathKey]) -> Option<&'static str> {
+        non_finite_at(&self.non_finite, path)
+    }
+}
+
+/// `Infinity` or `-Infinity` when `non_finite` records one at `path`.
+pub fn non_finite_at(non_finite: &[NonFinite], path: &[PathKey]) -> Option<&'static str> {
+    non_finite
+        .iter()
+        .find(|entry| entry.path == path)
+        .map(|entry| if entry.negative { "-Infinity" } else { "Infinity" })
 }
 
 /// `JSON.parse(text)`, or `None` where it throws.
@@ -517,21 +504,39 @@ mod tests {
 /// an escaped lone surrogate, and nesting past 128 levels. This parser takes
 /// what JavaScript takes. An integral number is stored as an integer so it
 /// prints without a fraction, as JavaScript prints it; a number outside the
-/// double range, which JSON cannot carry, is stored as `null`. Nesting is
-/// capped far above anything a client sends, to keep stack use bounded.
+/// double range, which JSON cannot carry, is stored as `null` (see
+/// [`json_parse_full`] for where they were).
+///
+/// Nesting may be as deep as the text is long: the parser keeps its own stack
+/// rather than recursing. What it builds stops at [`JSON_BUILD_DEPTH`] levels
+/// — anything nested deeper is checked for syntax and then held as `null` —
+/// because a value is dropped, cloned and serialized recursively.
 pub fn json_parse(text: &str) -> Option<serde_json::Value> {
-    let mut parser = JsonParser { bytes: text.as_bytes(), at: 0 };
-    parser.skip_whitespace();
-    let value = parser.value(0)?;
-    parser.skip_whitespace();
-    (parser.at == parser.bytes.len()).then_some(value)
+    json_parse_full(text).map(|parsed| parsed.value)
 }
 
-const JSON_MAX_DEPTH: usize = 4096;
+/// [`json_parse`], also reporting the numbers that were out of range.
+pub fn json_parse_full(text: &str) -> Option<ParsedJson> {
+    let mut parser = JsonParser { bytes: text.as_bytes(), at: 0, non_finite: Vec::new() };
+    let value = parser.document()?;
+    Some(ParsedJson { value, non_finite: parser.non_finite })
+}
+
+/// How many levels of nesting a parsed value keeps.
+pub const JSON_BUILD_DEPTH: usize = 4096;
+
+/// A container the parser is in the middle of.
+enum Frame {
+    Array(Vec<serde_json::Value>),
+    /// The members so far, the key whose value is being read, and how many
+    /// out-of-range numbers had been recorded when that value began.
+    Object(serde_json::Map<String, serde_json::Value>, String, usize),
+}
 
 struct JsonParser<'a> {
     bytes: &'a [u8],
     at: usize,
+    non_finite: Vec<NonFinite>,
 }
 
 impl JsonParser<'_> {
@@ -554,77 +559,163 @@ impl JsonParser<'_> {
         }
     }
 
-    fn value(&mut self, depth: usize) -> Option<serde_json::Value> {
-        use serde_json::Value;
-        if depth > JSON_MAX_DEPTH {
+    /// `"key" :` with the whitespace around it.
+    fn key(&mut self) -> Option<String> {
+        self.skip_whitespace();
+        if self.peek()? != b'"' {
             return None;
         }
-        match self.peek()? {
-            b'{' => {
-                self.at += 1;
-                let mut map = serde_json::Map::new();
-                self.skip_whitespace();
-                if self.peek()? == b'}' {
+        let key = self.string()?;
+        self.skip_whitespace();
+        if self.peek()? != b':' {
+            return None;
+        }
+        self.at += 1;
+        Some(key)
+    }
+
+    /// Where the value being read sits, from the containers around it.
+    fn path(stack: &[Frame]) -> Vec<PathKey> {
+        stack
+            .iter()
+            .map(|frame| match frame {
+                Frame::Array(items) => PathKey::Index(items.len()),
+                Frame::Object(_, key, _) => PathKey::Key(key.clone()),
+            })
+            .collect()
+    }
+
+    fn document(&mut self) -> Option<serde_json::Value> {
+        use serde_json::Value;
+        // Containers being built, outermost first.
+        let mut stack: Vec<Frame> = Vec::new();
+        // Containers open beyond the build depth: only whether each is an object.
+        let mut deeper: Vec<bool> = Vec::new();
+
+        loop {
+            // A value starts here.
+            self.skip_whitespace();
+            let mut value = match self.peek()? {
+                open @ (b'{' | b'[') => {
+                    let is_object = open == b'{';
                     self.at += 1;
-                    return Some(Value::Object(map));
+                    self.skip_whitespace();
+                    if self.peek()? == (if is_object { b'}' } else { b']' }) {
+                        self.at += 1;
+                        if is_object { Value::Object(Default::default()) } else { Value::Array(Vec::new()) }
+                    } else {
+                        let key = if is_object { Some(self.key()?) } else { None };
+                        if !deeper.is_empty() || stack.len() >= JSON_BUILD_DEPTH {
+                            deeper.push(is_object);
+                        } else {
+                            stack.push(match key {
+                                Some(key) => Frame::Object(Default::default(), key, self.non_finite.len()),
+                                None => Frame::Array(Vec::new()),
+                            });
+                        }
+                        continue;
+                    }
                 }
-                loop {
-                    self.skip_whitespace();
-                    if self.peek()? != b'"' {
-                        return None;
+                b'"' => Value::String(self.string()?),
+                b't' => self.literal("true", Value::Bool(true))?,
+                b'f' => self.literal("false", Value::Bool(false))?,
+                b'n' => self.literal("null", Value::Null)?,
+                b'-' | b'0'..=b'9' => match self.number()? {
+                    Ok(number) => number,
+                    Err(negative) => {
+                        if deeper.is_empty() {
+                            self.non_finite.push(NonFinite { path: Self::path(&stack), negative });
+                        }
+                        Value::Null
                     }
-                    let key = self.string()?;
-                    self.skip_whitespace();
-                    if self.peek()? != b':' {
-                        return None;
-                    }
-                    self.at += 1;
-                    self.skip_whitespace();
-                    let value = self.value(depth + 1)?;
-                    map.insert(key, value);
-                    self.skip_whitespace();
-                    match self.peek()? {
-                        b',' => self.at += 1,
-                        b'}' => {
+                },
+                _ => return None,
+            };
+
+            // The value is complete: it goes into its container, which may
+            // end with it, and so on outwards.
+            loop {
+                self.skip_whitespace();
+                if let Some(is_object) = deeper.last().copied() {
+                    // Too deep to keep: only the syntax counts.
+                    match (self.peek()?, is_object) {
+                        (b',', true) => {
                             self.at += 1;
-                            return Some(Value::Object(map));
+                            self.key()?;
+                            break;
+                        }
+                        (b',', false) => {
+                            self.at += 1;
+                            break;
+                        }
+                        (b'}', true) | (b']', false) => {
+                            self.at += 1;
+                            deeper.pop();
+                            value = Value::Null;
+                            continue;
                         }
                         _ => return None,
                     }
                 }
-            }
-            b'[' => {
-                self.at += 1;
-                let mut items = Vec::new();
-                self.skip_whitespace();
-                if self.peek()? == b']' {
-                    self.at += 1;
-                    return Some(Value::Array(items));
-                }
-                loop {
-                    self.skip_whitespace();
-                    items.push(self.value(depth + 1)?);
-                    self.skip_whitespace();
-                    match self.peek()? {
-                        b',' => self.at += 1,
-                        b']' => {
-                            self.at += 1;
-                            return Some(Value::Array(items));
+                let Some(top) = stack.len().checked_sub(1) else {
+                    return (self.at == self.bytes.len()).then_some(value);
+                };
+                match &mut stack[top] {
+                    Frame::Array(items) => {
+                        items.push(value);
+                        match self.peek()? {
+                            b',' => {
+                                self.at += 1;
+                                break;
+                            }
+                            b']' => {
+                                self.at += 1;
+                                let Some(Frame::Array(items)) = stack.pop() else { return None };
+                                value = Value::Array(items);
+                            }
+                            _ => return None,
                         }
-                        _ => return None,
+                    }
+                    Frame::Object(members, key, mark) => {
+                        let key = std::mem::take(key);
+                        let (repeated, mark) = (members.contains_key(&key), *mark);
+                        members.insert(key.clone(), value);
+                        if repeated {
+                            // The last of a repeated key wins: whatever the
+                            // earlier value recorded is gone with it.
+                            let mut replaced = Self::path(&stack[..top]);
+                            replaced.push(PathKey::Key(key));
+                            let mut index = 0;
+                            self.non_finite.retain(|entry| {
+                                let keep = index >= mark || !entry.path.starts_with(&replaced);
+                                index += 1;
+                                keep
+                            });
+                        }
+                        match self.peek()? {
+                            b',' => {
+                                self.at += 1;
+                                let next = self.key()?;
+                                let Frame::Object(_, key_slot, mark_slot) = &mut stack[top] else { return None };
+                                *key_slot = next;
+                                *mark_slot = self.non_finite.len();
+                                break;
+                            }
+                            b'}' => {
+                                self.at += 1;
+                                let Some(Frame::Object(members, _, _)) = stack.pop() else { return None };
+                                value = Value::Object(members);
+                            }
+                            _ => return None,
+                        }
                     }
                 }
             }
-            b'"' => self.string().map(Value::String),
-            b't' => self.literal("true", Value::Bool(true)),
-            b'f' => self.literal("false", Value::Bool(false)),
-            b'n' => self.literal("null", Value::Null),
-            b'-' | b'0'..=b'9' => self.number(),
-            _ => None,
         }
     }
 
-    fn number(&mut self) -> Option<serde_json::Value> {
+    /// A number, or `Err(negative)` for one outside the range of a double.
+    fn number(&mut self) -> Option<Result<serde_json::Value, bool>> {
         let start = self.at;
         if self.peek() == Some(b'-') {
             self.at += 1;
@@ -662,12 +753,12 @@ impl JsonParser<'_> {
         let text = std::str::from_utf8(&self.bytes[start..self.at]).ok()?;
         let value: f64 = text.parse().ok()?;
         if !value.is_finite() {
-            return Some(serde_json::Value::Null);
+            return Some(Err(value < 0.0));
         }
         if value == value.trunc() && value.abs() <= 9_007_199_254_740_992.0 {
-            return Some(serde_json::Value::from(value as i64));
+            return Some(Ok(serde_json::Value::from(value as i64)));
         }
-        serde_json::Number::from_f64(value).map(serde_json::Value::Number)
+        serde_json::Number::from_f64(value).map(|number| Ok(serde_json::Value::Number(number)))
     }
 
     fn hex4(&mut self) -> Option<u32> {
@@ -741,40 +832,103 @@ impl JsonParser<'_> {
 
 #[cfg(test)]
 mod json_tests {
-    use super::json_parse;
+    use super::{json_parse, json_parse_full, PathKey, JSON_BUILD_DEPTH};
     use serde_json::json;
 
     #[test]
     fn parses_what_javascript_parses() {
         assert_eq!(json_parse(r#"{"a":[1,2.5,"x",true,null]}"#), Some(json!({"a": [1, 2.5, "x", true, null]})));
         assert_eq!(json_parse(" [ ] "), Some(json!([])));
+        assert_eq!(json_parse(" { } "), Some(json!({})));
         assert_eq!(json_parse("1.0"), Some(json!(1)));
         assert_eq!(json_parse("1e3"), Some(json!(1000)));
         assert_eq!(json_parse(r#"{"a":1e400}"#), Some(json!({"a": null})));
         assert_eq!(json_parse(r#"{"a":"\ud800"}"#), Some(json!({"a": "\u{fffd}"})));
         assert_eq!(json_parse(r#""😀""#), Some(json!("😀")));
         assert_eq!(json_parse(r#"{"a":1,"b":2,"a":3}"#).unwrap().to_string(), r#"{"a":3,"b":2}"#);
+        assert_eq!(
+            json_parse(r#" { "a" : [ { "b" : [ ] } , [ [ 1 ] , { } ] ] , "c" : "d" } "#),
+            Some(json!({"a": [{"b": []}, [[1], {}]], "c": "d"}))
+        );
+    }
+
+    /// The server's threads have 16 MiB stacks, a test thread 2 MiB: parsing
+    /// needs none of it, but dropping what was built is recursive.
+    fn on_a_server_sized_stack(test: fn()) {
+        std::thread::Builder::new().stack_size(16 * 1024 * 1024).spawn(test).unwrap().join().unwrap();
     }
 
     #[test]
-    fn nesting_far_beyond_serde_jsons_default_limit() {
-        // The server runs with 16 MiB stacks; a test thread has 2 MiB.
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let deep = format!("{}{}", "[".repeat(3000), "]".repeat(3000));
-                assert!(json_parse(&deep).is_some());
-                let too_deep = format!("{}{}", "[".repeat(5000), "]".repeat(5000));
-                assert!(json_parse(&too_deep).is_none());
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+    fn nesting_as_deep_as_the_text_is_long() {
+        on_a_server_sized_stack(|| {
+            for depth in [10, JSON_BUILD_DEPTH - 1, JSON_BUILD_DEPTH, JSON_BUILD_DEPTH + 1, 200_000] {
+                let arrays = format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+                assert!(json_parse(&arrays).is_some_and(|value| value.is_array()), "{depth} arrays");
+                let objects = format!("{}1{}", r#"{"a":"#.repeat(depth), "}".repeat(depth));
+                assert!(json_parse(&objects).is_some_and(|value| value.is_object()), "{depth} objects");
+                let mixed = format!("{}null{}", r#"[{"a":"#.repeat(depth), "}]".repeat(depth));
+                assert!(json_parse(&mixed).is_some(), "{depth} mixed");
+                // The same texts, not closed properly.
+                assert!(json_parse(&arrays[..arrays.len() - 1]).is_none());
+                assert!(json_parse(&format!("{arrays}]")).is_none());
+                assert!(json_parse(&format!("{}{}", "[".repeat(depth), "}".repeat(depth))).is_none());
+                assert!(json_parse(&format!("{}1,{}", r#"{"a":"#.repeat(depth), "}".repeat(depth))).is_none());
+            }
+        });
+    }
+
+    #[test]
+    fn what_is_built_stops_at_the_build_depth() {
+        on_a_server_sized_stack(|| {
+            let depth = JSON_BUILD_DEPTH + 50;
+            let text = format!(r#"{{"shallow":1,"deep":{}7{},"after":2}}"#, "[".repeat(depth), "]".repeat(depth));
+            let value = json_parse(&text).unwrap();
+            assert_eq!(value["shallow"], json!(1));
+            assert_eq!(value["after"], json!(2));
+            // The object is one level; the arrays below it fill the rest.
+            let mut arrays = 0;
+            let mut at = &value["deep"];
+            while at.is_array() {
+                arrays += 1;
+                at = &at[0];
+            }
+            assert!(at.is_null());
+            assert_eq!(arrays, JSON_BUILD_DEPTH - 1);
+        });
+    }
+
+    #[test]
+    fn records_numbers_out_of_range() {
+        let parsed = json_parse_full(r#"{"a":1e400,"b":[1,-1e999,{"c":1e309}],"d":2}"#).unwrap();
+        assert_eq!(parsed.value, json!({"a": null, "b": [1, null, {"c": null}], "d": 2}));
+        let key = |name: &str| PathKey::Key(name.to_string());
+        assert_eq!(parsed.non_finite_at(&[key("a")]), Some("Infinity"));
+        assert_eq!(parsed.non_finite_at(&[key("b"), PathKey::Index(1)]), Some("-Infinity"));
+        assert_eq!(parsed.non_finite_at(&[key("b"), PathKey::Index(2), key("c")]), Some("Infinity"));
+        assert_eq!(parsed.non_finite_at(&[key("d")]), None);
+        assert_eq!(json_parse_full("1e400").unwrap().non_finite_at(&[]), Some("Infinity"));
+    }
+
+    #[test]
+    fn a_repeated_key_forgets_what_the_first_recorded() {
+        let key = |name: &str| PathKey::Key(name.to_string());
+        let replaced = json_parse_full(r#"{"a":1e400,"a":5}"#).unwrap();
+        assert_eq!(replaced.value, json!({"a": 5}));
+        assert_eq!(replaced.non_finite_at(&[key("a")]), None);
+        let nested = json_parse_full(r#"{"a":{"b":1e400},"a":{"b":null}}"#).unwrap();
+        assert_eq!(nested.non_finite_at(&[key("a"), key("b")]), None);
+        let kept = json_parse_full(r#"{"a":5,"a":-1e400}"#).unwrap();
+        assert_eq!(kept.value, json!({"a": null}));
+        assert_eq!(kept.non_finite_at(&[key("a")]), Some("-Infinity"));
     }
 
     #[test]
     fn refuses_what_javascript_refuses() {
-        for bad in ["", "{", r#"{"a":}"#, "[1,]", "{'a':1}", "01", "1.", "+1", "NaN", "tru", r#""\x""#, "[1] x", "\"a\nb\"", r#"{"a":1,}"#, ".5", "-"] {
+        for bad in [
+            "", "{", r#"{"a":}"#, "[1,]", "{'a':1}", "01", "1.", "+1", "NaN", "tru", r#""\x""#, "[1] x", "\"a\nb\"",
+            r#"{"a":1,}"#, ".5", "-", "[", "]", "{]", "[}", r#"{"a" 1}"#, r#"{"a":1 "b":2}"#, r#"{1:2}"#, "[1 2]",
+            r#"{"a":1}}"#, "[[]", "{}{}", r#"{"a"}"#, r#"{,"a":1}"#, "[,1]", "nulll", "1e", "0x10",
+        ] {
             assert_eq!(json_parse(bad), None, "{bad:?}");
         }
     }

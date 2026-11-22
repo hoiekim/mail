@@ -2,7 +2,9 @@
 //! autoconfig, and the built web client with its single-page fallback.
 
 pub mod error_handler;
+pub mod head_stream;
 pub mod issue_session;
+pub mod mime_types;
 pub mod rate_limit;
 pub mod request;
 pub mod respond;
@@ -13,7 +15,6 @@ pub mod sso_hooks;
 pub mod static_files;
 pub mod upload;
 
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -177,7 +178,7 @@ impl HttpApp {
         let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
         let ip = resolve_client_ip(peer_address, header("x-forwarded-for"), self.trust);
         let secure = is_secure_request(peer_address, header("x-forwarded-proto"), self.trust);
-        let request_has_body = has_body(&headers, &body);
+        let request_has_body = has_body(&method, &headers, &body);
         let failed = |session_id: Option<&str>, error: &anyhow::Error| {
             error_handler(error, &FailedRequest { method: &method, path: &target.pathname, session_id })
         };
@@ -185,7 +186,7 @@ impl HttpApp {
         // The body is read before the session is loaded, as a client error
         // there must not cost a store round trip.
         let parsed = if is_raw_body_path(&target.pathname) {
-            Ok(request::JsonBody { value: json!({}), raw: RawBody::Unread(body) })
+            Ok(request::JsonBody::empty(RawBody::Unread(body)))
         } else {
             read_json_body(&headers, body, request_has_body).await
         };
@@ -220,6 +221,7 @@ impl HttpApp {
                     session,
                     raw: parsed.raw,
                     has_body: request_has_body,
+                    non_finite: parsed.non_finite,
                 };
                 let response = match self.route(&mut req).await {
                     Ok(response) => response,
@@ -281,42 +283,70 @@ enum ByteRange {
     Partial { start: u64, end: u64 },
 }
 
+/// Reads a `Range` header the way the Bun server's own file serving does:
+/// one range of the form `bytes=a-b`, `bytes=a-` or `bytes=-n`, the unit in
+/// any letter case, spaces and tabs allowed between the parts, the numbers
+/// plain digits that fit 64 bits. Anything else, several ranges included, is
+/// not a range request at all.
 fn parse_range(header: &str, size: u64) -> ByteRange {
-    let Some(spec) = header.trim().strip_prefix("bytes=") else {
-        return ByteRange::Ignore;
+    let bytes = header.as_bytes();
+    let mut at = 0;
+    let skip_blanks = |at: &mut usize| {
+        while matches!(bytes.get(*at), Some(b' ' | b'\t')) {
+            *at += 1;
+        }
     };
-    if spec.contains(',') {
+    // `Some(None)` when there are no digits here, `None` when they overflow.
+    let digits = |at: &mut usize| -> Option<Option<u64>> {
+        let start = *at;
+        while matches!(bytes.get(*at), Some(b'0'..=b'9')) {
+            *at += 1;
+        }
+        if *at == start {
+            return Some(None);
+        }
+        header[start..*at].parse::<u64>().ok().map(Some)
+    };
+    let expect = |at: &mut usize, byte: u8| {
+        let found = bytes.get(*at) == Some(&byte);
+        *at += usize::from(found);
+        found
+    };
+
+    skip_blanks(&mut at);
+    if !header.get(at..at + 5).is_some_and(|unit| unit.eq_ignore_ascii_case("bytes")) {
         return ByteRange::Ignore;
     }
-    let Some((first, last)) = spec.split_once('-') else {
+    at += 5;
+    skip_blanks(&mut at);
+    if !expect(&mut at, b'=') {
+        return ByteRange::Ignore;
+    }
+    skip_blanks(&mut at);
+    let Some(first) = digits(&mut at) else {
         return ByteRange::Ignore;
     };
-    let number = |text: &str| -> Option<u64> {
-        (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())).then(|| text.parse().ok()).flatten()
+    skip_blanks(&mut at);
+    if !expect(&mut at, b'-') {
+        return ByteRange::Ignore;
+    }
+    skip_blanks(&mut at);
+    let Some(last) = digits(&mut at) else {
+        return ByteRange::Ignore;
     };
-    match (first.is_empty(), last.is_empty()) {
-        (true, true) => ByteRange::Ignore,
-        // The last `n` bytes.
-        (true, false) => match number(last) {
-            Some(0) | None => ByteRange::Ignore,
-            Some(suffix) if size == 0 => {
-                let _ = suffix;
-                ByteRange::Unsatisfiable
-            }
-            Some(suffix) => ByteRange::Partial { start: size.saturating_sub(suffix), end: size - 1 },
-        },
-        (false, _) => {
-            let Some(start) = number(first) else {
-                return ByteRange::Ignore;
-            };
-            let end = if last.is_empty() {
-                None
-            } else {
-                match number(last) {
-                    Some(end) => Some(end),
-                    None => return ByteRange::Ignore,
-                }
-            };
+    skip_blanks(&mut at);
+    if at != bytes.len() {
+        return ByteRange::Ignore;
+    }
+
+    match (first, last) {
+        (None, None) => ByteRange::Ignore,
+        // The last `n` bytes: none at all is never satisfiable, and an empty
+        // file has no last bytes to ask for.
+        (None, Some(0)) => ByteRange::Unsatisfiable,
+        (None, Some(_)) if size == 0 => ByteRange::Ignore,
+        (None, Some(suffix)) => ByteRange::Partial { start: size.saturating_sub(suffix), end: size - 1 },
+        (Some(start), end) => {
             if end.is_some_and(|end| end < start) {
                 return ByteRange::Ignore;
             }
@@ -327,6 +357,36 @@ fn parse_range(header: &str, size: u64) -> ByteRange {
         }
     }
 }
+
+/// Whether a browser shows a body of this type itself. The Bun server offers
+/// every other file body as a download by naming it in `Content-Disposition`.
+fn is_viewable_type(content_type: &str) -> bool {
+    let essence = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    match essence.split_once('/') {
+        Some(("text" | "image" | "audio" | "video" | "font", _)) => true,
+        Some(("application", subtype)) => matches!(subtype, "json" | "geo+json" | "wasm"),
+        _ => false,
+    }
+}
+
+/// `filename="<base name>"` for a file body that is not viewable, as the Bun
+/// server adds it. A name that would break the header (a quote, a line
+/// break) gets none; nor does one this server's HTTP library cannot send (a
+/// control character, or bytes that are not UTF-8).
+fn content_disposition(path: &std::path::Path, content_type: Option<&str>) -> Option<String> {
+    let content_type = content_type.unwrap_or_else(|| static_files::content_type_of(path));
+    if is_viewable_type(content_type) {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    let sendable = name.bytes().all(|byte| byte == b'\t' || (byte >= 0x20 && byte != 0x7f && byte != b'"'));
+    (!name.is_empty() && sendable).then(|| format!("filename=\"{name}\""))
+}
+
+/// Bodies built in pieces are streamed: below this many bytes the Bun server
+/// has the whole body before it writes anything and sends its length, from
+/// here on it sends chunks and no length.
+const STREAM_BUFFER_BYTES: u64 = 256;
 
 fn full(bytes: Bytes) -> WireBody {
     Full::new(bytes).map_err(|never| match never {}).boxed()
@@ -341,19 +401,34 @@ async fn file_body(path: PathBuf, start: u64, length: u64) -> std::io::Result<Wi
     Ok(BodyExt::boxed(StreamBody::new(frames)))
 }
 
+/// What the framing of a response depends on besides the response itself.
+struct WireRequest<'a> {
+    method: &'a str,
+    /// The request's headers as they arrived: of a repeated `Range`, the
+    /// first line counts.
+    headers: &'a http::HeaderMap,
+    /// HTTP/1.1, where a body of unknown length is sent in chunks.
+    http_11: bool,
+}
+
 /// Puts a response on the wire: explicit `Content-Length`, no body for HEAD,
-/// and byte ranges for a file body.
-async fn into_wire(
-    method: &str,
-    request_headers: &http::HeaderMap,
-    mut response: Response,
-) -> hyper::Response<WireBody> {
+/// byte ranges and `Content-Disposition` for a file body, and chunks for a
+/// body that was built in pieces.
+async fn into_wire(request: &WireRequest<'_>, mut response: Response) -> hyper::Response<WireBody> {
+    let method = request.method;
     let mut status = response.status;
     let mut length = response.body.len();
     let mut range = None;
 
     if let Body::File { size, .. } = &response.body {
-        let requested = request_headers.get("range").and_then(|value| value.to_str().ok());
+        let header = |name: &str| request.headers.get(name).and_then(|value| value.to_str().ok());
+        // `If-Range` lets the range through only when it is the file's exact
+        // Last-Modified. Its ETag is a weak one, which never satisfies it.
+        let current = match header("if-range").map(str::trim).filter(|validator| !validator.is_empty()) {
+            Some(validator) => response.header("last-modified") == Some(validator),
+            None => true,
+        };
+        let requested = header("range").filter(|_| current);
         if let (true, 200, Some(requested)) = (method == "GET", status, requested) {
             match parse_range(requested, *size) {
                 ByteRange::Ignore => {}
@@ -375,15 +450,37 @@ async fn into_wire(
         }
     }
 
+    // Only with the file itself: not for HEAD, a 304 or a 416.
+    if method == "GET" && matches!(status, 200 | 206) && response.header("content-disposition").is_none() {
+        if let Body::File { path, .. } = &response.body {
+            if let Some(disposition) = content_disposition(path, response.header("content-type")) {
+                response.append_header("Content-Disposition", disposition);
+            }
+        }
+    }
+
+    // A body built in pieces is streamed, unless all of it is so small that
+    // it is complete before anything is written. HEAD never gets that far:
+    // it is answered as a stream whatever the size.
+    let pieces = matches!(&response.body, Body::Chunks(chunks) if !chunks.is_empty());
+    let streamed = pieces && status != 304 && (method == "HEAD" || length >= STREAM_BUFFER_BYTES);
+
     let body: WireBody = if method == "HEAD" || status == 304 {
         full(Bytes::new())
     } else {
         match response.body {
             Body::Empty => full(Bytes::new()),
             Body::Bytes(bytes) => full(bytes),
-            Body::Chunks(chunks) => {
+            Body::Chunks(chunks) if streamed => {
                 let frames = stream::iter(chunks.into_iter().map(|chunk| Ok(Frame::data(chunk))));
                 BodyExt::boxed(StreamBody::new(frames))
+            }
+            Body::Chunks(chunks) => {
+                let mut whole = bytes::BytesMut::with_capacity(length as usize);
+                for chunk in &chunks {
+                    whole.extend_from_slice(chunk);
+                }
+                full(whole.freeze())
             }
             Body::File { path, size } => {
                 let (start, take) = range.unwrap_or((0, size));
@@ -407,13 +504,20 @@ async fn into_wire(
 
     let mut builder = hyper::Response::builder().status(status);
     for (name, value) in &response.headers {
-        if name.eq_ignore_ascii_case("content-length") {
+        if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("transfer-encoding") {
             continue;
         }
         builder = builder.header(name.as_str(), value.as_str());
     }
-    if status != 304 {
+    if status == 304 {
+        // No body and nothing said about one.
+    } else if !streamed {
         builder = builder.header("Content-Length", length);
+    } else if method == "HEAD" && request.http_11 {
+        // For GET the HTTP library names the encoding as it applies it. From
+        // a HEAD answer it would drop the header, so a stand-in travels to
+        // the connection's writer, which puts the real name back.
+        builder = builder.header(head_stream::stand_in_header(), "chunked");
     }
     builder.body(body).unwrap_or_else(|_| {
         let mut fallback = hyper::Response::new(full(Bytes::from_static(b"Internal server error")));
@@ -422,12 +526,61 @@ async fn into_wire(
     })
 }
 
+/// The request methods the Bun server's HTTP parser knows. A request with
+/// any other is not answered at all: the connection is closed.
+const KNOWN_METHODS: [&str; 35] = [
+    "ACL", "BIND", "CHECKOUT", "CONNECT", "COPY", "DELETE", "GET", "HEAD", "LINK", "LOCK", "M-SEARCH", "MERGE",
+    "MKACTIVITY", "MKCALENDAR", "MKCOL", "MOVE", "NOTIFY", "OPTIONS", "PATCH", "POST", "PROPFIND", "PROPPATCH",
+    "PURGE", "PUT", "QUERY", "REBIND", "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE", "TRACE", "UNBIND", "UNLINK",
+    "UNLOCK", "UNSUBSCRIBE",
+];
+
+/// Why a connection is dropped without an answer.
+#[derive(Debug)]
+struct UnknownMethod;
+
+impl std::fmt::Display for UnknownMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the request method is not one this server answers")
+    }
+}
+
+impl std::error::Error for UnknownMethod {}
+
+/// The request's headers as the Bun server's `Headers` object presents them:
+/// the lines of a repeated header are one value, joined with `, ` — or with
+/// `; ` for `Cookie`.
+fn joined_headers(headers: &http::HeaderMap) -> http::HeaderMap {
+    let mut joined = http::HeaderMap::with_capacity(headers.keys_len());
+    for name in headers.keys() {
+        let mut lines = headers.get_all(name).iter();
+        let Some(first) = lines.next() else { continue };
+        let separator: &[u8] = if name == http::header::COOKIE { b"; " } else { b", " };
+        let mut bytes = first.as_bytes().to_vec();
+        let mut repeated = false;
+        for line in lines {
+            bytes.extend_from_slice(separator);
+            bytes.extend_from_slice(line.as_bytes());
+            repeated = true;
+        }
+        let value = match repeated {
+            true => http::HeaderValue::from_bytes(&bytes).unwrap_or_else(|_| first.clone()),
+            false => first.clone(),
+        };
+        joined.insert(name.clone(), value);
+    }
+    joined
+}
+
 async fn serve(
     app: Arc<HttpApp>,
     request: hyper::Request<Incoming>,
     peer: SocketAddr,
-) -> Result<hyper::Response<WireBody>, Infallible> {
+) -> Result<hyper::Response<WireBody>, UnknownMethod> {
     let (parts, body) = request.into_parts();
+    if !KNOWN_METHODS.contains(&parts.method.as_str()) {
+        return Err(UnknownMethod);
+    }
     // An HTTP/1.1 request without Host is refused outright.
     if parts.version == http::Version::HTTP_11 && !parts.headers.contains_key("host") {
         let mut response = hyper::Response::new(full(Bytes::new()));
@@ -441,8 +594,10 @@ async fn serve(
         std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map(|v4| v4.to_string()).unwrap_or_else(|| ip.to_string()),
         std::net::IpAddr::V4(ip) => ip.to_string(),
     };
-    let response = app.handle(method.clone(), target, parts.headers.clone(), body, &peer_address).await;
-    Ok(into_wire(&method, &parts.headers, response).await)
+    let headers = joined_headers(&parts.headers);
+    let response = app.handle(method.clone(), target, headers, body, &peer_address).await;
+    let wire = WireRequest { method: &method, headers: &parts.headers, http_11: parts.version == http::Version::HTTP_11 };
+    Ok(into_wire(&wire, response).await)
 }
 
 /// The running HTTP server.
@@ -494,7 +649,7 @@ pub async fn initialize_http() -> anyhow::Result<HttpServer> {
                 let _ = stream.set_nodelay(true);
                 let app = app.clone();
                 let connection = builder
-                    .serve_connection(TokioIo::new(stream), service_fn(move |request| serve(app.clone(), request, peer)));
+                    .serve_connection(TokioIo::new(head_stream::HeadStream::new(stream)), service_fn(move |request| serve(app.clone(), request, peer)));
                 let connection = graceful.watch(connection);
                 tokio::spawn(async move {
                     let _ = connection.await;
@@ -535,6 +690,168 @@ mod tests {
         assert!(matches!(parse_range("bytes=4-2", 67), ByteRange::Ignore));
         assert!(matches!(parse_range("bytes=0-0,2-3", 67), ByteRange::Ignore));
         assert!(matches!(parse_range("garbage", 67), ByteRange::Ignore));
+    }
+
+    #[test]
+    fn ranges_as_the_bun_server_reads_them() {
+        // The unit in any letter case, blanks between the parts.
+        for header in ["BYTES=1-2", "Bytes=1-2", "bytes = 1 - 2", "bytes=\t1-2", "bytes=1 -2", "bytes=1- 2", " bytes=1-2 ", "bytes=01-02"] {
+            assert!(matches!(parse_range(header, 10), ByteRange::Partial { start: 1, end: 2 }), "{header:?}");
+        }
+        assert!(matches!(parse_range("bytes= -2", 10), ByteRange::Partial { start: 8, end: 9 }));
+        // No last bytes at all is never satisfiable; an empty file has none to ask for.
+        assert!(matches!(parse_range("bytes=-0", 10), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-00", 10), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-0", 0), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-1", 0), ByteRange::Ignore));
+        assert!(matches!(parse_range("bytes=0-", 0), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=10-", 10), ByteRange::Unsatisfiable));
+        // Numbers are 64 bits wide; wider ones make the header no range at all.
+        assert!(matches!(parse_range("bytes=0-18446744073709551615", 10), ByteRange::Partial { start: 0, end: 9 }));
+        assert!(matches!(parse_range("bytes=18446744073709551615-", 10), ByteRange::Unsatisfiable));
+        assert!(matches!(parse_range("bytes=-9223372036854775807", 10), ByteRange::Partial { start: 0, end: 9 }));
+        assert!(matches!(parse_range("bytes=18446744073709551616-", 10), ByteRange::Ignore));
+        assert!(matches!(parse_range("bytes=0-99999999999999999999999", 10), ByteRange::Ignore));
+        for header in [
+            "bytes", "bytes=", "bytes=-", "bytes=a-b", "bytes=+1-2", "bytes=1.0-2", "bytes 1-2", "bytes:1-2", "items=1-2",
+            "byte=1-2", "bytes=1-2;q=1", "bytes=--1", "bytes=1-2-3", "bytes=1", "1-2", "=1-2", "bytes=1-2,", "bytes=,1-2", "",
+        ] {
+            assert!(matches!(parse_range(header, 10), ByteRange::Ignore), "{header:?}");
+        }
+    }
+
+    #[test]
+    fn viewable_types_get_no_content_disposition() {
+        for viewable in [
+            "text/html;charset=utf-8", "text/markdown", "image/png", "audio/mpeg", "video/mp4", "font/woff2",
+            "application/json;charset=utf-8", "application/json", "application/geo+json", "application/wasm", "Text/Plain",
+        ] {
+            assert!(is_viewable_type(viewable), "{viewable}");
+        }
+        for download in [
+            "application/octet-stream", "application/pdf", "application/xml", "application/manifest+json",
+            "application/ld+json", "application/zip", "model/obj", "message/rfc822", "", "nonsense",
+        ] {
+            assert!(!is_viewable_type(download), "{download}");
+        }
+    }
+
+    #[test]
+    fn content_dispositions() {
+        let disposition = |path: &str, content_type: Option<&str>| content_disposition(std::path::Path::new(path), content_type);
+        assert_eq!(disposition("/a/b/report.pdf", Some("application/pdf")).as_deref(), Some("filename=\"report.pdf\""));
+        assert_eq!(disposition("/a/noext", Some("application/octet-stream")).as_deref(), Some("filename=\"noext\""));
+        assert_eq!(disposition("/a/with space;é.bin", Some("application/octet-stream")).as_deref(), Some("filename=\"with space;é.bin\""));
+        // The type decides, whatever the name says; without one the name does.
+        assert_eq!(disposition("/a/photo.png", Some("application/octet-stream")).as_deref(), Some("filename=\"photo.png\""));
+        assert_eq!(disposition("/a/photo.png", Some("image/png")), None);
+        assert_eq!(disposition("/a/photo.png", None), None);
+        assert_eq!(disposition("/a/data.bin", None).as_deref(), Some("filename=\"data.bin\""));
+        // A name that would break the header gets none.
+        assert_eq!(disposition("/a/quo\"te.bin", Some("application/octet-stream")), None);
+        assert_eq!(disposition("/a/line\nfeed.bin", Some("application/octet-stream")), None);
+        assert_eq!(disposition("/a/carriage\rreturn.bin", Some("application/octet-stream")), None);
+    }
+
+    #[test]
+    fn repeated_request_headers_are_joined() {
+        let mut headers = http::HeaderMap::new();
+        headers.append("x-forwarded-for", "1.1.1.1".parse().unwrap());
+        headers.append("x-forwarded-for", "2.2.2.2".parse().unwrap());
+        headers.append("cookie", "a=1".parse().unwrap());
+        headers.append("cookie", "b=2".parse().unwrap());
+        headers.append("content-type", "application/json".parse().unwrap());
+        let joined = joined_headers(&headers);
+        assert_eq!(joined.get("x-forwarded-for").unwrap(), "1.1.1.1, 2.2.2.2");
+        assert_eq!(joined.get("cookie").unwrap(), "a=1; b=2");
+        assert_eq!(joined.get("content-type").unwrap(), "application/json");
+        assert_eq!(joined.len(), 3);
+    }
+
+    /// Sends `request` to a connection whose every answer is `response`, and
+    /// returns what the HTTP library puts on the wire.
+    async fn on_the_wire(request: &str, response: Response) -> String {
+        use tokio::io::AsyncWriteExt;
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let service = service_fn(move |request: hyper::Request<Incoming>| {
+            let response = response.clone();
+            async move {
+                let (parts, _body) = request.into_parts();
+                let method = parts.method.as_str().to_string();
+                let wire = WireRequest { method: &method, headers: &parts.headers, http_11: parts.version == http::Version::HTTP_11 };
+                Ok::<_, std::convert::Infallible>(into_wire(&wire, response).await)
+            }
+        });
+        let io = TokioIo::new(head_stream::HeadStream::new(server));
+        let connection = tokio::spawn(hyper::server::conn::http1::Builder::new().serve_connection(io, service));
+        let (mut read, mut write) = tokio::io::split(client);
+        write.write_all(request.as_bytes()).await.unwrap();
+        let mut wire = Vec::new();
+        read.read_to_end(&mut wire).await.unwrap();
+        let _ = connection.await;
+        String::from_utf8_lossy(&wire).to_lowercase()
+    }
+
+    fn list_of(bytes: usize) -> Response {
+        let mut list = respond::JsonList::new(None);
+        // `{"status":"success","body":[` … `]}` is 30 bytes around the items.
+        list.push(&"x".repeat(bytes - 32));
+        list.finish()
+    }
+
+    #[tokio::test]
+    async fn a_small_list_is_sent_with_its_length() {
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", list_of(255)).await;
+        assert!(wire.contains("content-length: 255\r\n"), "{wire}");
+        assert!(!wire.contains("transfer-encoding"), "{wire}");
+        assert!(wire.ends_with("\"]}"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn a_list_of_256_bytes_or_more_is_chunked_without_a_length() {
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", list_of(256)).await;
+        assert!(wire.contains("transfer-encoding: chunked\r\n"), "{wire}");
+        assert!(!wire.contains("content-length"), "{wire}");
+        assert!(wire.contains("\r\n\r\n100\r\n{\"status\":\"success\""), "{wire}");
+        assert!(wire.ends_with("\r\n0\r\n\r\n"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn a_list_over_http_1_0_is_ended_by_closing() {
+        let wire = on_the_wire("GET / HTTP/1.0\r\n\r\n", list_of(300)).await;
+        assert!(!wire.contains("transfer-encoding"), "{wire}");
+        assert!(!wire.contains("content-length"), "{wire}");
+        assert!(wire.ends_with("\"]}"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn head_of_a_list_has_no_length_and_no_body() {
+        for size in [100, 5000] {
+            let wire = on_the_wire("HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", list_of(size)).await;
+            assert!(!wire.contains("content-length"), "{wire}");
+            assert!(wire.contains("transfer-encoding: chunked\r\n"), "{wire}");
+            assert!(wire.ends_with("\r\n\r\n"), "{wire}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_not_modified_list_says_nothing_about_a_body() {
+        let mut request_headers = http::HeaderMap::new();
+        request_headers.insert("if-none-match", "*".parse().unwrap());
+        let not_modified = conditional("GET", &request_headers, list_of(5000));
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", not_modified).await;
+        assert!(wire.starts_with("http/1.1 304"), "{wire}");
+        assert!(!wire.contains("content-length") && !wire.contains("transfer-encoding"), "{wire}");
+    }
+
+    #[tokio::test]
+    async fn whole_bodies_keep_their_length() {
+        let wire = on_the_wire("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", text(&"x".repeat(5000), 200)).await;
+        assert!(wire.contains("content-length: 5000\r\n"), "{wire}");
+        assert!(!wire.contains("transfer-encoding"), "{wire}");
+        let head = on_the_wire("HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", text(&"x".repeat(5000), 200)).await;
+        assert!(head.contains("content-length: 5000\r\n"), "{head}");
+        assert!(head.ends_with("\r\n\r\n"), "{head}");
     }
 
     #[test]

@@ -29,6 +29,7 @@ http-body = "1"
 http-body-util = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 url = "2"
+idna = "1"
 flate2 = "1"
 
 # PostgreSQL
@@ -52,7 +53,9 @@ fancy-regex = "0.14"
 encoding_rs = "0.8"
 base64 = "0.22"
 hex = "0.4"
-idna = "1"
+# `String.prototype.localeCompare`: the order mailboxes are listed in
+icu_collator = "2"
+# errno names and the host name for the SMTP listeners
 libc = "0.2"
 
 # Crypto
@@ -83,12 +86,15 @@ tokio = { version = "1", features = ["full", "test-util"] }
 
 [profile.release]
 opt-level = 3
-debug = 1
+# Enough for readable backtraces; full debug info multiplies the build size.
+debug = "line-tables-only"
 
 [profile.dev]
 # The dependencies do the heavy lifting (bcrypt, TLS, regex); optimizing them
 # keeps a debug build of the server fast enough to run the black-box suite.
 opt-level = 0
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
+debug = false

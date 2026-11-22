@@ -121,9 +121,21 @@ interface Launch {
   url: string;
   startupTimeoutMs: number;
   output: string[];
+  /** Give up as soon as the server reports a port it could not bind. */
+  failFastOnPortClash?: boolean;
 }
 
-const launch = async ({ env, cwd, url, startupTimeoutMs, output }: Launch): Promise<Subprocess> => {
+const isPortClash = (logs: string) => /EADDRINUSE|Address already in use|address in use|Failed to listen/i.test(logs);
+
+const launch = async ({
+  env,
+  cwd,
+  url,
+  startupTimeoutMs,
+  output,
+  failFastOnPortClash,
+}: Launch): Promise<Subprocess> => {
+  const from = output.length;
   const child = Bun.spawn(await command(), { cwd, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
   live.add(child);
   void pump(child.stdout as ReadableStream<Uint8Array>, output, IMPL);
@@ -143,6 +155,11 @@ const launch = async ({ env, cwd, url, startupTimeoutMs, output }: Launch): Prom
       if (response.status === 200) return child;
     } catch {
       // Not listening yet.
+    }
+    if (failFastOnPortClash && isPortClash(output.slice(from).join(""))) {
+      child.kill("SIGKILL");
+      await child.exited;
+      throw new Error(`The ${IMPL} server could not bind one of its ports:\n${output.slice(from).join("")}`);
     }
     if (Date.now() > deadline) {
       child.kill("SIGKILL");
@@ -176,6 +193,8 @@ const buildEnv = (
   const { ports, db, mailgun, alarms, certificate } = parts;
   const env: Record<string, string | undefined> = {
     ...baseEnv(),
+    // INTERNALDATE, SEARCH dates and log stamps follow the server's zone.
+    TZ: "UTC",
     EMAIL_DOMAIN: DOMAIN,
     APP_HOSTNAME: `app.${DOMAIN}`,
     ADMIN_PASSWORD,
@@ -223,15 +242,11 @@ const buildEnv = (
  * ```
  */
 export const startServer = async (options: ServerOptions = {}): Promise<TestServer> => {
-  const [http, smtp, smtps, submission, imap, imaps] = await freePorts(6);
-  const ports: ServerPorts = { http, smtp, smtps, submission, imap, imaps };
   const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), "mail-e2e-"));
   const db = await createTestDatabase();
   const mailgun = startMailgunStub();
   const alarms = startAlarmStub();
   const certificate = options.tls ? await generateCertificate(cwd) : undefined;
-  let env = buildEnv(options, { ports, db, mailgun, alarms, certificate });
-  const url = `http://127.0.0.1:${ports.http}`;
   const startupTimeoutMs = options.startupTimeoutMs ?? 60_000;
   const output: string[] = [];
 
@@ -242,12 +257,28 @@ export const startServer = async (options: ServerOptions = {}): Promise<TestServ
     await fs.promises.rm(cwd, { recursive: true, force: true }).catch(() => undefined);
   };
 
-  let child: Subprocess;
-  try {
-    child = await launch({ env, cwd, url, startupTimeoutMs, output });
-  } catch (error) {
-    await cleanup();
-    throw error;
+  // A port is only known to be free at the moment it was probed: another
+  // process can take it before the server binds. Such a start is retried on
+  // fresh ports rather than failed.
+  let ports!: ServerPorts;
+  let env!: Record<string, string>;
+  let url!: string;
+  let child!: Subprocess;
+  for (let attempt = 1; ; attempt++) {
+    const [http, smtp, smtps, submission, imap, imaps] = await freePorts(6);
+    ports = { http, smtp, smtps, submission, imap, imaps };
+    env = buildEnv(options, { ports, db, mailgun, alarms, certificate });
+    url = `http://127.0.0.1:${ports.http}`;
+    const from = output.length;
+    try {
+      child = await launch({ env, cwd, url, startupTimeoutMs, output, failFastOnPortClash: true });
+      break;
+    } catch (error) {
+      const clash = isPortClash(output.slice(from).join(""));
+      if (clash && attempt < 4) continue;
+      await cleanup();
+      throw error;
+    }
   }
 
   const server: TestServer = {
