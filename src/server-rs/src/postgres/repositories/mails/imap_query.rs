@@ -390,8 +390,9 @@ impl Drop for Operand {
     }
 }
 
-/// A criterion whose date is an Invalid Date, or whose day after is. The Bun
-/// server fails to bind such a parameter, so its statement is never sent.
+/// A search that binds an Invalid Date: a date criterion whose date, or
+/// whose day after, JavaScript cannot represent. The Bun server fails to
+/// bind such a parameter, so its statement is never sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidDateParam;
 
@@ -403,8 +404,16 @@ impl fmt::Display for InvalidDateParam {
 
 impl std::error::Error for InvalidDateParam {}
 
-fn date_param(date: &JsDate) -> Result<Param, InvalidDateParam> {
-    date.to_iso_string().map(Param::from).ok_or(InvalidDateParam)
+/// Binds a date. An Invalid Date binds a placeholder whose place is noted in
+/// `invalid`: it fails the statement only if no operator discards it.
+fn push_date(date: &JsDate, values: &mut Vec<Param>, invalid: &mut Vec<usize>) {
+    match date.to_iso_string() {
+        Some(iso) => values.push(Param::from(iso)),
+        None => {
+            invalid.push(values.len());
+            values.push(Param::Null);
+        }
+    }
 }
 
 /// The day after `date`, as `setDate(getDate() + 1)` moves it.
@@ -422,11 +431,12 @@ fn key_clause(
     criterion: &SimplifiedCriterion,
     uid_field: &str,
     values: &mut Vec<Param>,
-) -> Result<Option<String>, InvalidDateParam> {
-    let fragment = |sql: &str| Ok(Some(sql.to_string()));
+    invalid: &mut Vec<usize>,
+) -> Option<String> {
+    let fragment = |sql: &str| Some(sql.to_string());
     match criterion {
         SimplifiedCriterion::Bare(kind) => match kind.to_uppercase().as_str() {
-            "ALL" => Ok(None),
+            "ALL" => None,
             "UNSEEN" => fragment("read = FALSE"),
             "SEEN" => fragment("read = TRUE"),
             "FLAGGED" => fragment("saved = TRUE"),
@@ -440,17 +450,17 @@ fn key_clause(
             // NEW is RECENT and UNSEEN; \Recent is not tracked, so RECENT
             // and OLD match everything.
             "NEW" => fragment("read = FALSE"),
-            "OLD" | "RECENT" => Ok(None),
+            "OLD" | "RECENT" => None,
             // No custom keywords are stored: none can match, and every
             // message lacks any given one.
             "KEYWORD" => fragment(MATCH_NONE),
-            "UNKEYWORD" => Ok(None),
+            "UNKEYWORD" => None,
             _ => fragment(MATCH_NONE),
         },
         SimplifiedCriterion::Text { key, value } => {
             values.push(Param::from(format!("%{value}%")));
             let p = values.len();
-            Ok(Some(match key {
+            Some(match key {
                 TextKey::Subject => format!("subject ILIKE ${p}"),
                 TextKey::From => format!("from_text ILIKE ${p}"),
                 TextKey::To => format!("to_text ILIKE ${p}"),
@@ -462,7 +472,7 @@ fn key_clause(
                 TextKey::Text | TextKey::SubjectText => {
                     format!("(subject ILIKE ${p} OR from_text ILIKE ${p} OR to_text ILIKE ${p} OR text ILIKE ${p})")
                 }
-            }))
+            })
         }
         SimplifiedCriterion::Header { field, text } => {
             let column = match field.to_lowercase().as_str() {
@@ -473,23 +483,22 @@ fn key_clause(
                 _ => return fragment(MATCH_NONE),
             };
             values.push(Param::from(format!("%{text}%")));
-            Ok(Some(format!("{column} ILIKE ${}", values.len())))
+            Some(format!("{column} ILIKE ${}", values.len()))
         }
         // The SENT* keys read the same column: there is only one date.
         SimplifiedCriterion::Date { key, value } => match key {
             DateKey::Before | DateKey::SentBefore => {
-                values.push(date_param(value)?);
-                Ok(Some(format!("date < ${}", values.len())))
+                push_date(value, values, invalid);
+                Some(format!("date < ${}", values.len()))
             }
             DateKey::On | DateKey::SentOn => {
-                let (day, after) = (date_param(value)?, date_param(&next_day(value))?);
-                values.push(day);
-                values.push(after);
-                Ok(Some(format!("date >= ${} AND date < ${}", values.len() - 1, values.len())))
+                push_date(value, values, invalid);
+                push_date(&next_day(value), values, invalid);
+                Some(format!("date >= ${} AND date < ${}", values.len() - 1, values.len()))
             }
             DateKey::Since | DateKey::SentSince => {
-                values.push(date_param(value)?);
-                Ok(Some(format!("date >= ${}", values.len())))
+                push_date(value, values, invalid);
+                Some(format!("date >= ${}", values.len()))
             }
         },
         // RFC822.SIZE is not searchable.
@@ -509,14 +518,14 @@ fn key_clause(
                     }
                 })
                 .collect();
-            Ok(match parts.len() {
+            match parts.len() {
                 0 => None,
                 1 => parts.into_iter().next(),
                 _ => Some(format!("({})", parts.join(" OR "))),
-            })
+            }
         }
         // Operators are reduced by the caller.
-        SimplifiedCriterion::Not(_) | SimplifiedCriterion::Or(_, _) => Ok(None),
+        SimplifiedCriterion::Not(_) | SimplifiedCriterion::Or(_, _) => None,
     }
 }
 
@@ -531,6 +540,9 @@ fn key_clause(
 /// PostgreSQL would reject the statement.
 ///
 /// `uid_field` is the column a `UidSet` compares.
+///
+/// Fails when the fragment binds an Invalid Date. One that an operator
+/// discarded is not bound, and does not fail it.
 pub fn build_criterion_clause(
     criterion: &SimplifiedCriterion,
     uid_field: &str,
@@ -543,8 +555,15 @@ pub fn build_criterion_clause(
         /// Reduce an OR whose left side began at this length of `values`.
         Or(usize),
     }
+    /// Discards what a side bound from `saved_len` on.
+    fn roll_back(values: &mut Vec<Param>, invalid: &mut Vec<usize>, saved_len: usize) {
+        values.truncate(saved_len);
+        invalid.retain(|at| *at < saved_len);
+    }
     let mut work = vec![Step::Visit(criterion)];
     let mut built: Vec<Option<Fragment>> = Vec::new();
+    // Where `values` holds a placeholder for an Invalid Date.
+    let mut invalid: Vec<usize> = Vec::new();
     while let Some(step) = work.pop() {
         match step {
             Step::Visit(SimplifiedCriterion::Not(inner)) => {
@@ -556,17 +575,17 @@ pub fn build_criterion_clause(
                 work.push(Step::Visit(right));
                 work.push(Step::Visit(left));
             }
-            Step::Visit(key) => built.push(key_clause(key, uid_field, values)?.map(Fragment::from)),
+            Step::Visit(key) => built.push(key_clause(key, uid_field, values, &mut invalid).map(Fragment::from)),
             Step::Not(saved_len) => {
                 // NOT match-all is match-none and the reverse; both discard
                 // the operand, and with it any parameter it bound.
                 let reduced = match built.pop().flatten() {
                     None => {
-                        values.truncate(saved_len);
+                        roll_back(values, &mut invalid, saved_len);
                         Some(Fragment::from(MATCH_NONE.to_string()))
                     }
                     Some(inner) if inner.is_match_none() => {
-                        values.truncate(saved_len);
+                        roll_back(values, &mut invalid, saved_len);
                         None
                     }
                     Some(inner) => Some(inner.wrapped("NOT (", ")")),
@@ -580,11 +599,11 @@ pub fn build_criterion_clause(
                     // A side that matches everything makes the whole OR match
                     // everything.
                     (None, _) | (_, None) => {
-                        values.truncate(saved_len);
+                        roll_back(values, &mut invalid, saved_len);
                         None
                     }
                     (Some(left), Some(right)) if left.is_match_none() && right.is_match_none() => {
-                        values.truncate(saved_len);
+                        roll_back(values, &mut invalid, saved_len);
                         Some(left)
                     }
                     // `X OR none` is `X`. The match-none side bound nothing,
@@ -596,6 +615,9 @@ pub fn build_criterion_clause(
                 built.push(reduced);
             }
         }
+    }
+    if !invalid.is_empty() {
+        return Err(InvalidDateParam);
     }
     Ok(built.pop().flatten().map(Fragment::into_sql))
 }
