@@ -124,6 +124,14 @@ pub fn get_connected_session_count() -> usize {
     CONNECTED_SESSIONS.lock().unwrap().len()
 }
 
+/// Forgets every tracked connection without touching its socket. A test's
+/// runtime drops the connections it leaves open without their cleanup, so a
+/// test that counts or sweeps the registry starts from nothing.
+#[cfg(test)]
+pub(crate) fn reset_connected_sessions() {
+    CONNECTED_SESSIONS.lock().unwrap().clear();
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
