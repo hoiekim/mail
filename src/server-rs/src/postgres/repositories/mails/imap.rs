@@ -29,7 +29,8 @@ use serde_json::{json, Value};
 use super::counters::get_next_modseq;
 use super::imap_query::{
     build_all_uids_query, build_count_messages_query, build_expunge_deleted_filters,
-    build_expunge_deleted_select_query, build_expunge_uids_filters, build_expunge_uids_select_query,
+    build_expunge_deleted_inbox_query, build_expunge_deleted_select_query, build_expunge_uids_filters,
+    build_expunge_uids_select_query,
     build_first_unseen_uid_query, build_mail_flag_updates_query, build_mails_by_range_query,
     build_search_mails_by_uid_query, SimplifiedCriterion,
 };
@@ -735,8 +736,8 @@ async fn expunged_data(user_id: &str) -> DbResult<[(&'static str, SetValue); 3]>
     ])
 }
 
-/// Marks the mails `lookup` finds in a mapped box expunged, and returns the
-/// UID each held there. Nothing is reserved or written when it finds none.
+/// Marks the mails `lookup` finds expunged, and returns the UID each held in
+/// the box. Nothing is reserved or written when it finds none.
 async fn expunge_mapped(user_id: &str, lookup: &super::table::PreparedQuery) -> DbResult<Vec<i64>> {
     let selected = run_query(lookup).await?;
     if selected.rows.is_empty() {
@@ -765,11 +766,18 @@ async fn expunge_domain(user_id: &str, filters: &[(&str, Filter)]) -> DbResult<V
 
 /// EXPUNGE: marks the mailbox's `\Deleted` messages expunged (the rows stay)
 /// and returns their UIDs. A database fault reads as nothing expunged.
+///
+/// Only the unified Sent view takes the single UPDATE. INBOX and the utility
+/// views first look up their `\Deleted` mails less those filed somewhere
+/// else, which they list but must not destroy
+/// (`build_expunge_deleted_inbox_query`); a mapped box joins its own rows.
 pub async fn expunge_deleted_mails(user_id: &str, mailbox: Option<&str>, sent: bool) -> Vec<i64> {
-    let expunged = if uses_domain_uid_space(mailbox) {
+    let expunged = if !uses_domain_uid_space(mailbox) {
+        expunge_mapped(user_id, &build_expunge_deleted_select_query(user_id, mailbox, sent)).await
+    } else if sent {
         expunge_domain(user_id, &build_expunge_deleted_filters(user_id, mailbox, sent)).await
     } else {
-        expunge_mapped(user_id, &build_expunge_deleted_select_query(user_id, mailbox, sent)).await
+        expunge_mapped(user_id, &build_expunge_deleted_inbox_query(user_id, mailbox, sent)).await
     };
     expunged.unwrap_or_else(|error| {
         logger::error_with("Failed to expunge deleted mails", json!({}), &error);
@@ -1496,19 +1504,39 @@ mod tests {
     // EXPUNGE over the pool.
 
     #[tokio::test]
-    async fn a_domain_expunge_reserves_a_mod_sequence_then_marks_the_deleted_rows() {
+    async fn a_unified_sent_expunge_reserves_a_mod_sequence_then_marks_the_deleted_rows() {
         let (uids, trace) = with_script(
             vec![rows(json!([{ "next_uid": 31 }])), rows(json!([{ "uid": 2 }, { "uid": 7 }]))],
-            expunge_deleted_mails(USER, None, false),
+            expunge_deleted_mails(USER, None, true),
         )
         .await;
         assert_eq!(uids, vec![2, 7]);
         assert!(trace[0].sql.contains("INSERT INTO mail_uid_counters"));
         assert_eq!(
             trace[1].sql,
-            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 AND is_spam = $7 AND draft = $8 RETURNING uid_domain as uid"
+            "UPDATE mails SET expunged = $1, updated = CURRENT_TIMESTAMP, modseq = $2 WHERE user_id = $3 AND sent = $4 AND deleted = $5 AND expunged = $6 RETURNING uid_domain as uid"
         );
-        assert_eq!(trace[1].values, params![true, 31, USER, false, true, false, false, false]);
+        assert_eq!(trace[1].values, params![true, 31, USER, true, true, false]);
+    }
+
+    #[tokio::test]
+    async fn an_inbox_expunge_looks_up_what_inbox_may_remove_then_marks_it() {
+        // A copy filed into Trash is listed in INBOX flagged \Deleted; the
+        // lookup leaves it out, so it is never marked.
+        for mailbox in [None, Some("Drafts"), Some("Junk")] {
+            let (uids, trace) = with_script(
+                vec![
+                    rows(json!([{ "mail_id": MAIL, "uid": 2 }])),
+                    rows(json!([{ "next_uid": 31 }])),
+                    rows(json!([{ "mail_id": MAIL }])),
+                ],
+                expunge_deleted_mails(USER, mailbox, false),
+            )
+            .await;
+            assert_eq!(uids, vec![2]);
+            assert_eq!(trace[0], build_expunge_deleted_inbox_query(USER, mailbox, false));
+            assert_eq!(trace[2].values, params![true, 31, MAIL]);
+        }
     }
 
     #[tokio::test]

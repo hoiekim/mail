@@ -249,6 +249,16 @@ describe("changes made over IMAP, seen over HTTP", () => {
     imap.close();
   });
 
+  test("a message moved into Trash over IMAP is still there over HTTP after an EXPUNGE in INBOX", async () => {
+    const { imap, http, domain } = await account(2);
+    await imap.command("MOVE 1 Trash");
+    await imap.command("EXPUNGE");
+    expect(await counts(http)).toEqual({ doc_count: 2, unread_doc_count: 2, saved_doc_count: 0 });
+    const { body } = await http.get(`/api/mails/headers/hello@${domain}`);
+    expect(body.body.map((mail: { subject: string }) => mail.subject).sort()).toEqual(["Mail 1", "Mail 2"]);
+    imap.close();
+  });
+
   test("a body fetched over IMAP marks the mail read for HTTP too", async () => {
     const { imap, http } = await account(1);
     await imap.command("FETCH 1 (BODY[])");

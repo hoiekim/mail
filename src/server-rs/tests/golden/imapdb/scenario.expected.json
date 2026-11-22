@@ -170867,7 +170867,7 @@
     "expunged": false,
     "insight": null,
     "uid_domain": 1,
-    "modseq": 4,
+    "modseq": 3,
     "spam_score": 0,
     "spam_reasons": null,
     "is_spam": false,
@@ -170926,7 +170926,7 @@
     "expunged": false,
     "insight": null,
     "uid_domain": 2,
-    "modseq": 5,
+    "modseq": 4,
     "spam_score": 0,
     "spam_reasons": null,
     "is_spam": false,
@@ -173187,7 +173187,7 @@
     "uid_kind": "modseq",
     "uid_scope": "",
     "sent": false,
-    "last_uid": 245
+    "last_uid": 244
    },
    {
     "user_id": "a0000000-0000-4000-8000-000000000002",
@@ -173257,7 +173257,7 @@
     "uid_kind": "modseq",
     "uid_scope": "",
     "sent": false,
-    "last_uid": 6
+    "last_uid": 5
    }
   ],
   "mailboxes": [

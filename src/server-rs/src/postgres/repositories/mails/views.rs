@@ -21,7 +21,7 @@
 //! let filter = membership_condition(Some("Junk"), false, "m."); // " AND m.is_spam = TRUE"
 //! ```
 
-const INBOX_ACCOUNTS_PREFIX: &str = "INBOX/accounts/";
+pub const INBOX_ACCOUNTS_PREFIX: &str = "INBOX/accounts/";
 
 /// The name the INBOX tree's mapping rows are recorded under in
 /// `mail_mailbox_uid`. Matched case-insensitively on the way in, per RFC 3501
