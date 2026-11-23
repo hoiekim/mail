@@ -912,6 +912,14 @@ impl ImapSession {
     /// error rather than letting through a grant that could not be proven
     /// current.
     pub async fn verify_credential_version(&self, tag: &str) -> Result<bool> {
+        // An unstamped session carries no grant to re-check, its scope included.
+        let stamped = {
+            let state = self.state();
+            state.authenticated && state.authenticated_as.is_some() && state.credential_password_version.is_some()
+        };
+        if !stamped {
+            return Ok(true);
+        }
         let current = self
             .verify_credential_version_with(tag, |username: &str| {
                 let username = username.to_string();

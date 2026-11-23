@@ -140,6 +140,20 @@ impl AuthBackend for ServerAuthBackend {
     }
 }
 
+/// `undefined` fields are left out of a Bun log line; `null` stands for them here.
+trait WithoutNulls {
+    fn without_nulls(self) -> Self;
+}
+
+impl WithoutNulls for serde_json::Value {
+    fn without_nulls(mut self) -> Self {
+        if let Some(object) = self.as_object_mut() {
+            object.retain(|_, value| !value.is_null());
+        }
+        self
+    }
+}
+
 /// The session a login opens.
 struct Resolved {
     /// The account whose rows the session reads.
@@ -445,7 +459,8 @@ pub async fn handle_authenticate(
             "isReadOnly": resolved.is_read_only,
             "remote": format!("{ip}:{}", connection.remote_port()),
             "mechanism": "PLAIN",
-        }),
+        })
+        .without_nulls(),
     );
     connection.write(&format!("{tag} OK [CAPABILITY {}] AUTHENTICATE completed\r\n", connection.capabilities()));
     Some(resolved.into_auth_result())
@@ -489,7 +504,8 @@ pub async fn handle_login(
             "effectiveUsername": resolved.user.username,
             "isReadOnly": resolved.is_read_only,
             "remote": format!("{ip}:{}", connection.remote_port()),
-        }),
+        })
+        .without_nulls(),
     );
     connection.write(&format!("{tag} OK [CAPABILITY {}] LOGIN completed\r\n", connection.capabilities()));
     Ok(Some(resolved.into_auth_result()))

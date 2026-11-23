@@ -308,11 +308,11 @@ struct DestContext {
     preserves_recipient: bool,
 }
 
-fn resolve_dest_context(username: &str, destination: &str) -> DestContext {
+fn resolve_dest_context(primary_domain: &str, destination: &str) -> DestContext {
     let is_domain_scoped = is_domain_scoped(destination);
     let is_mapped_utility = is_mapped_utility_folder(destination);
     DestContext {
-        account: box_to_account(username, destination),
+        account: box_to_account(primary_domain, destination),
         is_sent: is_sent_box(destination),
         is_domain_scoped,
         is_mapped_utility,
@@ -418,7 +418,7 @@ async fn copy_or_move(args: &Value, is_move: bool) -> Outcome {
     if sources.is_empty() {
         return Ok(json!({ "status": "nothing" }));
     }
-    let context = resolve_dest_context(&store.get_user().username, &destination);
+    let context = resolve_dest_context(store.get_primary_domain(), &destination);
     let source_is_domain_scoped = is_domain_scoped(mailbox);
     let source_uid = |mail: &StoreFetchedMail| {
         let uid = mail.uid.expect("the uid was read");
@@ -818,7 +818,7 @@ impl Harness {
                 mail.deleted = has("\\Deleted");
                 mail.answered = has("\\Answered");
                 let user = store.get_user().clone();
-                let account = box_to_account(&user.username, &target);
+                let account = box_to_account(store.get_primary_domain(), &target);
                 let target_is_sent = is_sent_box(&target);
                 mail.sent = target_is_sent;
                 mail.uid.domain = get_domain_uid_next(&user.id, target_is_sent).await?;

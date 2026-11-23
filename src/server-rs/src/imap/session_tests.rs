@@ -612,9 +612,30 @@ mod store_backed_commands {
         {
             let mut state = fixture.session.state();
             state.authenticated = true;
-            state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into())), crate::imap::store::StoreScope::whole_store(&crate::domains::account_domain("tester"))));
-            state.authenticated_as = Some(if read_only_user { "admin-ro" } else { "tester" }.into());
+            // A read-only session is a login scoped to a domain the person
+            // only views: the owner's store, filtered to that domain.
+            let scope = if read_only_user {
+                let domains = vec!["example.com".to_string()];
+                crate::imap::store::StoreScope {
+                    domains: Some(domains.clone()),
+                    account_domains: domains,
+                    primary_domain: "example.com".into(),
+                }
+            } else {
+                crate::imap::store::StoreScope::whole_store(&crate::domains::account_domain("tester"))
+            };
+            state.store = Some(Store::new(
+                SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into())),
+                scope,
+            ));
+            state.authenticated_as = Some(if read_only_user { "auditor" } else { "tester" }.into());
             state.is_read_only_user = read_only_user;
+            state.scope = read_only_user.then(|| crate::imap::auth::SessionScope {
+                user_id: "viewer-id".into(),
+                domain: "example.com".into(),
+                role: crate::postgres::repositories::domains::DomainRole::Viewer,
+                owner_id: "user-1".into(),
+            });
             state.selected_mailbox = (!mailbox.is_empty()).then(|| mailbox.to_string());
             state.mailbox_read_only = examined || read_only_user;
         }
@@ -676,7 +697,7 @@ mod store_backed_commands {
     async fn a_read_only_credential_is_refused_every_change() {
         let _budget = crate::imap::command_budget::test_lock().await;
         let fixture = selected("INBOX", true, false);
-        let refusal = |command: &str| format!("a NO [READ-ONLY] {command} not permitted for read-only user (admin-ro).\r\n");
+        let refusal = |command: &str| format!("a NO [READ-ONLY] {command} not permitted: auditor can only read example.com.\r\n");
         for (line, command) in [
             ("a CREATE x", "CREATE"),
             ("a DELETE x", "DELETE"),
