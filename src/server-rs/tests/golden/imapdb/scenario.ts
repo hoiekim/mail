@@ -798,7 +798,7 @@ const copyOrMove = async (a: Args, move: boolean): Promise<unknown> => {
   }
   if (sources.length === 0) return { status: "nothing" };
   const user = store.getUser();
-  const dest = resolveDestContext(user.username, destination);
+  const dest = resolveDestContext(store.getPrimaryDomain(), destination);
   const sourceIsDomainScoped = util.isDomainScoped(box);
   const srcUidOf = (mail: StoreFetchedMail) => (sourceIsDomainScoped ? mail.uid!.domain : mail.uid!.account);
   sources.sort((x, y) => srcUidOf(x) - srcUidOf(y));
@@ -1030,7 +1030,7 @@ const ops: Record<string, (a: Args) => Promise<unknown>> = {
     mail.deleted = flags.includes("\\Deleted");
     mail.answered = flags.includes("\\Answered");
     const user = store.getUser();
-    const account = util.boxToAccount(user.username, target);
+    const account = util.boxToAccount(store.getPrimaryDomain(), target);
     const targetIsSent = util.isSentBox(target);
     mail.sent = targetIsSent;
     mail.uid.domain = await counters.getDomainUidNext(user.id, targetIsSent);
