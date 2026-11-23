@@ -28,7 +28,7 @@ use crate::postgres::repositories::mails::imap_query::{self as query, DateKey, S
 use crate::postgres::repositories::mails::table::script::with_script;
 use crate::postgres::repositories::mails::table::{Filter, PreparedQuery, Record, Rows};
 use crate::postgres::{DbError, DbResult, Param};
-use crate::util::{get_domain, get_user_domain};
+use crate::util::get_domain;
 
 const BUILDERS: &str = include_str!("builders.json");
 const TRACES: &str = include_str!("traces.json");
@@ -145,7 +145,7 @@ fn normalize(value: Value) -> Value {
 fn localize(value: &Value) -> Value {
     match value.as_str() {
         Some("mydomain") => json!(get_domain()),
-        Some("alice.mydomain") => json!(get_user_domain("alice")),
+        Some("alice.mydomain") => json!(format!("alice.{}", get_domain())),
         _ => value.clone(),
     }
 }

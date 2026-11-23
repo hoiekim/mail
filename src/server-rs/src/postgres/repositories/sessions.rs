@@ -153,12 +153,6 @@ pub async fn purge_sessions() -> Result<u64, DbError> {
     delete_where("cookie_expires IS NOT NULL AND cookie_expires <= $1", &params![js::now_iso()]).await
 }
 
-/// Deletes every session a given credential issued: revoking a credential
-/// has to reach the sessions already minted from it.
-pub async fn delete_sessions_authenticated_as(authenticated_as: &str) -> Result<u64, DbError> {
-    delete_where("session_authenticated_as = $1", &params![authenticated_as]).await
-}
-
 /// Deletes every session issued to a user, whichever credential minted it.
 pub async fn delete_sessions_for_user(user_id: &str) -> Result<u64, DbError> {
     delete_where("session_user_id = $1", &params![user_id]).await
