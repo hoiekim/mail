@@ -168,13 +168,19 @@ bun run user disable bob                        # end bob's password sign-in and
 ```
 
 In the Docker image, which carries only the built files, the same script is
-`bun ./build/cli/user.js`. Run it in the container, which has the server's
-environment, with `-i` so the password can be read:
+`bun ./build/cli/user.js`. With the `docker-compose.yml` setup, run it in the
+`mail` service, which has the server's environment and reaches its database;
+`exec` gives it a terminal, so a password is prompted for without echo:
 
 ```
-docker exec -i <container> bun ./build/cli/user.js create alice
-docker exec -i <container> bun ./build/cli/user.js add-domain alice example.org
+docker-compose exec mail bun ./build/cli/user.js create alice
+docker-compose exec mail bun ./build/cli/user.js add-domain alice example.org
+printf '%s\n' "$PASSWORD" | docker-compose exec -T mail bun ./build/cli/user.js set-password alice
 ```
+
+`-T` (no terminal) is for a piped password, as in the last line. With plain
+`docker`, use `docker exec -it <container> …` to type a password and
+`docker exec -i <container> …` to pipe one.
 
 `--domain` and `add-domain` assign a domain without the DNS check described
 below: run by the operator, the script vouches for it. That is how the account
@@ -277,12 +283,19 @@ bare `*@<EMAIL_DOMAIN>`, and offered a read-only `admin-ro` login through
    bun run user disable admin-ro                  # retire the read-only login
    ```
 
-   With Docker, run the new image once with the server's environment:
+   With the `docker-compose.yml` setup, build the new image and run the
+   commands in a one-off `mail` container, which has the service's
+   environment and network, before `docker-compose up -d` replaces the
+   running one:
 
    ```
-   docker run --rm --env-file .env <new image> bun ./build/cli/user.js add-domain admin <EMAIL_DOMAIN>
-   docker run --rm --env-file .env <new image> bun ./build/cli/user.js disable admin-ro
+   docker-compose build mail
+   docker-compose run --rm mail bun ./build/cli/user.js add-domain admin <EMAIL_DOMAIN>
+   docker-compose run --rm mail bun ./build/cli/user.js disable admin-ro
    ```
+
+   A container started another way needs the server's `POSTGRES_*` settings
+   and a network on which its database host resolves.
 
    Until an account owns `<EMAIL_DOMAIN>`, mail to `*@<EMAIL_DOMAIN>` is
    refused, and each boot warns about it.

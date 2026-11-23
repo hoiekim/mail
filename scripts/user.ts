@@ -39,9 +39,14 @@ const fail = (message: string): never => {
 const readPassword = async (prompt: string): Promise<string> => {
   const stdin = process.stdin;
   if (!stdin.isTTY) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of stdin) chunks.push(chunk as Buffer);
-    return Buffer.concat(chunks).toString("utf8").split(/\r?\n/)[0] ?? "";
+    // The first line, without waiting for the end of input: a password typed
+    // into a session with no terminal (`docker exec -i`) ends at Enter too.
+    let text = "";
+    for await (const chunk of stdin) {
+      text += (chunk as Buffer).toString("utf8");
+      if (/\r?\n/.test(text)) break;
+    }
+    return text.split(/\r?\n/)[0] ?? "";
   }
   process.stdout.write(prompt);
   stdin.setRawMode(true);
