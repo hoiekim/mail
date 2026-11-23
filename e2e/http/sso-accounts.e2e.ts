@@ -237,6 +237,16 @@ describe("3. the one account with the person's email address", () => {
 });
 
 describe("4. a new account named after the provider username", () => {
+  test("owns its own name under the served zone from its first sign-in", async () => {
+    const client = server.client();
+    const created = await signedInAs(person("newcomer", { email: null }), client);
+    expect(created.username).toBe("newcomer");
+    const { body } = await client.get("/api/domains");
+    expect(body.body.domains.map((d: { name: string; role: string }) => [d.name, d.role])).toEqual([
+      ["newcomer.mail.test", "owner"],
+    ]);
+  });
+
   test("is created with the token's address, verified or not", async () => {
     for (const [username, emailVerified] of [
       ["vera", true],

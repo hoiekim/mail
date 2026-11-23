@@ -250,6 +250,21 @@ fn a_completed_sign_up_owns_its_own_name_under_the_served_zone() {
 }
 
 #[test]
+fn an_account_single_sign_on_creates_owns_its_own_name_under_the_served_zone() {
+    use mail_server::sso::accounts::{AccountDirectory, PostgresAccountDirectory};
+    with_database(|| async {
+        let name = unique("sso");
+        let account = PostgresAccountDirectory
+            .create(&name, &format!("{name}@elsewhere.example"), &format!("usr_{name}"))
+            .await
+            .unwrap()
+            .expect("the account is created");
+        let owned = mail_server::domains::owned_domain_names(&account.user_id).await.unwrap();
+        assert_eq!(owned, vec![mail_server::domains::account_domain(&name)]);
+    });
+}
+
+#[test]
 fn no_name_is_reserved_any_more() {
     with_database(|| async {
         // `admin` is an account name like any other: it owns no domain of

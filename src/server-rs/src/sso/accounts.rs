@@ -13,6 +13,7 @@ use crate::postgres::repositories::users::{
     update_user_email, UserModel,
 };
 use crate::domains::{account_domain, others_can_read_address};
+use crate::postgres::repositories::domains::assign_domain;
 use crate::users::is_valid_email;
 use crate::util::is_routable_username;
 
@@ -265,7 +266,12 @@ impl AccountDirectory for PostgresAccountDirectory {
     }
 
     async fn create(&self, username: &str, email: &str, sub: &str) -> Result<Option<LocalAccount>> {
-        Ok(to_found_account(insert_sso_user(username, email, sub).await?))
+        let created = to_found_account(insert_sso_user(username, email, sub).await?);
+        // A new account owns its own name under the served zone.
+        if let Some(account) = &created {
+            assign_domain(&account.user_id, &account_domain(&account.username)).await?;
+        }
+        Ok(created)
     }
 
     async fn update_email(&self, user_id: &str, email: &str) -> Result<()> {
