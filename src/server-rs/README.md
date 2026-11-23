@@ -146,6 +146,11 @@ deliberate or unavoidable, and no test pins them:
   reads (a JSON one from Rust when the body was streamed past it), and an
   unknown method containing digits or `_` (Bun answers 400, Rust closes the
   connection).
+- **Panics.** A panic pages "Uncaught Exception", as an uncaught exception
+  does on Bun, but ends only the command or connection it happened in, where
+  Bun exits and Docker restarts it. A panic while a shared lock is held (rate
+  limits, the IMAP session registry) poisons that lock, and everything that
+  takes it afterwards fails too: restart the server on a repeated page.
 - **Passwords.** Only bcrypt digests are verified. Bun would also verify an
   argon2 digest, which nothing in the app ever writes.
 - **Ordering where Bun's is a race.** A FETCH over several comma-separated
