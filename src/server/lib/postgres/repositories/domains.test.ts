@@ -215,11 +215,14 @@ if (PG_URL) describe("domain statements against a real Postgres", () => {
     expect((await run(buildInsertClaim(b, "example.net", "tb"))).rowCount).toBe(1);
   });
 
-  it("backfills each account's own name once, skipping unfinished, deleted and unroutable ones", async () => {
+  it("backfills each account's own name once, skipping deleted and unroutable ones", async () => {
     await fresh();
     const bob = await addUser("bob");
     await addUser("carol", { password: null, auth_sub: "usr_carol" });
+    // A sign-up still setting its password: its placeholder is no DNS label,
+    // and a routable name gets its domain like any account.
     await addUser("user_1234abcd", { password: null });
+    await addUser("frank", { password: null });
     await addUser("dave", { is_deleted: true });
     await addUser("Not_A_Label");
     // A name already taken stays with its owner.
@@ -230,7 +233,7 @@ if (PG_URL) describe("domain statements against a real Postgres", () => {
     await run(buildBackfillAccountDomains("example.com"));
 
     const rows = (await q("SELECT name, user_id FROM domains ORDER BY name")).rows;
-    expect(rows.map((row) => row.name)).toEqual(["bob.example.com", "carol.example.com", "eve.example.com"]);
+    expect(rows.map((row) => row.name)).toEqual(["bob.example.com", "carol.example.com", "eve.example.com", "frank.example.com"]);
     expect(rows.find((row) => row.name === "bob.example.com")!.user_id).toBe(eve);
     expect(rows.some((row) => row.user_id === bob)).toBe(false);
   });

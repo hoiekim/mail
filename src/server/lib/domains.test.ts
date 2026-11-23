@@ -206,12 +206,20 @@ describe("resolveDeliveryDomain", () => {
     expect(findUserByUsername).not.toHaveBeenCalled();
   });
 
-  it("delivers nothing to an unfinished, deleted or missing account under the zone", async () => {
-    for (const row of [
-      account({ password: null }),
-      account({ is_deleted: true }),
-      null,
-    ]) {
+  it("delivers nothing to a soft-deleted owner, and keeps its name taken", async () => {
+    findDomain.mockResolvedValue({ domainId: "d", name: "bob.example.com", ownerId: "u-bob", ownerDeleted: true });
+    expect(await resolveDeliveryDomain("x@bob.example.com")).toBeNull();
+    expect(findUserByUsername).not.toHaveBeenCalled();
+    expect(assignDomain).not.toHaveBeenCalled();
+  });
+
+  it("gives a sign-up still setting its password its row, as the backfill does", async () => {
+    findUserByUsername.mockResolvedValue(account({ password: null }));
+    expect(await resolveDeliveryDomain("x@bob.example.com")).toEqual({ domain: "bob.example.com", ownerId: "u-bob" });
+  });
+
+  it("delivers nothing to a deleted or missing account under the zone", async () => {
+    for (const row of [account({ is_deleted: true }), null]) {
       findUserByUsername.mockResolvedValue(row);
       expect(await resolveDeliveryDomain("x@bob.example.com")).toBeNull();
     }

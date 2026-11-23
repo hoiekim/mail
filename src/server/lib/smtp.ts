@@ -536,7 +536,11 @@ export const onRcptTo: SmtpServerOptions["onRcptTo"] = async (
     const { EMAIL_DOMAIN } = process.env;
     if (!EMAIL_DOMAIN) return cb();
 
-    if (isRecipientProbeRateLimited(ip)) return cb(new TooManyProbesError());
+    // The budget guards the names under the served zone, the only addresses a
+    // refusal charges to it: they are account names. Any other domain is
+    // looked up freely, since which domains a host serves is public in DNS.
+    const local = isLocalAddress(address.address, EMAIL_DOMAIN);
+    if (local && isRecipientProbeRateLimited(ip)) return cb(new TooManyProbesError());
 
     const delivery = await resolveDeliveryDomain(address.address);
     if (delivery) {
@@ -546,7 +550,7 @@ export const onRcptTo: SmtpServerOptions["onRcptTo"] = async (
     }
     // A foreign recipient is not this host's to judge: the relay decision
     // belongs to `onData`, which needs the envelope complete.
-    if (!isLocalAddress(address.address, EMAIL_DOMAIN)) return cb();
+    if (!local) return cb();
 
     const username = domainOfAddress(address.address);
     logger.warn("SMTP: refused a recipient with no mailbox", {

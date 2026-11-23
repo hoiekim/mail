@@ -126,15 +126,16 @@ export const resolveDeliveryDomain = async (address: string): Promise<DeliveryDo
   const domain = domainOfAddress(address);
   if (!domain) return null;
   const row = await findDomain(domain);
-  if (row) return { domain: row.name, ownerId: row.ownerId };
+  // A soft-deleted account has no mailbox, and its name stays taken.
+  if (row) return row.ownerDeleted ? null : { domain: row.name, ownerId: row.ownerId };
 
   const zone = servedZone();
   if (!domain.endsWith(`.${zone}`)) return null;
   const label = domain.slice(0, -(zone.length + 1));
   if (!isRoutableUsername(label)) return null;
   const account = await findUserByUsername(label);
+  // A sign-up still setting its password counts, as in the boot backfill.
   if (!account || account.is_deleted) return null;
-  if (account.password === null && account.auth_sub === null) return null;
   if (!(await assignDomain(account.user_id, domain))) {
     const raced = await findDomain(domain);
     return raced ? { domain: raced.name, ownerId: raced.ownerId } : null;

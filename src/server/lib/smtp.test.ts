@@ -705,6 +705,20 @@ describe("onRcptTo handler", () => {
     expect(mockGetUser).not.toHaveBeenCalled();
   });
 
+  it("once an address's probe budget is spent, refuses names under the zone but still passes and delivers other domains", async () => {
+    mockIsRecipientProbeRateLimited.mockReturnValue(true);
+    mockResolveDeliveryDomain.mockClear();
+
+    expect((await rcpt("x@alice.test.com"))?.message).toMatch(/too many unknown recipients/);
+    expect(mockResolveDeliveryDomain).not.toHaveBeenCalled();
+    // A foreign domain is not this host's to judge, and an added domain is
+    // public in DNS anyway: neither is gated.
+    expect(await rcpt("someone@other.com")).toBeUndefined();
+    mockResolveDeliveryDomain.mockResolvedValueOnce({ domain: "example.org", ownerId: "owner-1" });
+    expect(await rcpt("info@example.org")).toBeUndefined();
+    expect(mockRecordRecipientProbe).not.toHaveBeenCalled();
+  });
+
   it("passes a domain that merely ends in the served one without looking a user up", async () => {
     mockGetUser.mockResolvedValue({ id: "u1" });
 
@@ -832,12 +846,12 @@ describe("onRcptTo handler", () => {
   });
 
   it("passes a foreign recipient without charging the budget", async () => {
-    // Whether a domain is someone's verified one is a lookup too, so the
-    // budget gates it; only a refusal is charged.
+    // Only names under the served zone are gated and charged: they are
+    // account names, and which other domains a host serves is public in DNS.
     const err = await rcpt("someone@other.com");
 
     expect(err).toBeUndefined();
-    expect(mockIsRecipientProbeRateLimited).toHaveBeenCalled();
+    expect(mockIsRecipientProbeRateLimited).not.toHaveBeenCalled();
     expect(mockRecordRecipientProbe).not.toHaveBeenCalled();
   });
 });

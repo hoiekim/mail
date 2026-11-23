@@ -88,16 +88,22 @@ export interface DomainRow {
   domainId: string;
   name: string;
   ownerId: string;
+  /** The owner's account is soft-deleted: the name stays taken, and nothing is delivered to it. */
+  ownerDeleted?: boolean;
 }
 
 /** The domain row for `name`, whoever owns it. */
 export const findDomain = async (name: string): Promise<DomainRow | null> => {
-  const result = await pool.query<{ domain_id: string; name: string; user_id: string }>(
-    `SELECT domain_id, name, user_id FROM ${DOMAINS} WHERE name = $1`,
+  const result = await pool.query<{ domain_id: string; name: string; user_id: string; owner_deleted: boolean }>(
+    `SELECT d.domain_id, d.name, d.user_id, (u.is_deleted IS TRUE) AS owner_deleted
+     FROM ${DOMAINS} d JOIN ${USERS} u ON u.user_id = d.user_id
+     WHERE d.name = $1`,
     [name.toLowerCase()]
   );
   const row = result.rows[0];
-  return row ? { domainId: row.domain_id, name: row.name, ownerId: row.user_id } : null;
+  return row
+    ? { domainId: row.domain_id, name: row.name, ownerId: row.user_id, ownerDeleted: row.owner_deleted }
+    : null;
 };
 
 export const buildReadersOfDomain = (name: string): PreparedQuery => ({
@@ -140,14 +146,15 @@ export const assignDomain = async (userId: string, name: string): Promise<boolea
 };
 
 export const buildBackfillAccountDomains = (zone: string): PreparedQuery => ({
-  // An account's own name under the served zone, for every account that can
-  // sign in (it has a password or a single sign-on link) and whose username
-  // is a DNS label. Idempotent, and a name already taken stays with its owner.
+  // An account's own name under the served zone, for every account that is
+  // not deleted and whose username is a DNS label. A sign-up still setting
+  // its password counts: it completes on the same row, so mail delivered to
+  // it meanwhile is kept for it. (Its placeholder name is no DNS label.)
+  // Idempotent, and a name already taken stays with its owner.
   sql: `
     INSERT INTO ${DOMAINS} (name, user_id)
     SELECT username || '.' || $1, user_id FROM ${USERS}
     WHERE is_deleted IS NOT TRUE
-      AND (password IS NOT NULL OR auth_sub IS NOT NULL)
       AND username ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
     ON CONFLICT (name) DO NOTHING`,
   values: [zone.toLowerCase()],
