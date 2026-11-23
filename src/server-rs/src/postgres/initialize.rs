@@ -137,7 +137,7 @@ pub async fn initialize_domains() -> Result<()> {
     if find_domain(&zone).await?.is_none() {
         logger::warn(
             format!(
-                "[CONFIG WARNING] No account owns {zone}, so mail to *@{zone} is refused.\n  Give it to an account with: bun run user add-domain <username> {zone}"
+                "[CONFIG WARNING] No account owns {zone}, so mail to *@{zone} is refused.\n  Give it to an account with: bun run user add-domain <username> {zone}\n  (from the built files, as in the Docker image: bun ./build/cli/user.js add-domain <username> {zone})"
             ),
             json!({}),
         );

@@ -797,7 +797,6 @@ const copyOrMove = async (a: Args, move: boolean): Promise<unknown> => {
     batch.forEach((mail) => sources.push(mail));
   }
   if (sources.length === 0) return { status: "nothing" };
-  const user = store.getUser();
   const dest = resolveDestContext(store.getPrimaryDomain(), destination);
   const sourceIsDomainScoped = util.isDomainScoped(box);
   const srcUidOf = (mail: StoreFetchedMail) => (sourceIsDomainScoped ? mail.uid!.domain : mail.uid!.account);

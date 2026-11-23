@@ -167,6 +167,15 @@ bun run user add-domain alice example.org       # give an existing account a dom
 bun run user disable bob                        # end bob's password sign-in and sessions
 ```
 
+In the Docker image, which carries only the built files, the same script is
+`bun ./build/cli/user.js`. Run it in the container, which has the server's
+environment, with `-i` so the password can be read:
+
+```
+docker exec -i <container> bun ./build/cli/user.js create alice
+docker exec -i <container> bun ./build/cli/user.js add-domain alice example.org
+```
+
 `--domain` and `add-domain` assign a domain without the DNS check described
 below: run by the operator, the script vouches for it. That is how the account
 that should receive the bare `*@<EMAIL_DOMAIN>` gets it. A domain someone else
@@ -268,6 +277,13 @@ bare `*@<EMAIL_DOMAIN>`, and offered a read-only `admin-ro` login through
    bun run user disable admin-ro                  # retire the read-only login
    ```
 
+   With Docker, run the new image once with the server's environment:
+
+   ```
+   docker run --rm --env-file .env <new image> bun ./build/cli/user.js add-domain admin <EMAIL_DOMAIN>
+   docker run --rm --env-file .env <new image> bun ./build/cli/user.js disable admin-ro
+   ```
+
    Until an account owns `<EMAIL_DOMAIN>`, mail to `*@<EMAIL_DOMAIN>` is
    refused, and each boot warns about it.
 3. Roll out. Each boot gives every account that has none the domain row for
@@ -276,7 +292,8 @@ bare `*@<EMAIL_DOMAIN>`, and offered a read-only `admin-ro` login through
 4. Remove `ADMIN_PASSWORD` and `ADMIN_PASSWORD_RESET`.
 
 `admin` is an ordinary account from then on: it keeps its password, and resets
-it like any other account, or with `bun run user set-password admin`. To give
+it like any other account, or with `bun run user set-password admin`
+(`bun ./build/cli/user.js set-password admin` in the image). To give
 someone the access `admin-ro` had, give their account the viewer role on
 `<EMAIL_DOMAIN>`. A session `admin-ro` signed in before the upgrade ends at its
 next request.

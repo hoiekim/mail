@@ -92,7 +92,7 @@ Required for full functionality:
 - `SECRET` — Express session secret
 - `EMAIL_DOMAIN` — The served zone: each account receives mail at `*@<username>.<EMAIL_DOMAIN>`
 
-Accounts are created with `bun run user create <username>` (without single sign-on); nothing creates one at boot.
+Accounts are created with `bun run user create <username>` (without single sign-on), or `bun ./build/cli/user.js create <username>` from the built files, as in the Docker image; nothing creates one at boot. `bun run build-server` bundles both the server and that script.
 
 Optional:
 - `APP_HOSTNAME` — Server hostname for IMAP/SMTP TLS (falls back to `EMAIL_DOMAIN`)
