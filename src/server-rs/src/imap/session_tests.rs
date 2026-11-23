@@ -60,7 +60,7 @@ fn delay(ms: u64) -> tokio::time::Sleep {
 fn prime(session: &ImapSession, authenticated_as: &str, stamped: i64) {
     let mut state = session.state();
     state.authenticated = true;
-    state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some(authenticated_as.into()), Some("u@test".into()))));
+    state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some(authenticated_as.into()), Some("u@test".into())), crate::imap::store::StoreScope::whole_store(&crate::domains::account_domain(authenticated_as))));
     state.authenticated_as = Some(authenticated_as.into());
     state.credential_password_version = Some(stamped);
 }
@@ -142,7 +142,7 @@ mod verify_credential_version {
     async fn keys_the_comparison_on_the_credential_presented_not_a_remapped_user() {
         let fixture = fixture(false);
         prime(&fixture.session, "admin-ro", 1);
-        fixture.session.state().store = Some(Store::new(SignedUser::new(Some("user-admin".into()), Some("admin".into()), Some("a@test".into()))));
+        fixture.session.state().store = Some(Store::new(SignedUser::new(Some("user-admin".into()), Some("admin".into()), Some("a@test".into())), crate::imap::store::StoreScope::whole_store(&crate::domains::account_domain("admin"))));
 
         let ok = fixture
             .session
@@ -255,7 +255,7 @@ fn idling(advertised: &[i64]) -> Fixture {
     {
         let mut state = fixture.session.state();
         state.authenticated = true;
-        state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("alice".into()), Some("a@test".into()))));
+        state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("alice".into()), Some("a@test".into())), crate::imap::store::StoreScope::whole_store(&crate::domains::account_domain("alice"))));
         state.selected_mailbox = Some("INBOX".into());
         set_sequence_mapping(&mut state.seq_state, advertised.to_vec());
         state.is_idling = true;
@@ -612,7 +612,7 @@ mod store_backed_commands {
         {
             let mut state = fixture.session.state();
             state.authenticated = true;
-            state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into()))));
+            state.store = Some(Store::new(SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into())), crate::imap::store::StoreScope::whole_store(&crate::domains::account_domain("tester"))));
             state.authenticated_as = Some(if read_only_user { "admin-ro" } else { "tester" }.into());
             state.is_read_only_user = read_only_user;
             state.selected_mailbox = (!mailbox.is_empty()).then(|| mailbox.to_string());

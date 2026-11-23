@@ -34,7 +34,7 @@ use mail_server::imap::fetch_format::{convert_sequence_set, get_requested_fields
 use mail_server::imap::parsers::command_parser::parse_command;
 use mail_server::imap::sequence_resolver::{resolve_seq_range_to_uids, resolve_uid_range_sentinel};
 use mail_server::imap::store::{
-    Address, Mail, MailFlagUpdate, MailUid, Store, StoreFetchedMail, StoreOperationType, UpdatedMailFlags,
+    Address, Mail, MailFlagUpdate, MailUid, Store, StoreFetchedMail, StoreOperationType, StoreScope, UpdatedMailFlags,
 };
 use mail_server::imap::types::{ImapRequest, SequenceSet, SequenceSetType};
 use mail_server::imap::util::{
@@ -102,8 +102,11 @@ fn user(args: &Value) -> SignedUser {
     SignedUser::new(Some(id.to_string()), Some(username.to_string()), Some(email))
 }
 
+/// A plain login on the user's own domain, as the session opens one.
 fn store_of(args: &Value) -> Store {
-    Store::new(user(args))
+    let user = user(args);
+    let own_domain = user.email[user.email.find('@').unwrap() + 1..].to_string();
+    Store::new(user, StoreScope::whole_store(&own_domain))
 }
 
 fn user_id(args: &Value) -> String {
