@@ -1,6 +1,8 @@
 import { MailHeaderData, SignedUser, MailAddressValueType, Insight } from "common";
 import { searchMails, SearchMailResult } from "../postgres/repositories/mails";
 import { buildSnippet } from "./snippet";
+import { envelopeToOf } from "./headers";
+import { addressOnDomains, ownAddressDomains } from "../domains";
 
 export const searchMail = async (
   user: SignedUser,
@@ -11,9 +13,14 @@ export const searchMail = async (
   value = value.trim();
   if (!value) return [];
 
-  const mailModels = await searchMails(user.id, value, field);
+  const [mailModels, ownDomains] = await Promise.all([
+    searchMails(user.id, value, field),
+    ownAddressDomains(user.id),
+  ]);
+  const isOwn = addressOnDomains(ownDomains);
 
   return mailModels.map((m: SearchMailResult) => {
+    const envelopeTo = envelopeToOf(m, isOwn);
     return new MailHeaderData({
       id: m.mail_id,
       subject: m.subject,
@@ -34,14 +41,7 @@ export const searchMail = async (
       bcc: m.bcc_address
         ? { value: m.bcc_address as MailAddressValueType[], text: m.bcc_text || "" }
         : undefined,
-      ...(m.envelope_to
-        ? {
-            envelopeTo: {
-              value: m.envelope_to as MailAddressValueType[],
-              text: "",
-            },
-          }
-        : {}),
+      ...(envelopeTo ? { envelopeTo } : {}),
       highlight: m.highlight,
       snippet: buildSnippet(m.text_prefix),
       // Search spans the spam folder; the row says so.

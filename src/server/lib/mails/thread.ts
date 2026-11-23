@@ -6,6 +6,7 @@ import {
   ThreadRow
 } from "../postgres/repositories/mails/thread";
 import { toMailHeaderData } from "./headers";
+import { addressOnDomains } from "../domains";
 import {
   collectThread,
   hasThreadHeaders,
@@ -37,10 +38,7 @@ const defaultRepository: ThreadRepository = {
  * The user's own addresses: those on the domains they own. Another user's
  * address on this server is a correspondent like any other.
  */
-export const ownAddressesOf = (domains: string[]): IsOwnAddress => {
-  const owned = new Set(domains.map((domain) => domain.toLowerCase()));
-  return (address) => owned.has(address.toLowerCase().split("@").pop() ?? "");
-};
+export const ownAddressesOf = (domains: string[]): IsOwnAddress => addressOnDomains(domains);
 
 /**
  * Every message in the conversation `mailId` belongs to, oldest first, the
@@ -106,7 +104,7 @@ export const getThread = async (
   return thread
     .sort((a, b) => +new Date(a.date) - +new Date(b.date))
     .map((row) => {
-      const header = toMailHeaderData({ ...row, user_id: userId });
+      const header = toMailHeaderData({ ...row, user_id: userId }, isOwnAddress);
       if (row.is_spam) header.spam = true;
       return header;
     });

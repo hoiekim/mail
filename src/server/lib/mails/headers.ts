@@ -3,6 +3,7 @@ import {
   MaskedUser,
   Pagination,
   SignedUser,
+  MailAddressType,
   MailAddressValueType,
   Insight,
 } from "common";
@@ -19,6 +20,7 @@ import {
   MailHeaderResult,
 } from "../postgres/repositories/mails";
 import { buildSnippet } from "./snippet";
+import type { AddressPredicate } from "../domains";
 
 export interface GetMailsOptions {
   sent: boolean;
@@ -57,8 +59,35 @@ const resolveUserId = (user: MaskedUser | Pick<SignedUser, "id">): string | unde
 
 async function* noBatches(): AsyncGenerator<MailHeaderResult[]> {}
 
-export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
-  new MailHeaderData({
+const isRecipientIn = (entry: unknown, isReaders: AddressPredicate) => {
+  const address = (entry as { address?: unknown } | null)?.address;
+  return typeof address === "string" && isReaders(address);
+};
+
+/**
+ * A received row's `envelopeTo` as its reader may see it. Every owner a
+ * message is delivered to stores the whole envelope, Bcc recipients on other
+ * people's domains included, so only the recipients on the reader's domains
+ * are shown: `isReaders` is the owner's own domains, or for a viewer the
+ * domain they view.
+ */
+export const envelopeToOf = (
+  m: { envelope_to?: unknown; sent?: unknown },
+  isReaders: AddressPredicate
+): MailAddressType | undefined => {
+  if (!m.envelope_to) return undefined;
+  if (m.sent) return { value: m.envelope_to as MailAddressValueType[], text: "" };
+  const entries = Array.isArray(m.envelope_to) ? m.envelope_to : [m.envelope_to];
+  return {
+    value: entries.filter((entry) => isRecipientIn(entry, isReaders)),
+    text: "",
+  };
+};
+
+/** A list row as its reader sees it; `isReaders` is as for {@link envelopeToOf}. */
+export const toMailHeaderData = (m: MailHeaderResult, isReaders: AddressPredicate): MailHeaderData => {
+  const envelopeTo = envelopeToOf(m, isReaders);
+  return new MailHeaderData({
     id: m.mail_id,
     subject: m.subject,
     date: m.date,
@@ -74,16 +103,7 @@ export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
     bcc: m.bcc_address
       ? { value: m.bcc_address as MailAddressValueType[], text: m.bcc_text || "" }
       : undefined,
-    // No envelope text column exists — the envelope recipient is an SMTP-time
-    // value, never rendered, only read for account resolution.
-    ...(m.envelope_to
-      ? {
-          envelopeTo: {
-            value: m.envelope_to as MailAddressValueType[],
-            text: "",
-          },
-        }
-      : {}),
+    ...(envelopeTo ? { envelopeTo } : {}),
     read: m.read,
     saved: m.saved,
     sent: m.sent,
@@ -93,6 +113,7 @@ export const toMailHeaderData = (m: MailHeaderResult): MailHeaderData =>
     ...(m.in_reply_to ? { inReplyTo: m.in_reply_to } : {}),
     ...(m.reference_ids?.length ? { references: m.reference_ids } : {}),
   });
+};
 
 export const getMailHeaders = async (
   user: MaskedUser | Pick<SignedUser, "id">,
@@ -165,7 +186,8 @@ export const getMailHeadersDelta = async (
   user: MaskedUser | Pick<SignedUser, "id">,
   address: string,
   options: GetMailsOptions,
-  since: string
+  since: string,
+  isReaders: AddressPredicate
 ): Promise<MailHeadersDelta> => {
   const userId = resolveUserId(user);
   if (!userId) return { as_of: since, headers: [], expunged_ids: [] };
@@ -184,7 +206,11 @@ export const getMailHeadersDelta = async (
     since
   );
 
-  return { as_of, headers: headers.map(toMailHeaderData), expunged_ids };
+  return {
+    as_of,
+    headers: headers.map((row) => toMailHeaderData(row, isReaders)),
+    expunged_ids,
+  };
 };
 
 export const getUnifiedMailHeaders = async (
@@ -204,7 +230,8 @@ export const getUnifiedMailHeaders = async (
 export const getUnifiedMailHeadersDelta = async (
   user: MaskedUser | Pick<SignedUser, "id">,
   addresses: string[],
-  since: string
+  since: string,
+  isReaders: AddressPredicate
 ): Promise<MailHeadersDelta> => {
   const userId = resolveUserId(user);
   if (!userId) return { as_of: since, headers: [], expunged_ids: [] };
@@ -212,5 +239,9 @@ export const getUnifiedMailHeadersDelta = async (
   const { as_of, headers, expunged_ids } =
     await pgGetUnifiedMailHeadersDelta(userId, addresses, since);
 
-  return { as_of, headers: headers.map(toMailHeaderData), expunged_ids };
+  return {
+    as_of,
+    headers: headers.map((row) => toMailHeaderData(row, isReaders)),
+    expunged_ids,
+  };
 };

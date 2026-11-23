@@ -62,7 +62,8 @@ export const getHeadersRoute = new Route<
         reader.store,
         req.params.account,
         options,
-        since
+        since,
+        reader.isReaders
       );
       return { status: "success", body: delta };
     }
@@ -77,12 +78,14 @@ export const getHeadersRoute = new Route<
         pageParams.limit,
         pageParams.after
       );
-      return jsonList(batches, toMailHeaderData, {
+      return jsonList(batches, (row) => toMailHeaderData(row, reader.isReaders), {
         listKey: "headers",
         fields: { next_cursor: encodeListCursor(next) }
       });
     }
 
-    return jsonList(await getMailHeaders(reader.store, req.params.account, options), toMailHeaderData);
+    return jsonList(await getMailHeaders(reader.store, req.params.account, options), (row) =>
+      toMailHeaderData(row, reader.isReaders)
+    );
   }
 );

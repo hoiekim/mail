@@ -38,7 +38,9 @@ export const getUser = async (
     id: pgUser.user_id,
     username: pgUser.username,
     email: pgUser.email ?? undefined,
-    password: pgUser.password,
+    // Absent on a sign-up that has not set one yet: such an account is found,
+    // but cannot sign in or be signed.
+    password: pgUser.password ?? undefined,
     token: pgUser.token ?? undefined,
     expiry: pgUser.expiry ?? undefined,
     // Rows that predate the revocation fence read back null; the migration's
@@ -100,7 +102,9 @@ export const createToken = async (
   const existing = await getUser({ email });
   if (existing?.id) {
     await usersTable.update(existing.id, { [TOKEN]: token, [EXPIRY]: expiry });
-    return { id: existing.id, username: existing.username, token };
+    // A pending sign-up's username is the placeholder below, which nobody chose.
+    const username = existing.password === undefined ? undefined : existing.username;
+    return { id: existing.id, username, token };
   }
 
   const userId = crypto.randomUUID();
@@ -133,8 +137,6 @@ export const isValidEmail = (email: string) => {
  * reset in flight. A null `password` is what distinguishes them, so an expired
  * placeholder is reclaimed by deleting the row while a registered account
  * keeps its data and loses only the stale token.
- *
- * Reads the row as a model because `toUser` throws on a null password.
  */
 export const reclaimExpiredToken = async (userId: string): Promise<void> => {
   const model = await usersTable.queryOne({ [USER_ID]: userId });
@@ -194,17 +196,19 @@ export const setUserInfo = async (
     throw new Error("Setting userInfo failed because user token is expired.");
   }
 
-  const expiryTimeout = expiryTimer[id];
-  if (expiryTimeout) clearTimeout(expiryTimeout);
-
-  if (!existingUser.username) {
+  if (!existingUser.username || existingUser.password === undefined) {
     const findUserInfoByUsername = await getUser({ username });
-    if (findUserInfoByUsername) {
+    if (findUserInfoByUsername && findUserInfoByUsername.id !== id) {
       throw new Error("`setUserInfo` failed because username already exists.");
     }
   } else {
     username = existingUser.username;
   }
+
+  // Only once the request is known to go through: a refused name leaves the
+  // sign-up pending, with its reclaim still scheduled.
+  const expiryTimeout = expiryTimer[id];
+  if (expiryTimeout) clearTimeout(expiryTimeout);
 
   // Evict before the write so a failed DELETE aborts the rotation with the row
   // — and so the reset token — intact, leaving a retryable reset rather than a

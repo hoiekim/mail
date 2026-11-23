@@ -25,6 +25,7 @@ import {
   buildAllUidsQuery,
   buildCountMessagesQuery,
   buildExpungeDeletedFilters,
+  buildExpungeDeletedInboxQuery,
   buildExpungeDeletedSelectQuery,
   buildExpungeUidsFilters,
   buildExpungeUidsSelectQuery,
@@ -636,7 +637,7 @@ const expungeSelected = async (
     selected.rows.map((row: Record<string, unknown>) => [row.mail_id as string, Number(row.uid)])
   );
   const rows = await mailsTable.updateWhere(
-    { [MAIL_ID]: { op: "IN", value: [...uidsByMailId.keys()] }, [EXPUNGED]: false },
+    { [USER_ID]: user_id, [MAIL_ID]: { op: "IN", value: [...uidsByMailId.keys()] }, [EXPUNGED]: false },
     // Bump modseq so the expunge advances HIGHESTMODSEQ (RFC 7162).
     { [EXPUNGED]: true, updated: DB_NOW, [MODSEQ]: await getNextModseq(user_id) },
     [MAIL_ID]
@@ -658,14 +659,14 @@ export const expungeDeletedMails = async (
   domains?: string[]
 ): Promise<number[]> => {
   try {
-    if (usesDomainUidSpace(mailbox) && domains !== undefined) {
+    if (usesDomainUidSpace(mailbox) && sent && domains !== undefined) {
       // A scoped login expunges only the mail of its domains; the filter bag
       // below cannot carry that predicate, so select the rows and expunge by id.
       const scoped = buildScopedExpungeDeletedSelectQuery(user_id, mailbox, sent, domains);
       return await expungeSelected(user_id, scoped.sql, scoped.values);
     }
-    if (usesDomainUidSpace(mailbox)) {
-      // Domain-wide expunge — still on uid_domain, unchanged.
+    if (usesDomainUidSpace(mailbox) && sent) {
+      // Domain-wide expunge of the unified Sent view — still on uid_domain.
       const rows = await mailsTable.updateWhere(
         buildExpungeDeletedFilters(user_id, mailbox, sent),
         // Bump modseq so the expunge advances HIGHESTMODSEQ (RFC 7162) — a
@@ -676,12 +677,16 @@ export const expungeDeletedMails = async (
       return rows.map((row: Record<string, unknown>) => row.uid as number);
     }
 
-    // Per-mailbox expunge: JOIN `mail_mailbox_uid` to resolve the
-    // mail_ids that belong to this mailbox, then framework updateWhere
+    // Resolve the mail_ids first — for a mapped box by a JOIN on its
+    // `mail_mailbox_uid` rows; for INBOX and the utility views leaving out
+    // the mail filed somewhere else, which they list but must not destroy
+    // (see `buildExpungeDeletedInboxQuery`) — then framework updateWhere
     // with an IN filter so the data-bag pattern bumps `updated`. The
-    // RETURNING side reads x.uid from a second SELECT that fetches the
-    // per-mailbox UIDs for the just-expunged rows.
-    const deletedQuery = buildExpungeDeletedSelectQuery(user_id, mailbox, sent, domains);
+    // RETURNING side reads the UIDs from the SELECT that resolved the
+    // just-expunged rows.
+    const deletedQuery = usesDomainUidSpace(mailbox)
+      ? buildExpungeDeletedInboxQuery(user_id, mailbox, sent, domains)
+      : buildExpungeDeletedSelectQuery(user_id, mailbox, sent, domains);
     const selectResult = await pool.query(deletedQuery.sql, deletedQuery.values);
     if (selectResult.rows.length === 0) return [];
     const mailIds = selectResult.rows.map(
@@ -695,13 +700,19 @@ export const expungeDeletedMails = async (
     );
 
     const rows = await mailsTable.updateWhere(
-      { [MAIL_ID]: { op: "IN", value: mailIds } },
+      // Checked again here: another client may have cleared \Deleted since the SELECT.
+      {
+        [USER_ID]: user_id,
+        [MAIL_ID]: { op: "IN", value: mailIds },
+        [DELETED]: true,
+        [EXPUNGED]: false,
+      },
       // Bump modseq so the expunge advances HIGHESTMODSEQ (RFC 7162) — a
       // resyncing CONDSTORE/QRESYNC client detects the removal.
       { [EXPUNGED]: true, updated: DB_NOW, [MODSEQ]: await getNextModseq(user_id) },
       [MAIL_ID]
     );
-    // Map the UPDATE's returned mail_ids back to their per-account UIDs
+    // Map the UPDATE's returned mail_ids back to their UIDs in the box
     // via the SELECT snapshot. This is the wire signal for EXPUNGE
     // responses.
     return rows

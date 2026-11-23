@@ -1,7 +1,7 @@
 import { MailHeaderDataType, isUuid } from "common";
 import { getThread, toMailHeaderData } from "server";
 import { Route } from "../route";
-import { ownedDomainNames } from "../../../domains";
+import { addressOnDomains, ownAddressDomains } from "../../../domains";
 import { ownAddressesOf } from "../../../mails/thread";
 import {
   findViewableMail,
@@ -20,8 +20,8 @@ export const getThreadRoute = new Route<ThreadGetResponse>(
     if (!isUuid(req.params.id)) {
       return { status: "failed", message: "No email is found." };
     }
-    const owned = await ownedDomainNames(user.id);
-    const thread = await getThread(user, req.params.id, ownAddressesOf(owned));
+    const own = await ownAddressDomains(user.id);
+    const thread = await getThread(user, req.params.id, ownAddressesOf(own));
     if (thread.length) return { status: "success", body: thread };
 
     // A mail of a domain the user views is shown on its own: following its
@@ -33,7 +33,10 @@ export const getThreadRoute = new Route<ThreadGetResponse>(
       for await (const batch of getMailHeadersByIds(viewable.ownerId, [req.params.id])) {
         rows.push(...batch);
       }
-      if (rows.length) return { status: "success", body: rows.map(toMailHeaderData) };
+      const isReaders = addressOnDomains(viewable.domains);
+      if (rows.length) {
+        return { status: "success", body: rows.map((row) => toMailHeaderData(row, isReaders)) };
+      }
     }
     return { status: "failed", message: "No email is found." };
   }

@@ -26,7 +26,7 @@ import { mailInDomainsExpression, domainsArrayLiteral } from "./domain-scope";
  * repository. `views.test.ts` pins the two copies together.
  */
 
-const INBOX_ACCOUNTS_PREFIX = "INBOX/accounts/";
+export const INBOX_ACCOUNTS_PREFIX = "INBOX/accounts/";
 
 /**
  * The name the INBOX tree's mapping rows are recorded under in

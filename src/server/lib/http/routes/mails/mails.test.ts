@@ -20,6 +20,8 @@ import type { HttpRequest } from "../../request";
 // ── Shared mocks for "server" barrel ─────────────────────────────────────────
 
 const mockGetMailHeaders = mock(async () => []);
+// Records the envelope predicate each row is shown with.
+const mockToMailHeaderData = mock((row: unknown, _isReaders: (address: string) => boolean) => row);
 const mockGetMailHeadersDelta = mock(async () => ({ as_of: "", headers: [], expunged_ids: [] }));
 const mockGetUnifiedMailHeaders = mock(async () => []);
 const mockGetUnifiedMailHeadersDelta = mock(async () => ({ as_of: "", headers: [], expunged_ids: [] }));
@@ -71,7 +73,7 @@ mock.module("server", () => ({
   getUnifiedMailHeaders: mockGetUnifiedMailHeaders,
   getUnifiedMailHeaderPage: mockGetUnifiedMailHeaderPage,
   getUnifiedMailHeadersDelta: mockGetUnifiedMailHeadersDelta,
-  toMailHeaderData: (row: unknown) => row,
+  toMailHeaderData: mockToMailHeaderData,
   getAccounts: mockGetAccounts,
   getMailBody: mockGetMailBody,
   deleteMail: mockDeleteMail,
@@ -133,6 +135,7 @@ const mockGetDomainAccess = spyOn(domainRepo, "getDomainAccess").mockImplementat
   async (userId, name) => ownerOf(userId, name)
 );
 const mockListDomainAccess = spyOn(domainRepo, "listDomainAccess").mockResolvedValue([]);
+const mockListFormerDomains = spyOn(domainRepo, "listFormerDomains").mockResolvedValue([]);
 
 // Mock logger used directly in post-mark / post-spam-mark
 const mockLoggerError = mock(() => {});
@@ -149,6 +152,7 @@ afterAll(() => {
     | undefined;
   mockGetDomainAccess.mockRestore();
   mockListDomainAccess.mockRestore();
+  mockListFormerDomains.mockRestore();
   if (!realServer) return;
   mock.module("server", () => realServer);
   mock.module("../../../logger", () => ({ logger: realServer.logger, default: realServer.logger }));
@@ -265,6 +269,60 @@ describe("getHeadersRoute", () => {
     ];
     expect(store.id).toBe("owner-1");
     expect(options.domains).toEqual(["example.com"]);
+  });
+
+  it("shows an owner's rows with the envelope recipients on their own and former domains", async () => {
+    const { getHeadersRoute } = await import("./get-headers");
+
+    mockGetMailHeaders.mockResolvedValueOnce(oneBatch([{ mail_id: "m1" }]) as never);
+    mockListDomainAccess.mockResolvedValueOnce([
+      ownerOf("u1", "alice.example.com"),
+      ownerOf("u1", "example.org"),
+      { ...ownerOf("owner-2", "example.net"), role: "viewer" },
+    ]);
+    mockListFormerDomains.mockResolvedValueOnce(["old.example"]);
+    mockToMailHeaderData.mockClear();
+
+    const req = makeReq({
+      method: "GET",
+      session: { user: makeUser("alice") },
+      params: { account: "info@example.org" },
+      query: {},
+    });
+
+    const result = await apiResult(await getHeadersRoute.callback(req));
+    expect((result as ApiResponse<unknown>).status).toBe("success");
+    const isReaders = mockToMailHeaderData.mock.calls[0][1];
+    expect(isReaders("Info@Example.org")).toBe(true);
+    expect(isReaders("me@alice.example.com")).toBe(true);
+    expect(isReaders("kept@old.example")).toBe(true);
+    // Another user's domain, even one alice views, is someone else's Bcc.
+    expect(isReaders("bcc@example.net")).toBe(false);
+    expect(isReaders("bcc@bob.example.com")).toBe(false);
+  });
+
+  it("shows a viewer only the envelope recipients on the domain they view", async () => {
+    const { getHeadersRoute } = await import("./get-headers");
+
+    mockGetMailHeaders.mockResolvedValueOnce(oneBatch([{ mail_id: "m1" }]) as never);
+    mockGetDomainAccess.mockResolvedValueOnce({
+      ...ownerOf("owner-1", "example.com"),
+      role: "viewer",
+    });
+    mockToMailHeaderData.mockClear();
+
+    const req = makeReq({
+      method: "GET",
+      session: { user: makeUser("alice") },
+      params: { account: "info@example.com" },
+      query: {},
+    });
+
+    await getHeadersRoute.callback(req);
+    const isReaders = mockToMailHeaderData.mock.calls[0][1];
+    expect(isReaders("info@example.com")).toBe(true);
+    // The owner's other domains are not the viewer's to see.
+    expect(isReaders("me@owner.example.com")).toBe(false);
   });
 
   it("reads the user's own rows for a domain they hold no role on (one they used to own)", async () => {
@@ -1431,6 +1489,19 @@ describe("getAttachmentRoute", () => {
     const result = await getAttachmentRoute.callback(makeReq({ params: { id: "att1" } }));
     expect(result).toBe(file);
     expect(mockCanViewAttachment).toHaveBeenCalledWith("u1", "att1");
+  });
+
+  // Regression: an expunged mail's attachments were still served.
+  it("looks the attachment up among the user's mails that are not expunged", async () => {
+    const { getAttachmentRoute } = await import("./get-attachment");
+    mockMailsTableQueryOne.mockResolvedValueOnce(null);
+    const req = makeReq({ params: { id: "att1" } });
+    await getAttachmentRoute.callback(req);
+    expect(mockMailsTableQueryOne).toHaveBeenCalledWith({
+      user_id: req.session.user!.id,
+      attachments: [{ content: { data: "att1" } }],
+      expunged: false,
+    });
   });
 
   it("returns failed when attachment file missing from disk", async () => {

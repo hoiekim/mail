@@ -14,6 +14,7 @@ import {
   assignDomain,
   findDomain,
   listDomainAccess,
+  listFormerDomains,
   readersOfDomain,
   type DomainAccess,
 } from "./postgres/repositories/domains";
@@ -165,6 +166,24 @@ export const ownedDomainNames = async (userId: string): Promise<string[]> =>
   (await listDomainAccess(userId))
     .filter((access) => access.role === "owner")
     .map((access) => access.name);
+
+/**
+ * The domains whose addresses are `userId`'s own: the ones they own, and the
+ * ones they used to own, whose mail stayed with them.
+ */
+export const ownAddressDomains = async (userId: string): Promise<string[]> => {
+  const [owned, former] = await Promise.all([ownedDomainNames(userId), listFormerDomains(userId)]);
+  return [...new Set([...owned, ...former])];
+};
+
+/** Whether an address is on one of `domains`. */
+export type AddressPredicate = (address: string) => boolean;
+
+/** The predicate for addresses on `domains`, ignoring case. */
+export const addressOnDomains = (domains: readonly string[]): AddressPredicate => {
+  const names = new Set(domains.map((domain) => domain.toLowerCase()));
+  return (address) => names.has(domainOfAddress(address));
+};
 
 /** The domains `userId` holds the viewer role on. */
 export const viewedDomains = async (userId: string): Promise<DomainAccess[]> =>

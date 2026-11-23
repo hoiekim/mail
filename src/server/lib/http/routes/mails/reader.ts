@@ -1,5 +1,5 @@
 import { SignedUser } from "common";
-import { domainOfAddress } from "../../../domains";
+import { addressOnDomains, domainOfAddress, ownAddressDomains, type AddressPredicate } from "../../../domains";
 import { getDomainAccess } from "../../../postgres/repositories/domains";
 
 /** Whose mail rows a request reads, and which of their domains it may see. */
@@ -8,6 +8,8 @@ export interface MailReader {
   store: Pick<SignedUser, "id">;
   /** Undefined reads the whole store (the user's own); set, only those domains. */
   domains?: string[];
+  /** The addresses the reader may see as a received mail's envelope recipients. */
+  isReaders: AddressPredicate;
 }
 
 /**
@@ -25,7 +27,11 @@ export const resolveMailReader = async (
   if (!domain) return null;
   const access = await getDomainAccess(user.id, domain);
   if (access?.role === "viewer") {
-    return { store: { id: access.ownerId }, domains: [access.name] };
+    return {
+      store: { id: access.ownerId },
+      domains: [access.name],
+      isReaders: addressOnDomains([access.name]),
+    };
   }
-  return { store: user };
+  return { store: user, isReaders: addressOnDomains(await ownAddressDomains(user.id)) };
 };
