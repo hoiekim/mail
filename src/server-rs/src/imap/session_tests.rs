@@ -89,6 +89,68 @@ mod verify_credential_version {
         assert_eq!(evict_imap_sessions("fence-alice-1"), 0);
     }
 
+    fn scoped(fixture: &Fixture, role: crate::postgres::repositories::domains::DomainRole) {
+        fixture.session.state().scope = Some(crate::imap::auth::SessionScope {
+            user_id: "user-1".into(),
+            domain: "example.org".into(),
+            role,
+            owner_id: "owner-1".into(),
+        });
+    }
+
+    fn access(
+        role: crate::postgres::repositories::domains::DomainRole,
+        owner_id: &str,
+    ) -> crate::postgres::repositories::domains::DomainAccess {
+        crate::postgres::repositories::domains::DomainAccess {
+            domain_id: "domain-1".into(),
+            name: "example.org".into(),
+            owner_id: owner_id.into(),
+            owner_username: "owner".into(),
+            role,
+            verified_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_a_scoped_session_whose_role_is_unchanged() {
+        use crate::postgres::repositories::domains::DomainRole;
+        let fixture = fixture(false);
+        prime(&fixture.session, "scope-alice-1", 1);
+        scoped(&fixture, DomainRole::Viewer);
+        let ok = fixture
+            .session
+            .verify_scope_with("S1", |user_id, domain| async move {
+                assert_eq!((user_id.as_str(), domain.as_str()), ("user-1", "example.org"));
+                Ok(Some(access(DomainRole::Viewer, "owner-1")))
+            })
+            .await
+            .unwrap();
+        assert!(ok);
+        assert_eq!(fixture.wire().await, "");
+    }
+
+    #[tokio::test]
+    async fn ends_a_scoped_session_whose_role_was_revoked_or_moved() {
+        use crate::postgres::repositories::domains::DomainRole;
+        for (tag, now) in [
+            ("S2", None),
+            ("S3", Some(access(DomainRole::Owner, "owner-1"))),
+            ("S4", Some(access(DomainRole::Viewer, "someone-else"))),
+        ] {
+            let fixture = fixture(false);
+            prime(&fixture.session, "scope-alice-2", 1);
+            scoped(&fixture, DomainRole::Viewer);
+            let ok = fixture.session.verify_scope_with(tag, |_, _| async move { Ok(now) }).await.unwrap();
+            assert!(!ok, "{tag}");
+            assert!(!fixture.session.is_authenticated());
+            assert_eq!(
+                fixture.wire().await,
+                format!("{tag} NO [AUTHENTICATIONFAILED] Your role on example.org changed, please re-authenticate\r\n")
+            );
+        }
+    }
+
     #[tokio::test]
     async fn lets_the_command_through_when_the_stamped_version_is_current() {
         let fixture = fixture(false);
@@ -713,6 +775,31 @@ mod store_backed_commands {
             ("a EXPUNGE", "EXPUNGE"),
         ] {
             assert_eq!(run(&fixture, line).await, refusal(command), "{line}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_login_scoped_to_a_domain_it_owns_cannot_manage_user_mailboxes() {
+        let _budget = crate::imap::command_budget::test_lock().await;
+        let fixture = selected("INBOX", false, false);
+        {
+            let mut state = fixture.session.state();
+            let domains = vec!["example.org".to_string()];
+            state.store = Some(Store::new(
+                SignedUser::new(Some("user-1".into()), Some("tester".into()), Some("t@test".into())),
+                crate::imap::store::StoreScope {
+                    domains: Some(domains.clone()),
+                    account_domains: domains,
+                    primary_domain: "example.org".into(),
+                },
+            ));
+        }
+        for (line, command) in [("a CREATE x", "CREATE"), ("a DELETE x", "DELETE"), ("a RENAME x y", "RENAME")] {
+            assert_eq!(
+                run(&fixture, line).await,
+                format!("a NO [CANNOT] {command} is not available to a login scoped to one domain.\r\n"),
+                "{line}"
+            );
         }
     }
 
