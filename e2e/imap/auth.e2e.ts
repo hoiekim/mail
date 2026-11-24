@@ -13,6 +13,7 @@ let proxied: TestServer;
 let alice: TestUser;
 let bob: TestUser;
 let quoted: TestUser;
+let wrapped: TestUser;
 
 const INVALID = "NO [AUTHENTICATIONFAILED] Invalid credentials.";
 const LOCKED = "NO [AUTHENTICATIONFAILED] Too many failed attempts";
@@ -25,6 +26,7 @@ beforeAll(async () => {
   alice = await createUser(server, "alice");
   bob = await createUser(server, "bob");
   quoted = await createUser(server, "carol", { password: 'pa ss"wo\\rd {5}' });
+  wrapped = await createUser(server, "dana", { password: '"hunter2"' });
   await createUser(proxied, "alice");
   await createUser(proxied, "bob");
 }, 90_000);
@@ -67,6 +69,28 @@ describe("LOGIN", () => {
     const imap = await ImapClient.connect(server);
     const result = await imap.command(["LOGIN carol ", lit(quoted.password, false)]);
     expect(result.lines).toEqual([`A1 OK [CAPABILITY ${CAPABILITIES}] LOGIN completed`]);
+    imap.close();
+  });
+
+  test("keeps the quotes of a password that begins and ends with one", async () => {
+    const imap = await ImapClient.connect(server);
+    const result = await imap.command(`LOGIN dana ${quote(wrapped.password)}`);
+    expect(result.lines).toEqual([`A1 OK [CAPABILITY ${CAPABILITIES}] LOGIN completed`]);
+    imap.close();
+  });
+
+  test("keeps them when that password is sent as a literal", async () => {
+    const imap = await ImapClient.connect(server);
+    const result = await imap.command(["LOGIN dana ", lit(wrapped.password, false)]);
+    expect(result.lines).toEqual([`A1 OK [CAPABILITY ${CAPABILITIES}] LOGIN completed`]);
+    imap.close();
+  });
+
+  // Spends 1 failure.
+  test("does not accept that password with its quotes taken off", async () => {
+    const imap = await ImapClient.connect(server);
+    const result = await imap.command("LOGIN dana hunter2");
+    expect(result.lines).toEqual([`A1 ${INVALID}`]);
     imap.close();
   });
 

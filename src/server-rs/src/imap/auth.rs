@@ -484,11 +484,8 @@ pub async fn handle_login(
 
     let ip = connection.remote_address();
 
-    let clean_username = strip_surrounding_quotes(username);
-    let clean_password = strip_surrounding_quotes(password);
-
     let Some(resolved) =
-        authenticate_credentials(clean_username, clean_password, &ip, connection, backend, tag).await?
+        authenticate_credentials(username, password, &ip, connection, backend, tag).await?
     else {
         return Ok(None);
     };

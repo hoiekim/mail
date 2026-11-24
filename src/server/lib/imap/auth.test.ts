@@ -468,19 +468,27 @@ describe("handleLogin", () => {
     ]);
   });
 
-  it("looks up and password-compares one and the same value when a decoded credential is itself quoted", async () => {
+  it("keeps the quotes of a decoded credential that begins and ends with one", async () => {
     const harness = makeHarness();
+    // What `a1 LOGIN "\"admin\"" "\"hunter2\""` delivers once parsed: the
+    // delimiters are gone, and the quotes left are part of the value.
+    const username = '"admin"';
+    const password = '"hunter2"';
+    mockGetUser.mockImplementation(async () => ({
+      password: await hashOf(password),
+      getSigned: () => signedUser,
+    }));
 
-    await handleLogin("B4", ["admin", '"hunter2"'], ...loginArgs(harness));
+    const result = await handleLogin("B4", [username, password], ...loginArgs(harness));
 
-    const [lookedUp] = mockGetUser.mock.calls[0] as [{ username: string; password: string }];
-    // Which value that is — the quotes kept or dropped — is the open question
-    // this file stays out of; that the lookup and the comparison agree on it is
-    // not, because a transform applied to one and not the other refuses a
-    // credential the store would have matched.
-    expect(lookedUp.username).toBe("admin");
+    expect(mockGetUser).toHaveBeenCalledWith({ username, password });
     expect(compareCalls).toHaveLength(1);
-    expect(compareCalls[0][0]).toBe(lookedUp.password);
+    expect(compareCalls[0][0]).toBe(password);
+    expect(result).not.toBeNull();
+    expect(harness.socket.writes).toEqual([
+      `B4 OK [CAPABILITY ${CAPABILITIES}] LOGIN completed\r\n`,
+    ]);
+    expect(mockRecordAuthFailure).not.toHaveBeenCalled();
   });
 
   it("refuses an unknown user with AUTHENTICATIONFAILED and records the failure", async () => {

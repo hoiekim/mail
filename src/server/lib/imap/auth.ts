@@ -140,7 +140,7 @@ const resolveScope = async (
  * read-only session resolution, and the failure wording that must not
  * distinguish "no such user" from "wrong password" — is written once.
  * Each entry point owns only its own credential framing (PLAIN base64
- * decoding, LOGIN quote stripping) and its success response.
+ * decoding) and its success response.
  *
  * With single sign-on on, the password is checked as the provider's app
  * password; while `AUTH_LOCAL_LOGIN` keeps local passwords valid, the stored
@@ -321,12 +321,10 @@ export async function handleLogin(
   const ip = socket.remoteAddress ?? "unknown";
 
   const [username, password] = args;
-  const cleanUsername = username.replace(/^"(.*)"$/, "$1");
-  const cleanPassword = password.replace(/^"(.*)"$/, "$1");
 
   const resolved = await authenticateCredentials(
-    cleanUsername,
-    cleanPassword,
+    username,
+    password,
     ip,
     socket,
     write,
