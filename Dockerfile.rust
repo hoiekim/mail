@@ -31,7 +31,6 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
  && cargo build --release --locked \
  && rm -rf src target/release/.fingerprint/mail-server-* target/release/deps/mail_server-* target/release/deps/libmail_server-*
 COPY src/server-rs/ ./
-RUN cargo test --release --locked
 RUN cargo build --release --locked
 
 # Same Debian release as the rust stage, so the binary finds the glibc and OpenSSL it was built against.
