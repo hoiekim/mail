@@ -365,16 +365,19 @@ mod handle_login {
     }
 
     #[tokio::test]
-    async fn looks_up_and_compares_one_and_the_same_value_when_a_decoded_credential_is_itself_quoted() {
-        let backend = FakeBackend::default();
-        let _ = login("B4", &["admin", "\"hunter2\""], &backend).await;
+    async fn keeps_the_quotes_of_a_decoded_credential_that_begins_and_ends_with_one() {
+        // What `a1 LOGIN "\"admin\"" "\"hunter2\""` delivers once parsed.
+        let (username, password) = ("\"admin\"", "\"hunter2\"");
+        let backend = FakeBackend::with_users(vec![account("user-1", username, &hash_of(password))]);
+        let (result, connection) = login("B4", &[username, password], &backend).await;
 
-        assert!(backend.called(|call| *call == Call::GetUser("admin".into())));
-        // One pair of surrounding quotes comes off, as the Bun server's
-        // `replace(/^"(.*)"$/, "$1")` takes it off.
+        assert!(backend.called(|call| *call == Call::GetUser(username.into())));
         let compared = backend.compared();
         assert_eq!(compared.len(), 1);
-        assert_eq!(compared[0].0, "hunter2");
+        assert_eq!(compared[0].0, password);
+        assert!(result.unwrap().is_some());
+        assert_eq!(connection.writes(), [format!("B4 OK [CAPABILITY {CAPABILITIES}] LOGIN completed\r\n")]);
+        assert!(!backend.called(|call| matches!(call, Call::Record(..))));
     }
 
     #[tokio::test]
