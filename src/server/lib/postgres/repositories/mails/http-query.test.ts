@@ -587,6 +587,11 @@ describe("buildUnreadNotificationsQuery", () => {
     expect(sql).toContain("COUNT(*) FILTER (WHERE read = FALSE)");
     expect(sql).toContain("GROUP BY user_id");
   });
+
+  it("dates the newest mail by insert-only ingest time, not the Date header or the last write", () => {
+    const { sql } = buildUnreadNotificationsQuery([USER]);
+    expect(sql).toMatch(/MAX\(ingested\) as latest/);
+  });
 });
 
 describe("list keyset paging", () => {
